@@ -31,6 +31,7 @@ interface ContainerInput {
   allowedTools?: string[];
   model?: string;
   systemPrompt?: string;
+  script?: string;
 }
 
 interface ContainerOutput {
