@@ -5,7 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getTaskById, storeMessageDirect, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -82,6 +82,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
+                  // Store outbound message in DB for dashboard visibility
+                  const senderSource = data.source || sourceGroup;
+                  const senderName = data.sender_name || senderSource;
+                  storeMessageDirect({
+                    id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    chat_jid: data.chatJid,
+                    sender: `${senderSource}@ipc`,
+                    sender_name: senderName,
+                    content: data.text,
+                    timestamp: new Date().toISOString(),
+                    is_from_me: true,
+                    is_bot_message: false,
+                  });
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
