@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -7,8 +7,10 @@ import {
   getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
+  storeChatMetadata,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
+import { processIpcMessageData } from './ipc.js';
 import { RegisteredGroup } from './types.js';
 
 // Set up registered groups used across tests
@@ -39,6 +41,36 @@ let deps: IpcDeps;
 
 beforeEach(() => {
   _initTestDatabase();
+
+  // Seed chat rows so FK constraints pass in message-related tests
+  storeChatMetadata(
+    'main@g.us',
+    new Date().toISOString(),
+    'Main',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'other@g.us',
+    new Date().toISOString(),
+    'Other',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'third@g.us',
+    new Date().toISOString(),
+    'Third',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'dashboard@internal',
+    new Date().toISOString(),
+    'Dashboard',
+    'dashboard',
+    false,
+  );
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -675,5 +707,81 @@ describe('register_group success', () => {
     );
 
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+  });
+});
+
+// --- dashboard echo fix ---
+
+describe('processIpcMessageData - dashboard echo prevention', () => {
+  it('does NOT call sendMessage for dashboard-sourced messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      {
+        type: 'message',
+        chatJid: 'dashboard@internal',
+        text: 'hello',
+        source: 'dashboard',
+        sender_name: 'Dashboard User',
+      },
+      'dashboard',
+      true,
+      localDeps,
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('DOES call sendMessage for non-dashboard IPC messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      {
+        type: 'message',
+        chatJid: 'other@g.us',
+        text: 'hello from agent',
+        source: 'other-group',
+      },
+      'whatsapp_main',
+      true,
+      localDeps,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith('other@g.us', 'hello from agent');
+  });
+
+  it('blocks unauthorized non-dashboard messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      {
+        type: 'message',
+        chatJid: 'main@g.us',
+        text: 'sneaky',
+        source: 'other-group',
+      },
+      'other-group',
+      false,
+      localDeps,
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-message type payloads', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      { type: 'schedule_task', chatJid: 'other@g.us', text: 'ignored' },
+      'whatsapp_main',
+      true,
+      localDeps,
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

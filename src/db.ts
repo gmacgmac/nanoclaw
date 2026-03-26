@@ -4,7 +4,7 @@ import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
-import { logger } from './logger.js';
+import { logger, setDbErrorLogger } from './logger.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -82,6 +82,15 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS error_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      context TEXT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -150,6 +159,19 @@ export function initDatabase(): void {
 
   // Migrate from JSON files if they exist
   migrateJsonState();
+
+  // Set up DB error logging (avoids circular dependency)
+  setDbErrorLogger((level, message, context) => {
+    try {
+      logError({
+        level: level as 'error' | 'fatal' | 'warn',
+        message,
+        context,
+      });
+    } catch {
+      // Ignore logging errors to prevent infinite loops
+    }
+  });
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
@@ -694,4 +716,55 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Error log ---
+
+export interface ErrorLogEntry {
+  level: 'error' | 'fatal' | 'warn';
+  message: string;
+  context?: Record<string, unknown>;
+}
+
+export function logError(entry: ErrorLogEntry): void {
+  const contextJson = entry.context ? JSON.stringify(entry.context) : null;
+  db.prepare(
+    `INSERT INTO error_log (level, message, context) VALUES (?, ?, ?)`,
+  ).run(entry.level, entry.message, contextJson);
+}
+
+export function getErrorLogs(
+  limit: number = 100,
+  level?: 'error' | 'fatal' | 'warn',
+): Array<{
+  id: number;
+  level: string;
+  message: string;
+  context: string | null;
+  timestamp: string;
+}> {
+  if (level) {
+    return db
+      .prepare(
+        `SELECT id, level, message, context, timestamp FROM error_log WHERE level = ? ORDER BY timestamp DESC LIMIT ?`,
+      )
+      .all(level, limit) as Array<{
+      id: number;
+      level: string;
+      message: string;
+      context: string | null;
+      timestamp: string;
+    }>;
+  }
+  return db
+    .prepare(
+      `SELECT id, level, message, context, timestamp FROM error_log ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: number;
+    level: string;
+    message: string;
+    context: string | null;
+    timestamp: string;
+  }>;
 }
