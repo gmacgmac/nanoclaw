@@ -41,6 +41,10 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  // Agent customisation (from containerConfig, threaded through to agent-runner)
+  allowedTools?: string[];
+  model?: string;
+  systemPrompt?: string;
 }
 
 export interface ContainerOutput {
@@ -101,15 +105,55 @@ function buildVolumeMounts(
       readonly: false,
     });
 
-    // Global memory directory (read-only for non-main)
-    // Only directory mounts are supported, not file mounts
+    // Global memory directory access for non-main groups.
+    // Configurable via containerConfig.globalAccess:
+    // - undefined: mount all of global read-only (backward compat)
+    // - {}: no global mount at all (isolation)
+    // - { "*": { readonly: true/false } }: mount entire global dir with specified permission
+    // - { "subdir": { readonly: true/false } }: mount only named subdirs, each with own permission
+    //
+    // Security note: readonly: false here intentionally allows write access to specific
+    // global subdirs. This bypasses the nonMainReadOnly philosophy in mount-security.ts,
+    // which only governs additionalMounts (user-configured mounts validated against an
+    // external allowlist). Global mounts are hardcoded trusted mounts, not user-configurable.
     const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
-      mounts.push({
-        hostPath: globalDir,
-        containerPath: '/workspace/global',
-        readonly: true,
-      });
+
+    if (group.containerConfig?.globalAccess) {
+      const access = group.containerConfig.globalAccess;
+
+      if (access['*']) {
+        // Wildcard: mount entire global directory with configured permission.
+        // When "*" is present, all other keys are ignored — it's all-or-nothing.
+        if (fs.existsSync(globalDir)) {
+          mounts.push({
+            hostPath: globalDir,
+            containerPath: '/workspace/global',
+            readonly: access['*'].readonly,
+          });
+        }
+      } else {
+        // Per-subdirectory: mount only specified subdirectories.
+        // Empty object {} results in no mounts (complete isolation).
+        for (const [subdir, config] of Object.entries(access)) {
+          const subdirPath = path.join(globalDir, subdir);
+          if (fs.existsSync(subdirPath)) {
+            mounts.push({
+              hostPath: subdirPath,
+              containerPath: `/workspace/global/${subdir}`,
+              readonly: config.readonly,
+            });
+          }
+        }
+      }
+    } else {
+      // Default: mount entire global read-only (backward compatible)
+      if (fs.existsSync(globalDir)) {
+        mounts.push({
+          hostPath: globalDir,
+          containerPath: '/workspace/global',
+          readonly: true,
+        });
+      }
     }
   }
 
@@ -148,12 +192,23 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Skills can be filtered per-group via containerConfig.skills:
+  // - undefined: copy all skills (backward compat)
+  // - []: copy no skills
+  // - ["skill1", "skill2"]: copy only listed skills
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
+  const allowedSkills = group.containerConfig?.skills;
+
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
+      // Skip if skill is not in the allowed list (when list is defined)
+      if (allowedSkills && !allowedSkills.includes(skillDir)) {
+        continue;
+      }
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
+
       const dstDir = path.join(skillsDst, skillDir);
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }

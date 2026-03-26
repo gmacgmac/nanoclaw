@@ -319,6 +319,10 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        // Agent customisation from containerConfig
+        allowedTools: group.containerConfig?.allowedTools,
+        model: group.containerConfig?.model,
+        systemPrompt: group.containerConfig?.systemPrompt,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
