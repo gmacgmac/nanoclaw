@@ -147,7 +147,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
  * Exported for testing.
  */
 export async function processIpcMessageData(
-  data: { type: string; chatJid?: string; text?: string; source?: string; sender_name?: string },
+  data: {
+    type: string;
+    chatJid?: string;
+    text?: string;
+    source?: string;
+    sender_name?: string;
+  },
   sourceGroup: string,
   isMain: boolean,
   deps: IpcDeps,
@@ -158,7 +164,10 @@ export async function processIpcMessageData(
   const targetGroup = registeredGroups[data.chatJid];
 
   if (!isMain && !(targetGroup && targetGroup.folder === sourceGroup)) {
-    logger.warn({ chatJid: data.chatJid, sourceGroup }, 'Unauthorized IPC message attempt blocked');
+    logger.warn(
+      { chatJid: data.chatJid, sourceGroup },
+      'Unauthorized IPC message attempt blocked',
+    );
     return;
   }
 

@@ -43,10 +43,34 @@ beforeEach(() => {
   _initTestDatabase();
 
   // Seed chat rows so FK constraints pass in message-related tests
-  storeChatMetadata('main@g.us', new Date().toISOString(), 'Main', 'whatsapp', true);
-  storeChatMetadata('other@g.us', new Date().toISOString(), 'Other', 'whatsapp', true);
-  storeChatMetadata('third@g.us', new Date().toISOString(), 'Third', 'whatsapp', true);
-  storeChatMetadata('dashboard@internal', new Date().toISOString(), 'Dashboard', 'dashboard', false);
+  storeChatMetadata(
+    'main@g.us',
+    new Date().toISOString(),
+    'Main',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'other@g.us',
+    new Date().toISOString(),
+    'Other',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'third@g.us',
+    new Date().toISOString(),
+    'Third',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'dashboard@internal',
+    new Date().toISOString(),
+    'Dashboard',
+    'dashboard',
+    false,
+  );
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -694,7 +718,13 @@ describe('processIpcMessageData - dashboard echo prevention', () => {
     const localDeps: IpcDeps = { ...deps, sendMessage };
 
     await processIpcMessageData(
-      { type: 'message', chatJid: 'dashboard@internal', text: 'hello', source: 'dashboard', sender_name: 'Dashboard User' },
+      {
+        type: 'message',
+        chatJid: 'dashboard@internal',
+        text: 'hello',
+        source: 'dashboard',
+        sender_name: 'Dashboard User',
+      },
       'dashboard',
       true,
       localDeps,
@@ -708,7 +738,12 @@ describe('processIpcMessageData - dashboard echo prevention', () => {
     const localDeps: IpcDeps = { ...deps, sendMessage };
 
     await processIpcMessageData(
-      { type: 'message', chatJid: 'other@g.us', text: 'hello from agent', source: 'other-group' },
+      {
+        type: 'message',
+        chatJid: 'other@g.us',
+        text: 'hello from agent',
+        source: 'other-group',
+      },
       'whatsapp_main',
       true,
       localDeps,
@@ -722,7 +757,12 @@ describe('processIpcMessageData - dashboard echo prevention', () => {
     const localDeps: IpcDeps = { ...deps, sendMessage };
 
     await processIpcMessageData(
-      { type: 'message', chatJid: 'main@g.us', text: 'sneaky', source: 'other-group' },
+      {
+        type: 'message',
+        chatJid: 'main@g.us',
+        text: 'sneaky',
+        source: 'other-group',
+      },
       'other-group',
       false,
       localDeps,
