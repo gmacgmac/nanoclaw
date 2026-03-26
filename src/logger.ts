@@ -7,7 +7,13 @@ export const logger = pino({
 
 // Optional DB error logger - set by db.ts after initialization
 // Avoids circular dependency between logger.ts and db.ts
-let dbErrorLogger: ((level: string, message: string, context?: Record<string, unknown>) => void) | null = null;
+let dbErrorLogger:
+  | ((
+      level: string,
+      message: string,
+      context?: Record<string, unknown>,
+    ) => void)
+  | null = null;
 
 export function setDbErrorLogger(fn: typeof dbErrorLogger): void {
   dbErrorLogger = fn;

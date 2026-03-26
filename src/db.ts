@@ -163,7 +163,11 @@ export function initDatabase(): void {
   // Set up DB error logging (avoids circular dependency)
   setDbErrorLogger((level, message, context) => {
     try {
-      logError({ level: level as 'error' | 'fatal' | 'warn', message, context });
+      logError({
+        level: level as 'error' | 'fatal' | 'warn',
+        message,
+        context,
+      });
     } catch {
       // Ignore logging errors to prevent infinite loops
     }
@@ -745,22 +749,22 @@ export function getErrorLogs(
         `SELECT id, level, message, context, timestamp FROM error_log WHERE level = ? ORDER BY timestamp DESC LIMIT ?`,
       )
       .all(level, limit) as Array<{
-        id: number;
-        level: string;
-        message: string;
-        context: string | null;
-        timestamp: string;
-      }>;
-  }
-  return db
-    .prepare(
-      `SELECT id, level, message, context, timestamp FROM error_log ORDER BY timestamp DESC LIMIT ?`,
-    )
-    .all(limit) as Array<{
       id: number;
       level: string;
       message: string;
       context: string | null;
       timestamp: string;
     }>;
+  }
+  return db
+    .prepare(
+      `SELECT id, level, message, context, timestamp FROM error_log ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: number;
+    level: string;
+    message: string;
+    context: string | null;
+    timestamp: string;
+  }>;
 }
