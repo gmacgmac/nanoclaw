@@ -5,7 +5,13 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, storeMessageDirect, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getTaskById,
+  storeMessageDirect,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -74,38 +80,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(data.chatJid, data.text);
-                  // Store outbound message in DB for dashboard visibility
-                  const senderSource = data.source || sourceGroup;
-                  const senderName = data.sender_name || senderSource;
-                  storeMessageDirect({
-                    id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                    chat_jid: data.chatJid,
-                    sender: `${senderSource}@ipc`,
-                    sender_name: senderName,
-                    content: data.text,
-                    timestamp: new Date().toISOString(),
-                    is_from_me: true,
-                    is_bot_message: false,
-                  });
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
-              }
+              await processIpcMessageData(data, sourceGroup, isMain, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -165,6 +140,48 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   processIpcFiles();
   logger.info('IPC watcher started (per-group namespaces)');
+}
+
+/**
+ * Process a single parsed IPC message payload.
+ * Exported for testing.
+ */
+export async function processIpcMessageData(
+  data: { type: string; chatJid?: string; text?: string; source?: string; sender_name?: string },
+  sourceGroup: string,
+  isMain: boolean,
+  deps: IpcDeps,
+): Promise<void> {
+  if (data.type !== 'message' || !data.chatJid || !data.text) return;
+
+  const registeredGroups = deps.registeredGroups();
+  const targetGroup = registeredGroups[data.chatJid];
+
+  if (!isMain && !(targetGroup && targetGroup.folder === sourceGroup)) {
+    logger.warn({ chatJid: data.chatJid, sourceGroup }, 'Unauthorized IPC message attempt blocked');
+    return;
+  }
+
+  // Skip sendMessage for dashboard-originated messages: the dashboard
+  // channel has no external platform to forward to, and calling
+  // sendMessage would store the user's text as a bot response (echo).
+  if (data.source !== 'dashboard') {
+    await deps.sendMessage(data.chatJid, data.text);
+  }
+
+  const senderSource = data.source || sourceGroup;
+  const senderName = data.sender_name || senderSource;
+  storeMessageDirect({
+    id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    chat_jid: data.chatJid,
+    sender: `${senderSource}@ipc`,
+    sender_name: senderName,
+    content: data.text,
+    timestamp: new Date().toISOString(),
+    is_from_me: true,
+    is_bot_message: false,
+  });
+  logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
 }
 
 export async function processTaskIpc(
