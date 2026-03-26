@@ -30,6 +30,50 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+
+  // --- Mount-level isolation ---
+
+  /**
+   * Per-group skill selection.
+   * undefined = all skills (backward compat), [] = no skills, ["x","y"] = only x and y.
+   */
+  skills?: string[];
+
+  /**
+   * Per-group global subdirectory access.
+   * undefined = full global mount read-only (backward compat),
+   * {} = no global access,
+   * { "*": { readonly: true } } = all of global with specified permission,
+   * { "subdir": { readonly: true } } = only named subdirs mounted.
+   */
+  globalAccess?: {
+    [subdirectory: string]: {
+      readonly: boolean;
+    };
+  };
+
+  // --- SDK-level agent customisation ---
+
+  /**
+   * Per-group tool restrictions.
+   * undefined = use default allowedTools list (backward compat).
+   * Accepts same tool names as the Claude Agent SDK: Bash, Read, Write, Edit, etc.
+   */
+  allowedTools?: string[];
+
+  /**
+   * Per-group model override.
+   * undefined = inherit from host env (backward compat).
+   * Accepts model IDs or aliases: "sonnet", "opus", "haiku", "glm-5:cloud", etc.
+   */
+  model?: string;
+
+  /**
+   * Per-group system prompt (appended to the claude_code preset).
+   * undefined = use global/CLAUDE.md only (backward compat).
+   * This is the agent's "soul" — persona, instructions, constraints.
+   */
+  systemPrompt?: string;
 }
 
 export interface RegisteredGroup {

@@ -27,6 +27,10 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  // Agent customisation (from containerConfig)
+  allowedTools?: string[];
+  model?: string;
+  systemPrompt?: string;
 }
 
 interface ContainerOutput {
@@ -366,11 +370,37 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Default tools list (current hardcoded list)
+  // Always includes mcp__nanoclaw__* so IPC works regardless of config.
+  const defaultTools = [
+    'Bash',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'WebSearch', 'WebFetch',
+    'Task', 'TaskOutput', 'TaskStop',
+    'TeamCreate', 'TeamDelete', 'SendMessage',
+    'TodoWrite', 'ToolSearch', 'Skill',
+    'NotebookEdit',
+    'mcp__nanoclaw__*'
+  ];
+
+  // Use per-group tools if configured, otherwise default.
+  const tools = containerInput.allowedTools
+    ? [...containerInput.allowedTools, 'mcp__nanoclaw__*']
+    : defaultTools;
+
+  // Apply model override if configured
+  if (containerInput.model) {
+    sdkEnv.ANTHROPIC_MODEL = containerInput.model;
+  }
+
+  // Build system prompt: global CLAUDE.md + per-group systemPrompt from config
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
+  let appendPrompt = '';
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+    appendPrompt += fs.readFileSync(globalClaudeMdPath, 'utf-8');
+  }
+  if (containerInput.systemPrompt) {
+    appendPrompt += (appendPrompt ? '\n\n' : '') + containerInput.systemPrompt;
   }
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -396,19 +426,10 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: appendPrompt
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendPrompt }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*'
-      ],
+      allowedTools: tools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
