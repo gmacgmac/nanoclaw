@@ -214,6 +214,12 @@ function buildVolumeMounts(
   const skillsDst = path.join(groupSessionsDir, 'skills');
   const allowedSkills = group.containerConfig?.skills;
 
+  // Clear existing skills directory to remove any skills that are no longer allowed
+  if (fs.existsSync(skillsDst)) {
+    fs.rmSync(skillsDst, { recursive: true });
+  }
+  fs.mkdirSync(skillsDst, { recursive: true });
+
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       // Skip if skill is not in the allowed list (when list is defined)
