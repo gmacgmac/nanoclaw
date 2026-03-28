@@ -110,6 +110,20 @@ npm run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
 ```
 
+### When to rebuild what
+
+NanoClaw has two build targets — the host process and the container image. They are independent.
+
+| What changed | Action needed |
+|-------------|---------------|
+| `src/` (host code) | `npm run build` + restart service |
+| `container/agent-runner/` (code that runs inside containers) | `./container/build.sh` |
+| `container/skills/` (skills loaded into containers) | `./container/build.sh` |
+| `container/Dockerfile` | `./container/build.sh` |
+| Both `src/` and `container/` | `npm run build` + `./container/build.sh` + restart service |
+
+If you only change host code (`src/`), you do NOT need to rebuild the container image. If you only change container code, you do NOT need to restart the service (new containers will use the new image). If you change both, do both.
+
 Service management:
 ```bash
 # macOS (launchd)
