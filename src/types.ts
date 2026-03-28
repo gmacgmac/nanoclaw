@@ -110,6 +110,7 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  script?: string | null;
 }
 
 export interface TaskRunLog {
