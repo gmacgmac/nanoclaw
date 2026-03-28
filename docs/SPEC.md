@@ -260,7 +260,7 @@ nanoclaw/
 │   ├── router.ts                  # Message formatting and outbound routing
 │   ├── config.ts                  # Configuration constants
 │   ├── types.ts                   # TypeScript interfaces (includes Channel)
-│   ├── logger.ts                  # Pino logger setup
+│   ├── logger.ts                  # Built-in logger with DB error wrapper
 │   ├── db.ts                      # SQLite database initialization and queries
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit
 │   ├── mount-security.ts          # Mount allowlist validation for containers
@@ -355,9 +355,91 @@ export const TRIGGER_PATTERN = new RegExp(`^@${ASSISTANT_NAME}\\b`, 'i');
 
 ### Container Configuration
 
-Groups can have additional directories mounted via `containerConfig` in the SQLite `registered_groups` table (stored as JSON in the `container_config` column). Example registration:
+Per-group behaviour is controlled via `containerConfig` — stored as JSON in the `registered_groups.container_config` SQLite column. All fields are optional; omitting a field preserves backward-compatible defaults.
+
+```json
+{
+  "skills": ["status", "browser"],
+  "globalAccess": { "categories": { "readonly": false } },
+  "allowedTools": ["Read", "Grep", "WebSearch"],
+  "model": "sonnet",
+  "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
+  "timeout": 3600000,
+  "additionalMounts": [
+    { "hostPath": "~/Documents/finance", "containerPath": "finance", "readonly": true }
+  ]
+}
+```
+
+#### Field Reference
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `skills` | `string[]` | `undefined` = all | Per-group skill selection |
+| `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control |
+| `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
+| `model` | `string` | `undefined` = inherit | Per-group model override |
+| `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
+| `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
+| `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
+
+#### `skills` — Per-Group Skill Selection
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | All skills copied (backward compatible) |
+| `[]` | No skills — minimal container |
+| `["status", "browser"]` | Only named skills |
+
+#### `globalAccess` — Global Directory Mount Control
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | Full global mount read-only (backward compatible) |
+| `{}` | No global access — complete isolation |
+| `{ "*": { "readonly": true } }` | All of global with specified permission |
+| `{ "categories": { "readonly": false } }` | Only named subdirectory with specified permission |
+
+When `"*"` is present, all other keys are ignored.
+
+#### `allowedTools` — Per-Group Tool Restrictions
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | All tools (default list) |
+| `["Read", "Grep", "WebSearch"]` | Only named tools |
+| `[]` | No tools — only MCP IPC |
+
+`mcp__nanoclaw__*` is always included regardless of config (IPC must work).
+
+Default tool list:
+```
+Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch,
+Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage,
+TodoWrite, ToolSearch, Skill, NotebookEdit, mcp__nanoclaw__*
+```
+
+#### `model` — Per-Group Model Override
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | Inherit from `settings.json` (`ANTHROPIC_MODEL`) |
+| `"sonnet"` | Use Claude Sonnet |
+| `"haiku"` | Use Claude Haiku (faster, cheaper) |
+
+#### `systemPrompt` — Per-Group Persona
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | Use global/CLAUDE.md only (for non-main groups) |
+| `"You are X..."` | Appended after `claude_code` preset + global CLAUDE.md |
+
+#### `additionalMounts` — Extra Host Directories
+
+Additional mounts appear at `/workspace/extra/{containerPath}` inside the container. Paths are validated against `~/.config/nanoclaw/mount-allowlist.json` before mounting.
 
 ```typescript
+// Example registration
 setRegisteredGroup("1234567890@g.us", {
   name: "Dev Team",
   folder: "whatsapp_dev-team",
@@ -365,11 +447,7 @@ setRegisteredGroup("1234567890@g.us", {
   added_at: new Date().toISOString(),
   containerConfig: {
     additionalMounts: [
-      {
-        hostPath: "~/projects/webapp",
-        containerPath: "webapp",
-        readonly: false,
-      },
+      { hostPath: "~/projects/webapp", containerPath: "webapp", readonly: false }
     ],
     timeout: 600000,
   },
@@ -378,26 +456,34 @@ setRegisteredGroup("1234567890@g.us", {
 
 Folder names follow the convention `{channel}_{group-name}` (e.g., `whatsapp_family-chat`, `telegram_dev-team`). The main group has `isMain: true` set during registration.
 
-Additional mounts appear at `/workspace/extra/{containerPath}` inside the container.
-
 **Mount syntax note:** Read-write mounts use `-v host:container`, but readonly mounts require `--mount "type=bind,source=...,target=...,readonly"` (the `:ro` suffix may not work on all runtimes).
 
 ### Claude Authentication
 
-Configure authentication in a `.env` file in the project root. Two options:
+Containers never see real API keys or tokens. The credential proxy (`src/credential-proxy.ts`) runs on the host and intercepts all API traffic:
+
+1. Container sends requests to `http://host.docker.internal:3001` with a placeholder key
+2. Proxy swaps in real credentials from `~/.config/nanoclaw/secrets.env` (or `.env` fallback)
+3. Proxy forwards to the upstream API (Anthropic, Ollama, Z.ai, etc.)
+
+The proxy listens on `127.0.0.1:3001` (configurable via `CREDENTIAL_PROXY_PORT`). The `.env` file in the project root is shadowed by `/dev/null` in main group containers to prevent agents from reading it.
+
+**Two auth modes:**
 
 **Option 1: Claude Subscription (OAuth token)**
 ```bash
+# ~/.config/nanoclaw/secrets.env
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 ```
 The token can be extracted from `~/.claude/.credentials.json` if you're logged in to Claude Code.
 
 **Option 2: Pay-per-use API Key**
 ```bash
+# ~/.config/nanoclaw/secrets.env
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted from `.env` and written to `data/env/env`, then mounted into the container at `/workspace/env-dir/env` and sourced by the entrypoint script. This ensures other environment variables in `.env` are not exposed to the agent. This workaround is needed because some container runtimes lose `-e` environment variables when using `-i` (interactive mode with piped stdin).
+Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted and written to `data/env/env`, then mounted into the container at `/workspace/env-dir/env` and sourced by the entrypoint script. This ensures other environment variables are not exposed to the agent.
 
 ### Changing the Assistant Name
 
@@ -455,14 +541,56 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 
 ## Session Management
 
-Sessions enable conversation continuity - Claude remembers what you talked about.
+Sessions enable conversation continuity — Claude remembers what you talked about across container restarts. Agents are NOT stateless between messages.
 
 ### How Sessions Work
 
-1. Each group has a session ID stored in SQLite (`sessions` table, keyed by `group_folder`)
-2. Session ID is passed to Claude Agent SDK's `resume` option
-3. Claude continues the conversation with full context
-4. Session transcripts are stored as JSONL files in `data/sessions/{group}/.claude/`
+1. First message to a group → no session ID → Claude Agent SDK starts a fresh session, returns `newSessionId`
+2. NanoClaw stores the ID in SQLite (`sessions` table, keyed by `group_folder`) via `setSession()`
+3. Next message → stored `sessionId` passed to SDK `resume` option → resumes from `.jsonl` transcript
+4. This continues indefinitely — every message resumes the same session with full conversation history
+
+### Container Lifecycle
+
+Containers are NOT one-per-message:
+
+1. Message arrives → container spawns (or message is piped to existing container via IPC polling)
+2. Container stays alive, waiting for follow-up messages via IPC
+3. After 30 minutes of no output (idle timeout), NanoClaw stops the container
+4. Next message → new container spawns, but resumes the same session via `sessionId`
+
+The `--rm` flag on `docker run` ensures containers are cleaned up after exit.
+
+### Three Layers of Memory
+
+| Layer | Mechanism | Survives Session Reset? | Primary Use |
+|-------|-----------|------------------------|-------------|
+| Session transcript (`.jsonl`) | SDK session resumption | No — tied to session ID | Full conversation continuity |
+| Auto-memory (`memory/*.md`) | Claude Code auto-memory feature | Yes — persists across sessions | Learned preferences, corrections |
+| CLAUDE.md (group folder) | SDK loads from `cwd` on startup | Yes — it's a file you control | Instructions, personality, skills |
+
+The session transcript is the primary memory mechanism. Auto-memory is a safety net for when sessions are lost or reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
+
+### Where Session Data Lives
+
+| What | Host Path | Purpose |
+|------|-----------|---------|
+| Session transcript | `data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl` | Full conversation history |
+| Auto-memory | `data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md` | Persistent notes Claude writes itself |
+| Session ID mapping | `store/messages.db` → `sessions` table | Maps group folder → current session UUID |
+| Settings | `data/sessions/<folder>/.claude/settings.json` | Claude Code env vars (model, features) |
+| Skills | `data/sessions/<folder>/.claude/skills/` | Copied from `container/skills/` per-group |
+
+### Context Loading Order
+
+When a container starts, context is loaded in this order:
+
+1. Claude Code built-in system prompt (`claude_code` preset)
+2. `global/CLAUDE.md` content (non-main groups only, if file exists)
+3. `containerConfig.systemPrompt` (if set — appended after global CLAUDE.md)
+4. Group `CLAUDE.md` (auto-loaded by SDK from `cwd` = `/workspace/group`)
+5. Auto-memory files (`memory/*.md`)
+6. Session transcript (if resuming an existing session)
 
 ---
 
@@ -744,8 +872,10 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 
 | Credential | Storage Location | Notes |
 |------------|------------------|-------|
-| Claude CLI Auth | data/sessions/{group}/.claude/ | Per-group isolation, mounted to /home/node/.claude/ |
-| WhatsApp Session | store/auth/ | Auto-created, persists ~20 days |
+| API Key / OAuth Token | `~/.config/nanoclaw/secrets.env` | Host-only; never mounted into containers |
+| Credential proxy | `src/credential-proxy.ts` on host port 3001 | Injects real creds at request time |
+| WhatsApp Session | `store/auth/` | Auto-created, persists ~20 days |
+| Claude session data | `data/sessions/{group}/.claude/` | Per-group isolation, mounted to `/home/node/.claude/` |
 
 ### File Permissions
 
