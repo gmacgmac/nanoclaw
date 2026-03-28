@@ -389,6 +389,12 @@ async function runQuery(
     ? [...containerInput.allowedTools, 'mcp__nanoclaw__*']
     : defaultTools;
 
+  // Explicitly block WebSearch/WebFetch if not in allowed list.
+  // This overrides any context from resumed sessions that might reference these tools.
+  const disallowedTools: string[] = [];
+  if (!tools.includes('WebSearch')) disallowedTools.push('WebSearch');
+  if (!tools.includes('WebFetch')) disallowedTools.push('WebFetch');
+
   // Apply model override if configured
   if (containerInput.model) {
     sdkEnv.ANTHROPIC_MODEL = containerInput.model;
@@ -431,6 +437,7 @@ async function runQuery(
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendPrompt }
         : undefined,
       allowedTools: tools,
+      disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
