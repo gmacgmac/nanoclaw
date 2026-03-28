@@ -61,14 +61,23 @@ describe('Per-Group Skill Isolation', () => {
       // When allowedSkills is undefined, all skills from container/skills/ are copied
 
       const skills = ['status', 'browser', 'formatting', 'mcp'];
-      const groupSkillsDir = path.join(dataDir, 'sessions', 'test-group', '.claude', 'skills');
+      const groupSkillsDir = path.join(
+        dataDir,
+        'sessions',
+        'test-group',
+        '.claude',
+        'skills',
+      );
       fs.mkdirSync(groupSkillsDir, { recursive: true });
 
       // Simulate the skill copy logic from buildVolumeMounts
       let allowedSkills: string[] | undefined = undefined;
 
       for (const skillDir of fs.readdirSync(skillsDir)) {
-        if (Array.isArray(allowedSkills) && !(allowedSkills as string[]).includes(skillDir)) {
+        if (
+          Array.isArray(allowedSkills) &&
+          !(allowedSkills as string[]).includes(skillDir)
+        ) {
           continue;
         }
         const srcDir = path.join(skillsDir, skillDir);
@@ -83,13 +92,22 @@ describe('Per-Group Skill Isolation', () => {
     });
 
     it('should copy no skills when skills is empty array', () => {
-      const groupSkillsDir = path.join(dataDir, 'sessions', 'test-group', '.claude', 'skills');
+      const groupSkillsDir = path.join(
+        dataDir,
+        'sessions',
+        'test-group',
+        '.claude',
+        'skills',
+      );
       fs.mkdirSync(groupSkillsDir, { recursive: true });
 
       const allowedSkills: string[] = [];
 
       for (const skillDir of fs.readdirSync(skillsDir)) {
-        if (Array.isArray(allowedSkills) && !(allowedSkills as string[]).includes(skillDir)) {
+        if (
+          Array.isArray(allowedSkills) &&
+          !(allowedSkills as string[]).includes(skillDir)
+        ) {
           continue;
         }
         const srcDir = path.join(skillsDir, skillDir);
@@ -104,13 +122,22 @@ describe('Per-Group Skill Isolation', () => {
     });
 
     it('should copy only specified skills when skills array provided', () => {
-      const groupSkillsDir = path.join(dataDir, 'sessions', 'test-group', '.claude', 'skills');
+      const groupSkillsDir = path.join(
+        dataDir,
+        'sessions',
+        'test-group',
+        '.claude',
+        'skills',
+      );
       fs.mkdirSync(groupSkillsDir, { recursive: true });
 
       const allowedSkills = ['status', 'browser'];
 
       for (const skillDir of fs.readdirSync(skillsDir)) {
-        if (Array.isArray(allowedSkills) && !(allowedSkills as string[]).includes(skillDir)) {
+        if (
+          Array.isArray(allowedSkills) &&
+          !(allowedSkills as string[]).includes(skillDir)
+        ) {
           continue;
         }
         const srcDir = path.join(skillsDir, skillDir);
@@ -125,13 +152,22 @@ describe('Per-Group Skill Isolation', () => {
     });
 
     it('should handle nonexistent skills gracefully', () => {
-      const groupSkillsDir = path.join(dataDir, 'sessions', 'test-group', '.claude', 'skills');
+      const groupSkillsDir = path.join(
+        dataDir,
+        'sessions',
+        'test-group',
+        '.claude',
+        'skills',
+      );
       fs.mkdirSync(groupSkillsDir, { recursive: true });
 
       const allowedSkills = ['nonexistent', 'also-nonexistent'];
 
       for (const skillDir of fs.readdirSync(skillsDir)) {
-        if (Array.isArray(allowedSkills) && !(allowedSkills as string[]).includes(skillDir)) {
+        if (
+          Array.isArray(allowedSkills) &&
+          !(allowedSkills as string[]).includes(skillDir)
+        ) {
           continue;
         }
         const srcDir = path.join(skillsDir, skillDir);
@@ -154,7 +190,11 @@ describe('Per-Group Skill Isolation', () => {
       }
 
       const globalAccess: GlobalAccess | undefined = undefined;
-      const mounts: Array<{ hostPath: string; containerPath: string; readonly: boolean }> = [];
+      const mounts: Array<{
+        hostPath: string;
+        containerPath: string;
+        readonly: boolean;
+      }> = [];
       const globalDir = path.join(groupsDir, 'global');
 
       if (globalAccess) {
@@ -181,7 +221,11 @@ describe('Per-Group Skill Isolation', () => {
       }
 
       const globalAccess: GlobalAccess = {};
-      const mounts: Array<{ hostPath: string; containerPath: string; readonly: boolean }> = [];
+      const mounts: Array<{
+        hostPath: string;
+        containerPath: string;
+        readonly: boolean;
+      }> = [];
       const globalDir = path.join(groupsDir, 'global');
 
       if (globalAccess['*']) {
@@ -210,7 +254,11 @@ describe('Per-Group Skill Isolation', () => {
 
       // readonly: true
       let globalAccess: GlobalAccess = { '*': { readonly: true } };
-      let mounts: Array<{ hostPath: string; containerPath: string; readonly: boolean }> = [];
+      let mounts: Array<{
+        hostPath: string;
+        containerPath: string;
+        readonly: boolean;
+      }> = [];
       let globalDir = path.join(groupsDir, 'global');
 
       if (globalAccess['*']) {
@@ -250,8 +298,12 @@ describe('Per-Group Skill Isolation', () => {
         [subdir: string]: { readonly: boolean };
       }
 
-      const globalAccess: GlobalAccess = { 'categories': { readonly: true } };
-      const mounts: Array<{ hostPath: string; containerPath: string; readonly: boolean }> = [];
+      const globalAccess: GlobalAccess = { categories: { readonly: true } };
+      const mounts: Array<{
+        hostPath: string;
+        containerPath: string;
+        readonly: boolean;
+      }> = [];
       const globalDir = path.join(groupsDir, 'global');
 
       if (globalAccess['*']) {
@@ -280,8 +332,12 @@ describe('Per-Group Skill Isolation', () => {
         [subdir: string]: { readonly: boolean };
       }
 
-      const globalAccess: GlobalAccess = { 'categories': { readonly: false } };
-      const mounts: Array<{ hostPath: string; containerPath: string; readonly: boolean }> = [];
+      const globalAccess: GlobalAccess = { categories: { readonly: false } };
+      const mounts: Array<{
+        hostPath: string;
+        containerPath: string;
+        readonly: boolean;
+      }> = [];
       const globalDir = path.join(groupsDir, 'global');
 
       for (const [subdir, config] of Object.entries(globalAccess)) {
@@ -307,13 +363,24 @@ describe('Agent Customisation (BE_04)', () => {
   it('should use default tools when allowedTools is undefined', () => {
     const defaultTools = [
       'Bash',
-      'Read', 'Write', 'Edit', 'Glob', 'Grep',
-      'WebSearch', 'WebFetch',
-      'Task', 'TaskOutput', 'TaskStop',
-      'TeamCreate', 'TeamDelete', 'SendMessage',
-      'TodoWrite', 'ToolSearch', 'Skill',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'TeamCreate',
+      'TeamDelete',
+      'SendMessage',
+      'TodoWrite',
+      'ToolSearch',
+      'Skill',
       'NotebookEdit',
-      'mcp__nanoclaw__*'
+      'mcp__nanoclaw__*',
     ];
 
     const allowedTools: string[] | undefined = undefined;
@@ -327,13 +394,24 @@ describe('Agent Customisation (BE_04)', () => {
   it('should merge allowedTools with mcp__nanoclaw__* when provided', () => {
     const defaultTools = [
       'Bash',
-      'Read', 'Write', 'Edit', 'Glob', 'Grep',
-      'WebSearch', 'WebFetch',
-      'Task', 'TaskOutput', 'TaskStop',
-      'TeamCreate', 'TeamDelete', 'SendMessage',
-      'TodoWrite', 'ToolSearch', 'Skill',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'TeamCreate',
+      'TeamDelete',
+      'SendMessage',
+      'TodoWrite',
+      'ToolSearch',
+      'Skill',
       'NotebookEdit',
-      'mcp__nanoclaw__*'
+      'mcp__nanoclaw__*',
     ];
 
     const allowedTools = ['Read', 'Grep', 'Glob'];
@@ -349,13 +427,24 @@ describe('Agent Customisation (BE_04)', () => {
   it('should only include mcp__nanoclaw__* when allowedTools is empty array', () => {
     const defaultTools = [
       'Bash',
-      'Read', 'Write', 'Edit', 'Glob', 'Grep',
-      'WebSearch', 'WebFetch',
-      'Task', 'TaskOutput', 'TaskStop',
-      'TeamCreate', 'TeamDelete', 'SendMessage',
-      'TodoWrite', 'ToolSearch', 'Skill',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'TeamCreate',
+      'TeamDelete',
+      'SendMessage',
+      'TodoWrite',
+      'ToolSearch',
+      'Skill',
       'NotebookEdit',
-      'mcp__nanoclaw__*'
+      'mcp__nanoclaw__*',
     ];
 
     const allowedTools: string[] = [];
@@ -373,7 +462,9 @@ describe('Agent Customisation (BE_04)', () => {
       systemPrompt: undefined,
     };
 
-    const sdkEnv: Record<string, string | undefined> = { ANTHROPIC_BASE_URL: 'http://proxy:3001' };
+    const sdkEnv: Record<string, string | undefined> = {
+      ANTHROPIC_BASE_URL: 'http://proxy:3001',
+    };
 
     if (containerInput.model) {
       sdkEnv.ANTHROPIC_MODEL = containerInput.model;
@@ -389,7 +480,9 @@ describe('Agent Customisation (BE_04)', () => {
       systemPrompt: undefined,
     };
 
-    const sdkEnv: Record<string, string | undefined> = { ANTHROPIC_BASE_URL: 'http://proxy:3001' };
+    const sdkEnv: Record<string, string | undefined> = {
+      ANTHROPIC_BASE_URL: 'http://proxy:3001',
+    };
 
     if (containerInput.model) {
       sdkEnv.ANTHROPIC_MODEL = containerInput.model;
@@ -417,7 +510,9 @@ describe('Agent Customisation (BE_04)', () => {
     }
 
     // Both global content and systemPrompt should be present, separated by \n\n
-    expect(appendPrompt).toBe('# Global memory\n\nShared context.\n\nYou are a research assistant. Be concise.');
+    expect(appendPrompt).toBe(
+      '# Global memory\n\nShared context.\n\nYou are a research assistant. Be concise.',
+    );
   });
 
   it('should use only systemPrompt when no global CLAUDE.md', () => {
@@ -495,7 +590,11 @@ describe('ContainerConfig type extension', () => {
 
   it('should include skills, globalAccess, allowedTools, model, systemPrompt', () => {
     interface ContainerConfig {
-      additionalMounts?: Array<{ hostPath: string; containerPath?: string; readonly?: boolean }>;
+      additionalMounts?: Array<{
+        hostPath: string;
+        containerPath?: string;
+        readonly?: boolean;
+      }>;
       timeout?: number;
       skills?: string[];
       globalAccess?: { [subdir: string]: { readonly: boolean } };
@@ -506,7 +605,7 @@ describe('ContainerConfig type extension', () => {
 
     const config: ContainerConfig = {
       skills: ['status'],
-      globalAccess: { 'categories': { readonly: true } },
+      globalAccess: { categories: { readonly: true } },
       allowedTools: ['Read', 'Grep'],
       model: 'haiku',
       systemPrompt: 'Be helpful.',
@@ -514,7 +613,7 @@ describe('ContainerConfig type extension', () => {
     };
 
     expect(config.skills).toEqual(['status']);
-    expect(config.globalAccess).toEqual({ 'categories': { readonly: true } });
+    expect(config.globalAccess).toEqual({ categories: { readonly: true } });
     expect(config.allowedTools).toEqual(['Read', 'Grep']);
     expect(config.model).toBe('haiku');
     expect(config.systemPrompt).toBe('Be helpful.');
@@ -523,7 +622,11 @@ describe('ContainerConfig type extension', () => {
 
   it('should work with minimal config (backward compat)', () => {
     interface ContainerConfig {
-      additionalMounts?: Array<{ hostPath: string; containerPath?: string; readonly?: boolean }>;
+      additionalMounts?: Array<{
+        hostPath: string;
+        containerPath?: string;
+        readonly?: boolean;
+      }>;
       timeout?: number;
       skills?: string[];
       globalAccess?: { [subdir: string]: { readonly: boolean } };
