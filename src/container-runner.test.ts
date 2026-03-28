@@ -111,6 +111,42 @@ function emitOutputMarker(
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
+describe('memory directory bootstrap', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('pre-creates the Claude Code memory directory before spawning the container', async () => {
+    const { default: fs } = await import('fs');
+    const mkdirSyncMock = vi.mocked(fs.mkdirSync);
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+    );
+
+    // Resolve the container immediately
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    // Verify mkdirSync was called with the memory path
+    const memoryPathCall = mkdirSyncMock.mock.calls.find(
+      ([p]) => typeof p === 'string' && p.includes('-workspace-group/memory'),
+    );
+    expect(memoryPathCall).toBeDefined();
+    expect(memoryPathCall![1]).toEqual({ recursive: true });
+  });
+});
+
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
