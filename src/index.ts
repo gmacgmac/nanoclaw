@@ -359,7 +359,10 @@ async function runAgent(
   try {
     // Debug: log allowedTools being passed to container
     if (group.containerConfig?.allowedTools) {
-      logger.info({ group: group.name, allowedTools: group.containerConfig.allowedTools }, 'Passing allowedTools to container');
+      logger.info(
+        { group: group.name, allowedTools: group.containerConfig.allowedTools },
+        'Passing allowedTools to container',
+      );
     }
 
     const output = await runContainerAgent(

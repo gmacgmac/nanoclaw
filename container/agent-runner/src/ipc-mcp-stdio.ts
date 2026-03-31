@@ -45,11 +45,15 @@ server.tool(
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    target_jid: z.string().optional().describe('(Main group only) JID of the target group to send to. Defaults to the current group. Use this to send messages to other registered groups like "dashboard@internal".'),
   },
   async (args) => {
+    // Non-main groups can only send to themselves
+    const targetJid = isMain && args.target_jid ? args.target_jid : chatJid;
+
     const data: Record<string, string | undefined> = {
       type: 'message',
-      chatJid,
+      chatJid: targetJid,
       text: args.text,
       sender: args.sender || undefined,
       groupFolder,
@@ -58,7 +62,7 @@ server.tool(
 
     writeIpcFile(MESSAGES_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
+    return { content: [{ type: 'text' as const, text: `Message sent to ${targetJid}.` }] };
   },
 );
 
@@ -153,6 +157,41 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 );
 
 server.tool(
+  'get_registered_groups',
+  'List all registered groups that you can send messages to. Use this to discover group JIDs for send_message target_jid parameter.',
+  {},
+  async () => {
+    const groupsFile = path.join(IPC_DIR, 'registered_groups.json');
+
+    try {
+      if (!fs.existsSync(groupsFile)) {
+        return { content: [{ type: 'text' as const, text: 'No registered groups found.' }] };
+      }
+
+      const data = JSON.parse(fs.readFileSync(groupsFile, 'utf-8'));
+      const groups = data.groups as Array<{ jid: string; name: string; folder: string; isMain: boolean }>;
+
+      if (groups.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No registered groups found.' }] };
+      }
+
+      const formatted = groups
+        .map((g) => {
+          const mainFlag = g.isMain ? ' [main]' : '';
+          return `- ${g.jid}: "${g.name}" (folder: ${g.folder})${mainFlag}`;
+        })
+        .join('\n');
+
+      return { content: [{ type: 'text' as const, text: `Registered groups:\n${formatted}` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error reading groups: ${err instanceof Error ? err.message : String(err)}` }],
+      };
+    }
+  },
+);
+
+server.tool(
   'list_tasks',
   "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
   {},
@@ -187,6 +226,42 @@ server.tool(
         content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
       };
     }
+  },
+);
+
+server.tool(
+  'register_group',
+  `Register a new chat/group so the agent can respond to messages there. Main group only.
+
+Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
+  {
+    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
+    name: z.string().describe('Display name for the group'),
+    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
+    trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'register_group',
+      jid: args.jid,
+      name: args.name,
+      folder: args.folder,
+      trigger: args.trigger,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+    };
   },
 );
 
@@ -298,39 +373,10 @@ server.tool(
 );
 
 server.tool(
-  'register_group',
-  `Register a new chat/group so the agent can respond to messages there. Main group only.
-
-Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
-  {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
-    name: z.string().describe('Display name for the group'),
-    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
-    trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
-  },
-  async (args) => {
-    if (!isMain) {
-      return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
-        isError: true,
-      };
-    }
-
-    const data = {
-      type: 'register_group',
-      jid: args.jid,
-      name: args.name,
-      folder: args.folder,
-      trigger: args.trigger,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
-    };
-  },
+  'ping',
+  'Test tool. Returns pong.',
+  {},
+  async () => ({ content: [{ type: 'text' as const, text: 'pong' }] }),
 );
 
 // Start the stdio transport
