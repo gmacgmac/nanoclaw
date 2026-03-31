@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install claude-code globally (agent-browser is mounted per-group at runtime)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
@@ -47,6 +47,10 @@ COPY agent-runner/ ./
 
 # Build TypeScript
 RUN npm run build
+
+# Copy and build Brave Search MCP server
+COPY mcp-servers/brave-search/ /app/mcp-servers/brave-search/
+RUN cd /app/mcp-servers/brave-search && npm install --ignore-scripts && npm run build
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input

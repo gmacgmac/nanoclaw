@@ -4,7 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { AvailableGroup } from './container-runner.js';
+import { AvailableGroup, RegisteredGroupSnapshot } from './container-runner.js';
 import {
   createTask,
   deleteTask,
@@ -26,7 +26,7 @@ export interface IpcDeps {
     groupFolder: string,
     isMain: boolean,
     availableGroups: AvailableGroup[],
-    registeredJids: Set<string>,
+    registeredGroups: RegisteredGroupSnapshot[],
   ) => void;
   onTasksChanged: () => void;
 }
@@ -153,6 +153,7 @@ export async function processIpcMessageData(
     text?: string;
     source?: string;
     sender_name?: string;
+    sender?: string;
   },
   sourceGroup: string,
   isMain: boolean,
@@ -179,7 +180,8 @@ export async function processIpcMessageData(
   }
 
   const senderSource = data.source || sourceGroup;
-  const senderName = data.sender_name || senderSource;
+  // Priority: sender (from MCP tool) > sender_name (from IPC) > source
+  const senderName = data.sender || data.sender_name || senderSource;
   storeMessageDirect({
     id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     chat_jid: data.chatJid,
@@ -449,11 +451,19 @@ export async function processTaskIpc(
         await deps.syncGroups(true);
         // Write updated snapshot immediately
         const availableGroups = deps.getAvailableGroups();
+        const registeredGroupsList = Object.entries(registeredGroups).map(
+          ([jid, g]) => ({
+            jid,
+            name: g.name,
+            folder: g.folder,
+            isMain: g.isMain === true,
+          }),
+        );
         deps.writeGroupsSnapshot(
           sourceGroup,
           true,
           availableGroups,
-          new Set(Object.keys(registeredGroups)),
+          registeredGroupsList,
         );
       } else {
         logger.warn(

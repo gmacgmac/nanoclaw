@@ -28,6 +28,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+import { readEnvFile } from './env.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -46,6 +47,13 @@ export interface ContainerInput {
   model?: string;
   systemPrompt?: string;
   script?: string;
+  mcpServers?: {
+    [name: string]: {
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    };
+  };
 }
 
 export interface ContainerOutput {
@@ -284,6 +292,54 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount agent-browser binary only for groups that have the skill allowed.
+  // The binary is NOT installed in the Docker image — this is the only way to get it.
+  // We mount both the package dir (for skills/scripts) and the native binary to /usr/local/bin.
+  const agentBrowserPkg = path.join(
+    process.cwd(),
+    'container',
+    'binaries',
+    'agent-browser',
+  );
+  if (
+    fs.existsSync(agentBrowserPkg) &&
+    (!allowedSkills || allowedSkills.includes('agent-browser'))
+  ) {
+    // Map Node.js arch to the binary naming convention used by agent-browser
+    const archMap: Record<string, string> = {
+      arm64: 'linux-arm64',
+      x64: 'linux-x64',
+    };
+    const binaryVariant = archMap[process.arch] ?? 'linux-x64';
+    const nativeBin = path.join(
+      agentBrowserPkg,
+      'bin',
+      `agent-browser-${binaryVariant}`,
+    );
+
+    // Mount the full package so the binary can resolve relative paths (e.g. skills/)
+    mounts.push({
+      hostPath: agentBrowserPkg,
+      containerPath: '/usr/local/lib/node_modules/agent-browser',
+      readonly: true,
+    });
+
+    // Mount the native binary directly to /usr/local/bin/agent-browser
+    // (replaces the symlink that postinstall would have created)
+    if (fs.existsSync(nativeBin)) {
+      mounts.push({
+        hostPath: nativeBin,
+        containerPath: '/usr/local/bin/agent-browser',
+        readonly: true,
+      });
+    } else {
+      logger.warn(
+        { group: group.name, binaryVariant },
+        'agent-browser native binary not found for arch',
+      );
+    }
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -300,6 +356,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  group: RegisteredGroup,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -325,6 +382,20 @@ function buildContainerArgs(
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
+
+  // Inject Brave Search API key if this group uses the brave-search MCP server.
+  // Key is read from secrets.env on the host — never hardcoded or logged.
+  if (group.containerConfig?.mcpServers?.['brave-search']) {
+    const secrets = readEnvFile(['BRAVE_SEARCH_API_KEY']);
+    if (secrets.BRAVE_SEARCH_API_KEY) {
+      args.push('-e', `BRAVE_SEARCH_API_KEY=${secrets.BRAVE_SEARCH_API_KEY}`);
+    } else {
+      logger.warn(
+        { group: group.name },
+        'brave-search MCP configured but BRAVE_SEARCH_API_KEY not found in secrets',
+      );
+    }
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -363,7 +434,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group);
 
   logger.debug(
     {
@@ -771,6 +842,13 @@ export interface AvailableGroup {
   isRegistered: boolean;
 }
 
+export interface RegisteredGroupSnapshot {
+  jid: string;
+  name: string;
+  folder: string;
+  isMain: boolean;
+}
+
 /**
  * Write available groups snapshot for the container to read.
  * Only main group can see all available groups (for activation).
@@ -780,7 +858,7 @@ export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
   groups: AvailableGroup[],
-  _registeredJids: Set<string>,
+  registeredGroups: RegisteredGroupSnapshot[],
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
@@ -794,6 +872,21 @@ export function writeGroupsSnapshot(
     JSON.stringify(
       {
         groups: visibleGroups,
+        lastSync: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+
+  // Write registered groups (for cross-group messaging)
+  // All groups can see all registered groups (to send messages)
+  const registeredFile = path.join(groupIpcDir, 'registered_groups.json');
+  fs.writeFileSync(
+    registeredFile,
+    JSON.stringify(
+      {
+        groups: registeredGroups,
         lastSync: new Date().toISOString(),
       },
       null,

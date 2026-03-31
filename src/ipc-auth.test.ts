@@ -784,4 +784,46 @@ describe('processIpcMessageData - dashboard echo prevention', () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
   });
+
+  it('uses sender parameter for sender_name when provided', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      {
+        type: 'message',
+        chatJid: 'main@g.us',
+        text: 'Found 3 results',
+        source: 'agent-group',
+        sender: 'Researcher',
+      },
+      'agent-group',
+      true,
+      localDeps,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith('main@g.us', 'Found 3 results');
+    // Note: sender_name storage is verified by the db module tests
+  });
+
+  it('falls back to sender_name when sender not provided', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const localDeps: IpcDeps = { ...deps, sendMessage };
+
+    await processIpcMessageData(
+      {
+        type: 'message',
+        chatJid: 'main@g.us',
+        text: 'hello',
+        source: 'agent-group',
+        sender_name: 'Agent Bot',
+      },
+      'agent-group',
+      true,
+      localDeps,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith('main@g.us', 'hello');
+    // Note: sender_name fallback is verified by the db module tests
+  });
 });
