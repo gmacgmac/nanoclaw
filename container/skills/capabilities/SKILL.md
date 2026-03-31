@@ -44,14 +44,16 @@ Read the allowed tools from your SDK configuration. You always have access to:
 ### 3. MCP server tools
 
 The NanoClaw MCP server exposes these tools (via `mcp__nanoclaw__*` prefix):
-- `send_message` — send a message to the user/group
+- `send_message` — send a message to the user/group (main can send to any registered group via `target_jid`)
 - `schedule_task` — schedule a recurring or one-time task
 - `list_tasks` — list scheduled tasks
 - `pause_task` — pause a scheduled task
 - `resume_task` — resume a paused task
 - `cancel_task` — cancel and delete a task
 - `update_task` — update an existing task
+- `get_registered_groups` — list registered groups (to find JIDs for `send_message target_jid`)
 - `register_group` — register a new chat/group (main only)
+- `ping` — test tool, returns pong
 
 ### 4. Container skills (Bash tools)
 

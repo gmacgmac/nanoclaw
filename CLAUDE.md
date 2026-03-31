@@ -24,9 +24,16 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/env.ts` | Environment variable loading from secrets.env and .env |
 | `src/logger.ts` | Built-in logger with DB error wrapper |
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
+| `store/messages.db` | SQLite database (registered_groups, messages, sessions tables) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers (SDK invocation) |
+
+## Host-Side Development (This Chat)
+
+When working in Claude Code CLI on the host (this context), write memories to this CLAUDE.md file, not to `~/.claude/projects/` auto-memory. The auto-memory system is machine-specific and not portable. Group chats use their own memory system inside containers (`groups/{name}/CLAUDE.md` + `data/sessions/{group}/memory/`).
+
+Query the database with: `sqlite3 store/messages.db`
 
 ## Secrets / Credentials / Proxy
 
@@ -47,10 +54,15 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
 | `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control. `{}` = no access, `{ "*": { readonly: true } }` = all |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
+| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
 | `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`) |
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
+
+**`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
+
+**`allowedTools` complement**: The agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime. This blocks preset-injected CLI tools that bypass the SDK's `allowedTools` filter. You never configure `disallowedTools` directly.
 
 ## Session Architecture
 
@@ -143,4 +155,65 @@ systemctl --user restart nanoclaw
 
 ## Container Build Cache
 
-The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+Multiple caching layers can prevent container code changes from appearing. The complete fix:
+
+```bash
+# 1. CRITICAL: Delete cached agent-runner source (most common issue)
+rm -rf data/sessions/*/agent-runner-src
+
+# 2. Delete local dist/ (BuildKit caches this)
+rm -rf container/agent-runner/dist
+
+# 3. Prune BuildKit cache
+docker builder prune -f
+
+# 4. Rebuild from correct directory
+./container/build.sh
+
+# 5. Kill running containers
+docker ps --filter ancestor=nanoclaw-agent:latest -q | xargs -r docker kill
+```
+
+**When you need a clean rebuild**:
+- TypeScript changes in `container/agent-runner/src/` aren't appearing
+- New MCP tools or skills not loading
+- Agent reports outdated tool definitions
+- Image ID unchanged after rebuild
+
+**After MCP tool changes**, also update `container/skills/*/SKILL.md` to match actual tools (synced at container start).
+
+**If agent still reports old tools**, clear the session transcript:
+```bash
+rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
+sqlite3 store/messages.db "UPDATE sessions SET session_id=NULL WHERE group_folder='<group>'"
+```
+
+For detailed explanation, see [agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md](agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md).
+
+## Memory
+
+Store persistent context here (not in `~/.claude/projects/` auto-memory). This file travels with the repo.
+
+### User Preferences
+
+- User types answers directly in chat rather than using AskUserQuestion option buttons. For free-text values (usernames, tokens, IDs), just ask in chat text instead of using AskUserQuestion.
+
+### Project State
+
+- **Provider**: Ollama at `http://localhost:11434` (Anthropic-compatible API)
+- **Model**: `glm-5:cloud` (set via `ANTHROPIC_MODEL` in `.env` and `data/sessions/{group}/.claude/settings.json`)
+- **Credentials**: Native credential proxy — reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from `.env`
+- **Channel**: Telegram bot `@dandysandy_bot` (token in `.env`)
+- **Registered chat**: `tg:6013943815` (GM's DM), folder `telegram_main`, no trigger required (main group)
+- **Group containerConfig**: `allowedTools` excludes `WebSearch` and `WebFetch`
+- **Sender allowlist**: `~/.config/nanoclaw/sender-allowlist.json` — only user ID `6013943815` allowed
+- **Mount allowlist**: empty (isolated), at `~/.config/nanoclaw/mount-allowlist.json`
+- **Fork**: `https://github.com/gmacgmac/nanoclaw.git` (origin), upstream `https://github.com/qwibitai/nanoclaw.git`
+- **Skills merged**: `skill/native-credential-proxy`, `telegram/main`
+- **Service**: launchd on macOS (`com.nanoclaw`)
+
+### References
+
+<!-- Pointers to external resources, dashboards, documentation -->
+
+<!-- END MEMORY -->
