@@ -56,16 +56,36 @@ Write to: `DATA_DIR/ipc/{group_folder}/messages/{uuid}.json`
 | `type` | string | yes | Must be `"message"` |
 | `chatJid` | string | yes | Target chat JID (must be registered) |
 | `text` | string | yes | Message content to send |
-| `sender_name` | string | no | Display name for the sender (default: `source` or group folder) |
-| `source` | string | no | Source identifier stored as `sender` (default: group folder name) |
+| `sender` | string | no | Display name for subagent identity (e.g., `"Researcher"`) |
+| `sender_name` | string | no | Display name for the sender (default: `sender` or `source` or group folder) |
+| `source` | string | no | Source identifier stored as `sender` field (default: group folder name) |
 
 **Authorization**: Main group can send to any registered chat. Non-main groups can only send to their own chat.
 
 **Storage**: Messages sent via IPC are stored in the `messages` table with:
 - `sender`: `{source}@ipc` (e.g., `dashboard@ipc`)
-- `sender_name`: Value from `sender_name` field or `source`
+- `sender_name`: Priority: `sender` → `sender_name` → `source` (e.g., `"Researcher"` for subagent messages)
 - `is_from_me`: `1` (sent by the bot)
 - `is_bot_message`: `0` (not a bot response)
+
+**Cross-Group Messaging**: The `send_message` MCP tool supports a `target_jid` parameter (main group only) to send messages to other registered groups. For example, to send from the main group to the dashboard:
+
+```
+mcp__nanoclaw__send_message(text="Hello", target_jid="dashboard@internal")
+```
+
+**Subagent Messages**: When using the `send_message` MCP tool from within an agent, you can specify a `sender` parameter to attribute the message to a specific subagent identity. This is useful for agent teams where different subagents should appear as distinct speakers in the conversation:
+
+```json
+{
+  "type": "message",
+  "chatJid": "dashboard@internal",
+  "text": "Found 3 relevant papers on the topic.",
+  "sender": "Researcher"
+}
+```
+
+The `sender_name` field in the database will show `"Researcher"`, allowing dashboard UIs to display which subagent sent each message.
 
 ---
 
@@ -295,6 +315,59 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 |--------|------|-------------|
 | `group_folder` | TEXT PK | Group folder |
 | `session_id` | TEXT | Active session ID |
+
+---
+
+## Container Snapshot Files
+
+The host writes snapshot files to `/workspace/ipc/` for containers to read:
+
+### `current_tasks.json`
+
+Scheduled tasks visible to the current group. Main group sees all tasks; other groups see only their own.
+
+```json
+[
+  {
+    "id": "task-123",
+    "groupFolder": "telegram_main",
+    "prompt": "...",
+    "schedule_type": "cron",
+    "schedule_value": "0 9 * * *",
+    "status": "active",
+    "next_run": "2026-03-30T09:00:00Z"
+  }
+]
+```
+
+### `available_groups.json`
+
+Groups available for activation (from channels like Telegram/WhatsApp). Main group only; other groups see empty array.
+
+```json
+{
+  "groups": [
+    { "jid": "tg:-1001234567890", "name": "Dev Team", "lastActivity": "...", "isRegistered": false }
+  ],
+  "lastSync": "2026-03-30T12:00:00Z"
+}
+```
+
+### `registered_groups.json`
+
+All registered groups (for cross-group messaging). Available to all groups.
+
+```json
+{
+  "groups": [
+    { "jid": "tg:6013943815", "name": "GM", "folder": "telegram_main", "isMain": true },
+    { "jid": "dashboard@internal", "name": "Dashboard", "folder": "dashboard", "isMain": true }
+  ],
+  "lastSync": "2026-03-30T12:00:00Z"
+}
+```
+
+Use the `list_groups` MCP tool to discover JIDs for cross-group messaging with `send_message target_jid`.
 
 ---
 

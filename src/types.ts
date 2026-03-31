@@ -74,6 +74,19 @@ export interface ContainerConfig {
    * This is the agent's "soul" — persona, instructions, constraints.
    */
   systemPrompt?: string;
+
+  /**
+   * Per-group MCP servers to spawn alongside the built-in nanoclaw server.
+   * Key is the server name (e.g. "brave-search"), value is the spawn config.
+   * API keys for MCP servers are injected by container-runner as env vars.
+   */
+  mcpServers?: {
+    [name: string]: {
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    };
+  };
 }
 
 export interface RegisteredGroup {

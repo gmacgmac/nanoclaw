@@ -165,6 +165,42 @@ Tell the user:
 tail -f logs/nanoclaw.log
 ```
 
+## Phase 6: Configure Formatting
+
+Telegram uses Markdown v1 syntax which differs from standard Markdown. Add the `telegram-formatting` skill to ensure proper rendering.
+
+### Update containerConfig
+
+After registration, update the group's `containerConfig` to include the formatting skill:
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"telegram-formatting\"]') ) WHERE folder = '<folder_name>'"
+```
+
+Or for a minimal config (only formatting, no extra skills):
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"telegram-formatting\"]') ) WHERE folder = '<folder_name>'"
+```
+
+Then clear the skills cache and restart:
+
+```bash
+rm -rf data/sessions/<folder_name>/.claude/skills
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
+# Linux: systemctl --user restart nanoclaw
+```
+
+### Formatting differences
+
+| Standard Markdown | Telegram Markdown v1 |
+|------------------|----------------------|
+| `**bold**` | `*bold*` |
+| `*italic*` | `_italic_` |
+| `` `code` `` | `` `code` `` (same) |
+
+The `telegram-formatting` skill instructs the agent to use `*bold*` and `_italic_` instead of `**bold**` and `*italic*`.
+
 ## Troubleshooting
 
 ### Bot not responding

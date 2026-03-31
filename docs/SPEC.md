@@ -59,12 +59,13 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
-│  │  Tools (all groups):                                           │    │
+│  │  Tools (configurable per-group via allowedTools):               │    │
 │  │    • Bash (safe - sandboxed in container!)                     │    │
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
 │  │    • WebSearch, WebFetch (internet access)                     │    │
-│  │    • agent-browser (browser automation)                        │    │
-│  │    • mcp__nanoclaw__* (scheduler tools via IPC)                │    │
+│  │    • agent-browser (only if skill explicitly allowed)          │    │
+│  │    • mcp__nanoclaw__* (scheduler tools via IPC — always on)    │    │
+│  │    • Per-group MCP servers (e.g. brave-search)                 │    │
 │  │                                                                │    │
 │  └──────────────────────────────────────────────────────────────┘    │
 │                                                                       │
@@ -277,6 +278,10 @@ nanoclaw/
 │   │   └── src/
 │   │       ├── index.ts           # Entry point (query loop, IPC polling, session resume)
 │   │       └── ipc-mcp-stdio.ts   # Stdio-based MCP server for host communication
+│   ├── binaries/                  # Host-stored binaries (NOT in Docker image)
+│   │   └── agent-browser/         # MUST be committed to git — runtime source for browser skill
+│   ├── mcp-servers/               # Self-built MCP servers (built into Docker image)
+│   │   └── brave-search/          # Brave Search API wrapper
 │   └── skills/
 │       └── agent-browser.md       # Browser automation skill
 │
@@ -362,6 +367,12 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
   "skills": ["status", "browser"],
   "globalAccess": { "categories": { "readonly": false } },
   "allowedTools": ["Read", "Grep", "WebSearch"],
+  "mcpServers": {
+    "brave-search": {
+      "command": "node",
+      "args": ["/app/mcp-servers/brave-search/dist/index.js"]
+    }
+  },
   "model": "sonnet",
   "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
   "timeout": 3600000,
@@ -378,6 +389,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection |
 | `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
+| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
 | `model` | `string` | `undefined` = inherit | Per-group model override |
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
@@ -390,6 +402,10 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | `undefined` / absent | All skills copied (backward compatible) |
 | `[]` | No skills — minimal container |
 | `["status", "browser"]` | Only named skills |
+
+**`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined for backward compat). Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
+
+> **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
 
 #### `globalAccess` — Global Directory Mount Control
 
@@ -412,12 +428,34 @@ When `"*"` is present, all other keys are ignored.
 
 `mcp__nanoclaw__*` is always included regardless of config (IPC must work).
 
-Default tool list:
+**How it works — `disallowedTools` complement:**
+
+The SDK's `allowedTools` parameter only filters SDK-registered tools. The `claude_code` preset injects additional CLI tools (`Agent`, `CronCreate`, `EnterPlanMode`, etc.) that bypass `allowedTools` entirely. To make the whitelist actually work, the agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime:
+
 ```
-Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch,
-Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage,
-TodoWrite, ToolSearch, Skill, NotebookEdit, mcp__nanoclaw__*
+disallowedTools = ALL_KNOWN_TOOLS − allowedTools
 ```
+
+`disallowedTools` reliably blocks any tool, including preset-injected ones. This is computed automatically — you never configure `disallowedTools` directly. When `allowedTools` is absent, `disallowedTools` is empty (all tools allowed).
+
+Full tool reference — use these names in `allowedTools`:
+
+| Category | Tools |
+|----------|-------|
+| File Operations | `Read`, `Write`, `Edit`, `Glob`, `Grep` |
+| Execution | `Bash`, `NotebookEdit` |
+| Web | `WebSearch`, `WebFetch` |
+| Planning | `EnterPlanMode`, `ExitPlanMode` |
+| Tasks | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TaskOutput` |
+| Scheduling | `CronCreate`, `CronDelete`, `CronList` |
+| Git/Worktree | `EnterWorktree`, `ExitWorktree` |
+| Agent Teams | `TeamCreate`, `TeamDelete`, `SendMessage` |
+| Agent & Skills | `Agent`, `Skill`, `RemoteTrigger` |
+| User Interaction | `AskUserQuestion` |
+| Misc | `TodoWrite`, `ToolSearch` |
+| Always included | `mcp__nanoclaw__*` (IPC — cannot be removed) |
+
+> **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, review the tool list and update `ALL_KNOWN_TOOLS` in `container/agent-runner/src/index.ts` and this table.
 
 #### `model` — Per-Group Model Override
 
@@ -457,6 +495,30 @@ setRegisteredGroup("1234567890@g.us", {
 Folder names follow the convention `{channel}_{group-name}` (e.g., `whatsapp_family-chat`, `telegram_dev-team`). The main group has `isMain: true` set during registration.
 
 **Mount syntax note:** Read-write mounts use `-v host:container`, but readonly mounts require `--mount "type=bind,source=...,target=...,readonly"` (the `:ro` suffix may not work on all runtimes).
+
+#### `mcpServers` — Per-Group MCP Servers
+
+Add additional MCP servers to a group's container alongside the always-present `nanoclaw` IPC server.
+
+```json
+{
+  "mcpServers": {
+    "brave-search": {
+      "command": "node",
+      "args": ["/app/mcp-servers/brave-search/dist/index.js"]
+    }
+  }
+}
+```
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | Only `nanoclaw` IPC server |
+| `{ "brave-search": { ... } }` | Adds Brave Search alongside nanoclaw |
+
+The `nanoclaw` server is always present and cannot be overridden — if a group config includes a key named `nanoclaw`, it is silently ignored.
+
+**Brave Search MCP**: A self-built MCP server at `container/mcp-servers/brave-search/` that wraps the Brave Search API. The API key (`BRAVE_SEARCH_API_KEY`) is read from `~/.config/nanoclaw/secrets.env` on the host and injected as a container env var — the container never sees the host secrets file.
 
 ### Claude Authentication
 

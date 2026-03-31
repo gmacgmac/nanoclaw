@@ -155,6 +155,8 @@ systemctl --user restart nanoclaw
 
 ## Container Build Cache
 
+**Root cause**: Containers run from a *cached copy* of the agent-runner source at `data/sessions/*/agent-runner-src/`, not from `container/agent-runner/src/` directly. Changes to the source won't appear until this cache is cleared. This is the most common reason MCP tool changes or SDK updates don't take effect. (Tracked: issue #722; PR #1515 may introduce `.mcp.json` per-group config as a cleaner path for MCP changes.)
+
 Multiple caching layers can prevent container code changes from appearing. The complete fix:
 
 ```bash
@@ -185,7 +187,22 @@ docker ps --filter ancestor=nanoclaw-agent:latest -q | xargs -r docker kill
 **If agent still reports old tools**, clear the session transcript:
 ```bash
 rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
-sqlite3 store/messages.db "UPDATE sessions SET session_id=NULL WHERE group_folder='<group>'"
+sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<group>'"
+```
+
+**To clear chat history for a group** (fresh start, no conversation memory):
+```bash
+# 1. Delete session row from database
+sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'"
+
+# 2. Delete transcript files
+rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
+
+# 3. (Optional) Clear auto-memory
+rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
+
+# 4. Restart service
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
 For detailed explanation, see [agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md](agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md).

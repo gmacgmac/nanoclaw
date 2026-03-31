@@ -32,6 +32,13 @@ interface ContainerInput {
   model?: string;
   systemPrompt?: string;
   script?: string;
+  mcpServers?: {
+    [name: string]: {
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    };
+  };
 }
 
 interface ContainerOutput {
@@ -62,6 +69,34 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+
+// All known tools (SDK + claude_code preset built-ins).
+// Update this list when upgrading the Claude Agent SDK.
+// Source of truth: agentic-tools/nanoclaw/README.md tool reference table.
+const ALL_KNOWN_TOOLS = [
+  // File operations
+  'Read', 'Write', 'Edit', 'Glob', 'Grep',
+  // Execution
+  'Bash', 'NotebookEdit',
+  // Web
+  'WebSearch', 'WebFetch',
+  // Planning
+  'EnterPlanMode', 'ExitPlanMode',
+  // Tasks
+  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TaskOutput',
+  // Scheduling
+  'CronCreate', 'CronDelete', 'CronList',
+  // Git/Worktree
+  'EnterWorktree', 'ExitWorktree',
+  // Agent teams
+  'TeamCreate', 'TeamDelete', 'SendMessage',
+  // Agent & Skills
+  'Agent', 'Skill', 'RemoteTrigger',
+  // User interaction
+  'AskUserQuestion',
+  // Misc
+  'TodoWrite', 'ToolSearch',
+];
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -371,29 +406,19 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Default tools list (current hardcoded list)
-  // Always includes mcp__nanoclaw__* so IPC works regardless of config.
-  const defaultTools = [
-    'Bash',
-    'Read', 'Write', 'Edit', 'Glob', 'Grep',
-    'WebSearch', 'WebFetch',
-    'Task', 'TaskOutput', 'TaskStop',
-    'TeamCreate', 'TeamDelete', 'SendMessage',
-    'TodoWrite', 'ToolSearch', 'Skill',
-    'NotebookEdit',
-    'mcp__nanoclaw__*'
-  ];
-
-  // Use per-group tools if configured, otherwise default.
+  // Use per-group tools if configured, otherwise all known tools.
+  // mcp__nanoclaw__* is always included so IPC works regardless of config.
   const tools = containerInput.allowedTools
     ? [...containerInput.allowedTools, 'mcp__nanoclaw__*']
-    : defaultTools;
+    : [...ALL_KNOWN_TOOLS, 'mcp__nanoclaw__*'];
 
-  // Explicitly block WebSearch/WebFetch if not in allowed list.
-  // This overrides any context from resumed sessions that might reference these tools.
-  const disallowedTools: string[] = [];
-  if (!tools.includes('WebSearch')) disallowedTools.push('WebSearch');
-  if (!tools.includes('WebFetch')) disallowedTools.push('WebFetch');
+  // Compute disallowedTools as the complement of allowedTools.
+  // The SDK's allowedTools only filters SDK-registered tools; preset-injected CLI tools
+  // (Agent, CronCreate, EnterPlanMode, etc.) bypass it. disallowedTools blocks everything.
+  // mcp__nanoclaw__* is never disallowed — IPC must always work.
+  const disallowedTools = containerInput.allowedTools
+    ? ALL_KNOWN_TOOLS.filter(t => !tools.includes(t))
+    : [];
 
   // Apply model override if configured
   if (containerInput.model) {
@@ -452,6 +477,9 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        // Merge per-group MCP servers from containerConfig.
+        // nanoclaw is always present and cannot be overridden.
+        ...(containerInput.mcpServers || {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

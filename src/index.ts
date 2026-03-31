@@ -338,11 +338,19 @@ async function runAgent(
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
+  const registeredGroupsList = Object.entries(registeredGroups).map(
+    ([jid, g]) => ({
+      jid,
+      name: g.name,
+      folder: g.folder,
+      isMain: g.isMain === true,
+    }),
+  );
   writeGroupsSnapshot(
     group.folder,
     isMain,
     availableGroups,
-    new Set(Object.keys(registeredGroups)),
+    registeredGroupsList,
   );
 
   // Wrap onOutput to track session ID from streamed results
@@ -378,6 +386,7 @@ async function runAgent(
         allowedTools: group.containerConfig?.allowedTools,
         model: group.containerConfig?.model,
         systemPrompt: group.containerConfig?.systemPrompt,
+        mcpServers: group.containerConfig?.mcpServers,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
