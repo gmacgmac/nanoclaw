@@ -5,7 +5,21 @@ description: Format messages for Telegram using Markdown v1 syntax. Use when res
 
 # Telegram Message Formatting (Markdown v1)
 
-When responding to Telegram channels, use Telegram's Markdown v1 syntax instead of standard Markdown.
+## STOP: Read This First
+
+**You are in a Telegram channel. Your text output AND your send_message calls BOTH go to the user as separate messages.**
+
+This means:
+- If you use `send_message` with the weather, then output text "I sent the weather" → user gets TWO messages
+- If you use `send_message` then output "The formatting worked" → user gets TWO messages
+
+**Rule: Your ENTIRE response must be ONE `send_message` call. NO text output before or after. NO commentary. NO follow-up.**
+
+When you respond to Telegram:
+1. Call `mcp__nanoclaw__send_message` with your complete message
+2. STOP. Do not output any text. Your job is done.
+
+The rest of this skill describes how to format the text inside `send_message`.
 
 ## How to detect Telegram context
 

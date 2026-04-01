@@ -66,7 +66,9 @@ Write to: `DATA_DIR/ipc/{group_folder}/messages/{uuid}.json`
 - `sender`: `{source}@ipc` (e.g., `dashboard@ipc`)
 - `sender_name`: Priority: `sender` → `sender_name` → `source` (e.g., `"Researcher"` for subagent messages)
 - `is_from_me`: `1` (sent by the bot)
-- `is_bot_message`: `0` (not a bot response)
+- `is_bot_message`: `1` (bot response — filtered out by the message loop so the agent does not respond to its own output)
+
+> **Important**: `is_bot_message` MUST be `1` for any bot-originated message stored in the `messages` table. If set to `0`, the message loop treats it as a new user message and fires the agent again, causing the agent to respond to its own output. Fixed in `src/ipc.ts` 2026-03-31 (was incorrectly `false` since the column was introduced).
 
 **Cross-Group Messaging**: The `send_message` MCP tool supports a `target_jid` parameter (main group only) to send messages to other registered groups. For example, to send from the main group to the dashboard:
 

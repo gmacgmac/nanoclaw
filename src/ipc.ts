@@ -190,7 +190,7 @@ export async function processIpcMessageData(
     content: data.text,
     timestamp: new Date().toISOString(),
     is_from_me: true,
-    is_bot_message: false,
+    is_bot_message: true,
   });
   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
 }

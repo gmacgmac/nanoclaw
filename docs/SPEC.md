@@ -702,11 +702,38 @@ When a container starts, context is loaded in this order:
 10. Router updates last agent timestamp and saves session ID
 ```
 
-### Trigger Word Matching
+### Outbound Response Delivery
 
-Messages must start with the trigger pattern (default: `@Andy`):
-- `@Andy what's the weather?` → ✅ Triggers Claude
-- `@andy help me` → ✅ Triggers (case insensitive)
+Understanding how agent output reaches the user is critical when writing CLAUDE.md instructions or debugging duplicate messages.
+
+**Two independent delivery paths exist:**
+
+| Path | Source | When it fires |
+|------|--------|---------------|
+| Text output | `result.result` from the container | When the agent finishes (per streaming result) |
+| `send_message` MCP tool | `mcp__nanoclaw__send_message` | Immediately, mid-run, when the agent calls it |
+
+Both paths call `channel.sendMessage()` independently. If an agent calls `send_message` AND produces text output, the user receives two separate messages. This is the most common source of duplicate messages.
+
+**Correct use of `send_message`:**
+- Mid-run acknowledgement before a long task ("On it, give me a moment")
+- Delegating to another group via `target_jid`
+
+For normal replies, the agent should respond with text output only. This must be stated explicitly in each group's `CLAUDE.md` — agents default to using `send_message` for everything if not instructed otherwise.
+
+**Suppressing unwanted output:** `formatOutbound()` in `src/router.ts` strips `<internal>...</internal>` blocks before sending text output to the channel. Agents can wrap post-tool commentary in `<internal>` tags to prevent it reaching the user:
+
+```
+<internal>Message sent, waiting for next input.</internal>
+```
+
+**Channel-specific formatting:** Each channel requires different markdown syntax. Always include the relevant formatting skill in `containerConfig.skills` — do not duplicate rules in CLAUDE.md:
+
+| Channel | Skill | Key rule |
+|---------|-------|----------|
+| Telegram | `telegram-formatting` | Markdown v1 — `*bold*`, no `**double**`, no `# headings` |
+| Slack | `slack-formatting` | mrkdwn — `*bold*`, `<url\|text>` links |
+| Discord | (none needed) | Standard markdown works |ggers (case insensitive)
 - `Hey @Andy` → ❌ Ignored (trigger not at start)
 - `What's up?` → ❌ Ignored (no trigger)
 

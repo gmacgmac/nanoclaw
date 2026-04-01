@@ -193,13 +193,30 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 
 ### Formatting differences
 
+The `telegram-formatting` skill is a formatting reference loaded into the agent's context. It covers Telegram Markdown v1 syntax. Do not duplicate formatting rules in CLAUDE.md — the skill is the single source of truth.
+
+Key differences from standard Markdown:
+
 | Standard Markdown | Telegram Markdown v1 |
 |------------------|----------------------|
 | `**bold**` | `*bold*` |
 | `*italic*` | `_italic_` |
 | `` `code` `` | `` `code` `` (same) |
+| `# Heading` | Not supported |
+| `> Blockquote` | Not supported |
 
-The `telegram-formatting` skill instructs the agent to use `*bold*` and `_italic_` instead of `**bold**` and `*italic*`.
+### Response delivery behaviour
+
+After adding the formatting skill, also update the group's `CLAUDE.md` to clarify how responses are delivered. The agent's text output AND `send_message` calls both go to Telegram as separate messages — agents default to using `send_message` for everything if not told otherwise, causing duplicate messages.
+
+Add to the group's `CLAUDE.md`:
+
+```markdown
+For normal replies, respond with text. Your text output is delivered directly to Telegram.
+Only use mcp__nanoclaw__send_message for mid-run progress updates or cross-group delegation.
+If you call send_message, wrap any follow-up text in <internal> tags so it is not delivered:
+<internal>Done.</internal>
+```
 
 ## Troubleshooting
 
