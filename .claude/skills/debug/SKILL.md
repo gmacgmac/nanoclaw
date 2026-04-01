@@ -171,7 +171,15 @@ mounts.push({
 });
 ```
 
-### 6. MCP Server Failures
+### 6. Double Messages / Agent Responding to Its Own Output
+
+**Symptom:** Agent sends a reply, then immediately sends a second message like "Message sent!" or "That was my response."
+
+**Cause A — Wrong `is_bot_message` value:** Any message stored in the `messages` table with `is_bot_message = 0` is treated as a new user message by the message loop. Check `src/ipc.ts` `processIpcMessageData()` — it must store with `is_bot_message: true`. This was a known bug fixed 2026-03-31.
+
+**Cause B — Agent outputting text after calling `send_message`:** Both the `send_message` MCP call and the agent's text output are delivered to the channel independently. The group's `CLAUDE.md` must explicitly tell the agent that text output is the primary delivery mechanism. See `docs/GROUP_DEBUG_CHECKLIST.md` for the full debug procedure.
+
+### 7. MCP Server Failures
 
 If an MCP server fails to start, the agent may exit. Check the container logs for MCP initialization errors.
 

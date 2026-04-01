@@ -83,12 +83,17 @@ Three memory layers:
 
 ## Context Loading Order
 
-1. Claude Code built-in system prompt (`claude_code` preset)
-2. `global/CLAUDE.md` content (non-main groups only, if file exists)
-3. `containerConfig.systemPrompt` (if set)
-4. Group `CLAUDE.md` (auto-loaded by SDK from `cwd` = `/workspace/group`)
-5. Auto-memory files (`memory/*.md`)
-6. Session transcript (if resuming an existing session)
+| Group type | What's loaded |
+|------------|---------------|
+| Main (`is_main=1`) | preset + `groups/{folder}/CLAUDE.md` |
+| Non-main | preset + `global/CLAUDE.md` + `groups/{folder}/CLAUDE.md` |
+
+Note: `main/CLAUDE.md` is a template (not auto-loaded). `global/CLAUDE.md` is appended for non-main groups only.
+
+After group CLAUDE.md:
+1. `containerConfig.systemPrompt` (if set)
+2. Auto-memory files (`memory/*.md`)
+3. Session transcript (if resuming)
 
 ## Skills
 
@@ -190,13 +195,19 @@ rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
 sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<group>'"
 ```
 
+**"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing both (see "To clear chat history for a group" below) and VERIFY each step.
+
 **To clear chat history for a group** (fresh start, no conversation memory):
 ```bash
 # 1. Delete session row from database
 sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'"
+# VERIFY: Should return nothing
+sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder='<folder>'"
 
 # 2. Delete transcript files
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
+# VERIFY: Should return nothing
+ls data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl 2>/dev/null
 
 # 3. (Optional) Clear auto-memory
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
@@ -204,6 +215,8 @@ rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
 # 4. Restart service
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
+
+**CRITICAL: Verify each step.** The SDK will fail with "No conversation found with session ID" if the database has a session ID but the JSONL file is missing. Always confirm the DELETE succeeded before deleting files.
 
 For detailed explanation, see [agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md](agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md).
 

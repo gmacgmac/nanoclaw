@@ -179,6 +179,44 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 
 ---
 
+## Double Messages / Agent Responding to Its Own Output
+
+### Symptoms
+
+- Agent sends a reply, then immediately sends a second message like "Message sent!" or "That was my response"
+- Agent appears to respond to its own previous message unprompted
+
+### Cause A — `is_bot_message` not set correctly
+
+Any message stored in the `messages` table with `is_bot_message = 0` is treated as a new user message by the message loop. If a bot-originated message is stored this way, the agent fires again to "respond" to it.
+
+**Check:**
+```bash
+sqlite3 store/messages.db "
+  SELECT id, sender_name, content, is_bot_message
+  FROM messages
+  WHERE chat_jid = 'tg:YOUR_JID'
+  ORDER BY timestamp DESC
+  LIMIT 10;
+"
+```
+
+Any row with `is_bot_message = 0` and `sender` ending in `@ipc` is the problem. This was a known bug in `src/ipc.ts` (fixed 2026-03-31) — if you see it recurring, check that `processIpcMessageData()` is storing with `is_bot_message: true`.
+
+### Cause B — Agent outputting text after calling `send_message`
+
+The agent calls `send_message` (which delivers immediately) and then also outputs text (which delivers when the run ends). Both reach the user.
+
+**Fix**: The group's `CLAUDE.md` must explicitly tell the agent that text output is the delivery mechanism and `send_message` is only for mid-run updates or cross-group delegation. Add `<internal>` tag guidance so post-tool commentary is suppressed:
+
+```markdown
+For normal replies, respond with text. Do not call send_message for regular conversation.
+If you do call send_message, wrap any follow-up text in <internal> tags:
+<internal>Done.</internal>
+```
+
+---
+
 ## In-Memory Cache
 
 The host process caches session IDs in memory. After modifying SQLite directly, **you must restart the host** for changes to take effect.

@@ -235,31 +235,18 @@ if (TELEGRAM_BOT_POOL.length > 0) {
 
 ### Step 5: Update CLAUDE.md Files
 
-#### 5a. Add global message formatting rules
+#### 5a. Add formatting skill to Telegram groups
 
-Read `groups/global/CLAUDE.md` and add a Message Formatting section:
+Do NOT add formatting rules directly to `groups/global/CLAUDE.md` — this causes duplication and drift. Instead, ensure the `telegram-formatting` skill is included in each Telegram group's `containerConfig.skills` (handled in the `/add-telegram` skill, Phase 6).
+
+For each Telegram group's `CLAUDE.md`, add response delivery behaviour only:
 
 ```markdown
-## Message Formatting
-
-NEVER use markdown. Only use WhatsApp/Telegram formatting:
-- *single asterisks* for bold (NEVER **double asterisks**)
-- _underscores_ for italic
-- • bullet points
-- ```triple backticks``` for code
-
-No ## headings. No [links](url). No **double stars**.
+For normal replies, respond with text. Your text output is delivered directly to Telegram.
+Only use mcp__nanoclaw__send_message for mid-run progress updates or cross-group delegation.
+If you call send_message, wrap any follow-up text in <internal> tags so it is not delivered:
+<internal>Done.</internal>
 ```
-
-#### 5b. Update existing group CLAUDE.md headings
-
-In any group CLAUDE.md that has a "WhatsApp Formatting" section (e.g. `groups/main/CLAUDE.md`), rename the heading to reflect multi-channel support:
-
-```
-## WhatsApp Formatting (and other messaging apps)
-```
-
-#### 5c. Add Agent Teams instructions to Telegram groups
 
 For each Telegram group that will use agent teams, create or update its `groups/{folder}/CLAUDE.md` with these instructions. Read the existing CLAUDE.md first (or `groups/global/CLAUDE.md` as a base) and add the Agent Teams section:
 
