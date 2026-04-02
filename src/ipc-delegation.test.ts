@@ -41,9 +41,27 @@ let enqueueMessageCheck: (jid: string) => void;
 beforeEach(() => {
   _initTestDatabase();
 
-  storeChatMetadata('main@g.us', new Date().toISOString(), 'Main', 'whatsapp', true);
-  storeChatMetadata('other@g.us', new Date().toISOString(), 'Other', 'whatsapp', true);
-  storeChatMetadata('third@g.us', new Date().toISOString(), 'Third', 'whatsapp', true);
+  storeChatMetadata(
+    'main@g.us',
+    new Date().toISOString(),
+    'Main',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'other@g.us',
+    new Date().toISOString(),
+    'Other',
+    'whatsapp',
+    true,
+  );
+  storeChatMetadata(
+    'third@g.us',
+    new Date().toISOString(),
+    'Third',
+    'whatsapp',
+    true,
+  );
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -193,8 +211,14 @@ describe('delegate_to_group message injection', () => {
     );
 
     // The message should be stored as a non-bot user message in the target group
-    const msgs = getMessagesSince('other@g.us', '2020-01-01T00:00:00.000Z', 'Andy');
-    const delegationMsg = msgs.find((m) => m.content.includes('Delegation UUID: del-msg-1'));
+    const msgs = getMessagesSince(
+      'other@g.us',
+      '2020-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    const delegationMsg = msgs.find((m) =>
+      m.content.includes('Delegation UUID: del-msg-1'),
+    );
     expect(delegationMsg).toBeDefined();
     expect(delegationMsg!.content).toContain('Please analyze this data');
     expect(delegationMsg!.content).toContain('[Delegation UUID: del-msg-1');
@@ -274,8 +298,14 @@ describe('respond_to_group', () => {
     expect(d!.status).toBe('fulfilled');
 
     // Response message should be in caller's DB
-    const msgs = getMessagesSince('main@g.us', '2020-01-01T00:00:00.000Z', 'Andy');
-    const responseMsg = msgs.find((m) => m.content.includes('Delegation Response'));
+    const msgs = getMessagesSince(
+      'main@g.us',
+      '2020-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    const responseMsg = msgs.find((m) =>
+      m.content.includes('Delegation Response'),
+    );
     expect(responseMsg).toBeDefined();
     expect(responseMsg!.content).toContain('Here is the result');
     expect(responseMsg!.content).toContain('UUID: resp-uuid-1');

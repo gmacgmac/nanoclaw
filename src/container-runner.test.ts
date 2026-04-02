@@ -272,7 +272,9 @@ describe('NANOCLAW_ENDPOINT env var', () => {
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    const endpointIdx = args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=anthropic');
+    const endpointIdx = args.findIndex(
+      (a) => a === 'NANOCLAW_ENDPOINT=anthropic',
+    );
     // The env var is passed as the value after a '-e' flag
     expect(endpointIdx).toBeGreaterThan(0);
     expect(args[endpointIdx - 1]).toBe('-e');

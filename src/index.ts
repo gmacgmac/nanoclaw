@@ -224,7 +224,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (msg.is_from_me) return true;
       for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
         if (targetJid === chatJid) continue;
-        if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return false;
+        if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim()))
+          return false;
       }
       return true;
     });
@@ -494,16 +495,22 @@ async function startMessageLoop(): Promise<void> {
             const allowlistCfg = loadSenderAllowlist();
             for (const msg of groupMessages) {
               if (msg.is_from_me) continue;
-              if (!isTriggerAllowed(chatJid, msg.sender, allowlistCfg)) continue;
+              if (!isTriggerAllowed(chatJid, msg.sender, allowlistCfg))
+                continue;
 
               // Check if message matches any other group's trigger
               let delegated = false;
-              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+              for (const [targetJid, targetGroup] of Object.entries(
+                registeredGroups,
+              )) {
                 if (targetJid === chatJid) continue; // skip self
                 const targetTrigger = getTriggerPattern(targetGroup.trigger);
                 if (targetTrigger.test(msg.content.trim())) {
                   // Strip the trigger prefix from the prompt
-                  const strippedPrompt = msg.content.trim().replace(targetTrigger, '').trim();
+                  const strippedPrompt = msg.content
+                    .trim()
+                    .replace(targetTrigger, '')
+                    .trim();
                   const now = new Date();
 
                   // Flow 1: direct dispatch — no delegation record, no UUID.
@@ -520,7 +527,11 @@ async function startMessageLoop(): Promise<void> {
                   });
                   queue.enqueueMessageCheck(targetJid);
                   logger.info(
-                    { callerJid: chatJid, targetJid, trigger: targetGroup.trigger },
+                    {
+                      callerJid: chatJid,
+                      targetJid,
+                      trigger: targetGroup.trigger,
+                    },
                     'Multi-agent router: routed message to sub-agent',
                   );
                   delegated = true;
@@ -530,8 +541,14 @@ async function startMessageLoop(): Promise<void> {
 
               // If message had an @mention but matched no registered group, notify user
               if (!delegated && /^@\S+/.test(msg.content.trim())) {
-                const mentionedTrigger = msg.content.trim().match(/^(@\S+)/)?.[1] ?? '';
-                await channel.sendMessage(chatJid, `${mentionedTrigger} is not a registered agent.`).catch(() => {});
+                const mentionedTrigger =
+                  msg.content.trim().match(/^(@\S+)/)?.[1] ?? '';
+                await channel
+                  .sendMessage(
+                    chatJid,
+                    `${mentionedTrigger} is not a registered agent.`,
+                  )
+                  .catch(() => {});
               }
             }
 
@@ -539,13 +556,22 @@ async function startMessageLoop(): Promise<void> {
             // agent only sees messages that weren't claimed by a sub-agent
             const isDelegatedMessage = (msg: NewMessage): boolean => {
               if (msg.is_from_me) return false;
-              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+              for (const [targetJid, targetGroup] of Object.entries(
+                registeredGroups,
+              )) {
                 if (targetJid === chatJid) continue;
-                if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return true;
+                if (
+                  getTriggerPattern(targetGroup.trigger).test(
+                    msg.content.trim(),
+                  )
+                )
+                  return true;
               }
               return false;
             };
-            const unclaimedMessages = groupMessages.filter((msg) => !isDelegatedMessage(msg));
+            const unclaimedMessages = groupMessages.filter(
+              (msg) => !isDelegatedMessage(msg),
+            );
             if (unclaimedMessages.length === 0) {
               // All messages were delegated — advance the hub's cursor past them
               // so processGroupMessages won't re-fetch and re-process them.
@@ -587,9 +613,16 @@ async function startMessageLoop(): Promise<void> {
           if (group.multiAgentRouter && isMainGroup) {
             messagesToSend = messagesToSend.filter((msg) => {
               if (msg.is_from_me) return true;
-              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+              for (const [targetJid, targetGroup] of Object.entries(
+                registeredGroups,
+              )) {
                 if (targetJid === chatJid) continue;
-                if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return false;
+                if (
+                  getTriggerPattern(targetGroup.trigger).test(
+                    msg.content.trim(),
+                  )
+                )
+                  return false;
               }
               return true;
             });
