@@ -3,8 +3,10 @@ import http from 'http';
 import type { AddressInfo } from 'net';
 
 const mockEnv: Record<string, string> = {};
+let mockEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({ ...mockEnv })),
+  scanEndpoints: vi.fn(() => ({ ...mockEndpoints })),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -68,6 +70,7 @@ describe('credential-proxy', () => {
     await new Promise<void>((r) => proxyServer?.close(() => r()));
     await new Promise<void>((r) => upstreamServer?.close(() => r()));
     for (const key of Object.keys(mockEnv)) delete mockEnv[key];
+    mockEndpoints = {};
   });
 
   async function startProxy(env: Record<string, string>): Promise<number> {
@@ -188,5 +191,167 @@ describe('credential-proxy', () => {
 
     expect(res.statusCode).toBe(502);
     expect(res.body).toBe('Bad Gateway');
+  });
+
+  // --- Multi-endpoint routing tests ---
+
+  describe('multi-endpoint routing', () => {
+    let ollamaServer: http.Server;
+    let ollamaPort: number;
+    let lastOllamaHeaders: http.IncomingHttpHeaders;
+
+    beforeEach(async () => {
+      lastOllamaHeaders = {};
+      ollamaServer = http.createServer((req, res) => {
+        lastOllamaHeaders = { ...req.headers };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, vendor: 'ollama' }));
+      });
+      await new Promise<void>((resolve) =>
+        ollamaServer.listen(0, '127.0.0.1', resolve),
+      );
+      ollamaPort = (ollamaServer.address() as AddressInfo).port;
+    });
+
+    afterEach(async () => {
+      await new Promise<void>((r) => ollamaServer?.close(() => r()));
+    });
+
+    it('routes to named endpoint when X-Nanoclaw-Endpoint header is set', async () => {
+      mockEndpoints = {
+        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
+        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'ollama',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(200);
+      // Ollama upstream received the request with injected key
+      expect(lastOllamaHeaders['x-api-key']).toBe('ollama-key');
+      // Routing header stripped before forwarding
+      expect(lastOllamaHeaders['x-nanoclaw-endpoint']).toBeUndefined();
+      // Default upstream did NOT receive the request
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+    });
+
+    it('falls back to anthropic when endpoint header is absent', async () => {
+      mockEndpoints = {
+        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
+        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Default upstream (anthropic) received the request
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+      // Ollama did NOT receive the request
+      expect(lastOllamaHeaders['x-api-key']).toBeUndefined();
+    });
+
+    it('falls back to anthropic when unknown vendor is requested', async () => {
+      mockEndpoints = {
+        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'nonexistent',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Falls back to anthropic
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+    });
+
+    it('handles case-insensitive endpoint header', async () => {
+      mockEndpoints = {
+        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
+        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'OLLAMA',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(lastOllamaHeaders['x-api-key']).toBe('ollama-key');
+    });
+
+    it('injects correct key per vendor without leaking other keys', async () => {
+      mockEndpoints = {
+        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-secret' },
+        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-secret' },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      // Request to ollama
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'ollama',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Ollama got its own key, not anthropic's
+      expect(lastOllamaHeaders['x-api-key']).toBe('ollama-secret');
+      // Anthropic upstream was not contacted
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+    });
   });
 });

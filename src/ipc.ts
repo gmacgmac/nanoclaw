@@ -6,8 +6,11 @@ import { CronExpressionParser } from 'cron-parser';
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup, RegisteredGroupSnapshot } from './container-runner.js';
 import {
+  createDelegation,
   createTask,
   deleteTask,
+  fulfillDelegation,
+  getDelegationByUuid,
   getTaskById,
   storeMessageDirect,
   updateTask,
@@ -29,6 +32,7 @@ export interface IpcDeps {
     registeredGroups: RegisteredGroupSnapshot[],
   ) => void;
   onTasksChanged: () => void;
+  enqueueMessageCheck: (jid: string) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -214,6 +218,12 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For delegate_to_group
+    uuid?: string;
+    callerJid?: string;
+    ttlSeconds?: number;
+    // For respond_to_group
+    responseText?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -510,6 +520,131 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'delegate_to_group': {
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized delegate_to_group attempt blocked',
+        );
+        break;
+      }
+      if (!data.uuid || !data.prompt || !data.targetJid || !data.callerJid) {
+        logger.warn({ data: { type: data.type } }, 'Invalid delegate_to_group — missing fields');
+        break;
+      }
+      const delegateTarget = registeredGroups[data.targetJid];
+      if (!delegateTarget) {
+        logger.warn(
+          { targetJid: data.targetJid },
+          'Cannot delegate: target group not registered',
+        );
+        break;
+      }
+      const ttl = data.ttlSeconds && data.ttlSeconds >= 30 && data.ttlSeconds <= 3600
+        ? data.ttlSeconds
+        : 300;
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + ttl * 1000);
+
+      createDelegation({
+        uuid: data.uuid,
+        caller_jid: data.callerJid,
+        target_jid: data.targetJid,
+        created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(),
+        status: 'pending',
+      });
+
+      // Resolve caller group name for the sender_name field
+      const callerGroup = registeredGroups[data.callerJid];
+      const callerName = callerGroup?.name || 'Delegation';
+
+      storeMessageDirect({
+        id: `delegation-${data.uuid}`,
+        chat_jid: data.targetJid,
+        sender: `${callerName}@delegation`,
+        sender_name: callerName,
+        content: `${data.prompt}\n\n[Delegation UUID: ${data.uuid} — use respond_to_group to send your response]`,
+        timestamp: now.toISOString(),
+        is_from_me: false,
+        is_bot_message: false,
+      });
+
+      deps.enqueueMessageCheck(data.targetJid);
+      logger.info(
+        { uuid: data.uuid, callerJid: data.callerJid, targetJid: data.targetJid, ttl },
+        'Delegation created via IPC',
+      );
+      break;
+    }
+
+    case 'respond_to_group': {
+      if (!data.uuid || !data.responseText) {
+        logger.warn({ data: { type: data.type } }, 'Invalid respond_to_group — missing fields');
+        break;
+      }
+      const delegation = getDelegationByUuid(data.uuid);
+      if (!delegation) {
+        logger.warn({ uuid: data.uuid }, 'Delegation not found');
+        break;
+      }
+
+      // Resolve sourceGroup folder → JID for authorization
+      let responderJid: string | undefined;
+      for (const [jid, group] of Object.entries(registeredGroups)) {
+        if (group.folder === sourceGroup) {
+          responderJid = jid;
+          break;
+        }
+      }
+      if (!responderJid || responderJid !== delegation.target_jid) {
+        logger.warn(
+          { uuid: data.uuid, sourceGroup, expectedTarget: delegation.target_jid },
+          'Unauthorized respond_to_group — wrong responder',
+        );
+        break;
+      }
+
+      if (delegation.status !== 'pending') {
+        logger.warn(
+          { uuid: data.uuid, status: delegation.status },
+          'Delegation already resolved',
+        );
+        break;
+      }
+
+      if (new Date(delegation.expires_at) <= new Date()) {
+        logger.warn(
+          { uuid: data.uuid, expiresAt: delegation.expires_at },
+          'Delegation expired',
+        );
+        break;
+      }
+
+      fulfillDelegation(data.uuid);
+
+      const targetGroupEntry = registeredGroups[delegation.target_jid];
+      const targetGroupName = targetGroupEntry?.name || 'Unknown';
+
+      storeMessageDirect({
+        id: `delegation-response-${data.uuid}`,
+        chat_jid: delegation.caller_jid,
+        sender: `${targetGroupName}@delegation`,
+        sender_name: targetGroupName,
+        content: `[Delegation Response — UUID: ${data.uuid}]\n[From: ${targetGroupName}]\n${data.responseText}`,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+        is_bot_message: false,
+      });
+
+      deps.enqueueMessageCheck(delegation.caller_jid);
+      logger.info(
+        { uuid: data.uuid, callerJid: delegation.caller_jid, responderJid },
+        'Delegation response routed via IPC',
+      );
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

@@ -47,6 +47,7 @@ export interface ContainerInput {
   model?: string;
   systemPrompt?: string;
   script?: string;
+  endpoint?: string;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -382,6 +383,11 @@ function buildContainerArgs(
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
+
+  // Pass the group's chosen endpoint name so the agent-runner can forward it
+  // to the credential proxy via the X-Nanoclaw-Endpoint header.
+  const endpoint = group.containerConfig?.endpoint ?? 'anthropic';
+  args.push('-e', `NANOCLAW_ENDPOINT=${endpoint}`);
 
   // Inject Brave Search API key if this group uses the brave-search MCP server.
   // Key is read from secrets.env on the host — never hardcoded or logged.

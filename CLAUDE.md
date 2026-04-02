@@ -42,8 +42,26 @@ Containers never see real API keys or tokens. The credential proxy (`src/credent
 - Listens on `127.0.0.1:3001` (configurable via `CREDENTIAL_PROXY_PORT`)
 - Containers send API requests to `http://host.docker.internal:3001` with a placeholder key
 - Proxy swaps in real credentials from `~/.config/nanoclaw/secrets.env` (or `.env` fallback)
-- Two auth modes: **API key** (injects `x-api-key` on every request) or **OAuth** (replaces Bearer token on exchange requests)
 - `.env` in the project root is shadowed by `/dev/null` in main group containers
+
+### Multi-Endpoint Routing
+
+The proxy supports multiple upstream endpoints. Configure named vendors in `secrets.env`:
+
+```
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_API_KEY=sk-ant-...
+
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_API_KEY=placeholder
+
+ZAI_BASE_URL=https://api.z.ai
+ZAI_API_KEY=...
+```
+
+Each vendor is defined by a `{VENDOR}_BASE_URL` and `{VENDOR}_API_KEY` pair. The vendor name (lowercase) becomes the routing key.
+
+Groups select an endpoint via `containerConfig.endpoint` (defaults to `"anthropic"`). The proxy reads the `X-Nanoclaw-Endpoint` header on each request and routes to the matching vendor's upstream URL with its credentials.
 
 ## Per-Group Configuration (`containerConfig`)
 
@@ -51,6 +69,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
+| `endpoint` | `string` | `"anthropic"` | Named vendor from `secrets.env` (e.g. `"ollama"`, `"zai"`). Routes API traffic to that upstream |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
 | `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control. `{}` = no access, `{ "*": { readonly: true } }` = all |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
@@ -63,6 +82,21 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 **`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 
 **`allowedTools` complement**: The agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime. This blocks preset-injected CLI tools that bypass the SDK's `allowedTools` filter. You never configure `disallowedTools` directly.
+
+### Applying Group Config
+
+Use `json_set()` to update nested fields:
+
+```bash
+# Set endpoint
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.endpoint', 'ollama') WHERE folder = 'mygroup'"
+
+# Set model
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.model', 'sonnet') WHERE folder = 'mygroup'"
+
+# View current config
+sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
+```
 
 ## Session Architecture
 

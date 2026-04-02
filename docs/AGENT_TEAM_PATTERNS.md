@@ -218,3 +218,77 @@ JID.** Each JID maps to exactly one group/agent.
 | `send_message` cross-group | Between containers | ✅ One-way | Notification only, target agent does not wake |
 | `schedule_task` cross-group | Between containers | ✅ Fire-and-forget | Target agent runs, no response routing |
 | Agent delegation with response | Between containers | ❌ Not implemented | Planned: `delegate_to_group` + `respond_to_group` |
+
+
+
+
+---
+
+# Group Delegration
+
+**Flow 1: Auto-Routed Dispatch (host intercepts, telegram_main never sees it)**
+
+- User sends `@dashboard check the error logs` in Telegram
+- Host message loop picks up the message for telegram_main's JID
+- Host checks `multiAgentRouter: true` on telegram_main
+- Host scans message against all registered group triggers
+- `@dashboard` matches the dashboard group's trigger
+- Host creates a delegation record (UUID + 5min TTL) in the `delegations` table
+- Host strips the trigger, stores the prompt as a user message in dashboard's DB (`is_bot_message: false`)
+- Host calls `enqueueMessageCheck` on dashboard's JID — dashboard agent wakes up
+- Sana (telegram_main) never sees this message — it was intercepted before reaching her
+- Dashboard agent processes the task
+- Dashboard agent calls `send_message(target_jid: "tg:YOUR_CHAT_ID", text: "Here are the errors...")` to notify the user directly in Telegram
+- Dashboard agent optionally calls `respond_to_group(uuid, result)` to route the response back to telegram_main's queue (but sana doesn't need to act on it)
+- User sees the response in Telegram from the dashboard bot identity
+
+**DB config for Flow 1:**
+
+```sql
+-- Hub group: multiAgentRouter enabled, isMain
+UPDATE registered_groups SET multi_agent_router = 1 WHERE folder = 'telegram_main';
+
+-- Sub-agent: own JID, own trigger, NOT isMain
+-- (if not already registered, insert it)
+INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, multi_agent_router)
+VALUES ('dashboard@internal', 'Dashboard', 'dashboard', '@dashboard', datetime('now'), 0, 0);
+```
+
+---
+
+**Flow 2: Orchestrated Delegation (sana receives, delegates, synthesizes, responds)**
+
+- User sends `sana, get fin to check the portfolio and cherry to review the logs` in Telegram
+- No `@trigger` at the start of the message — host doesn't intercept
+- Message falls through to sana (telegram_main) as normal
+- Sana's agent wakes up, reads the message
+- Sana calls `delegate_to_group(target_jid: "fin@internal", prompt: "Check the portfolio", ttl_seconds: 300)`
+- Sana calls `delegate_to_group(target_jid: "cherry@internal", prompt: "Review the logs", ttl_seconds: 300)`
+- Both delegations create UUID records in the `delegations` table
+- Both prompts are stored as user messages in fin's and cherry's DBs
+- Both agents wake up and process their tasks
+- Fin calls `respond_to_group(uuid_1, "Portfolio looks healthy, up 3%...")`
+- Cherry calls `respond_to_group(uuid_2, "Found 2 warnings in the logs...")`
+- Host validates each UUID, stores each response in telegram_main's DB as a user message
+- Host calls `enqueueMessageCheck` on telegram_main's JID each time
+- Sana wakes up, sees `[Delegation Response — UUID: ...]` messages in her queue
+- Sana synthesizes: "Fin says portfolio is up 3%. Cherry found 2 log warnings. Here's the summary..."
+- User sees sana's synthesized response in Telegram
+
+**DB config for Flow 2:**
+
+```sql
+-- Hub group: isMain (already set), multiAgentRouter can be on or off for this flow
+-- (delegate_to_group is an explicit MCP tool call, doesn't need the router flag)
+
+-- Sub-agents: own JIDs, own triggers
+INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, multi_agent_router)
+VALUES ('fin@internal', 'Fin', 'fin', '@fin', datetime('now'), 0, 0);
+
+INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, multi_agent_router)
+VALUES ('cherry@internal', 'Cherry', 'cherry', '@cherry', datetime('now'), 0, 0);
+```
+
+---
+
+Key distinction: Flow 1 is automatic (host intercepts based on trigger, sana is bypassed). Flow 2 is explicit (sana decides to delegate, receives responses, synthesizes). Both can coexist — if `multiAgentRouter: true` is set, `@fin check X` goes directly to fin (Flow 1), but `sana, get fin to check X` goes to sana who then delegates (Flow 2).

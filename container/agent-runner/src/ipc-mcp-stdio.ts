@@ -373,6 +373,69 @@ server.tool(
 );
 
 server.tool(
+  'delegate_to_group',
+  `Delegate a task to another group's agent and receive a response back. Main group only.
+The target agent will receive your prompt as a normal message with a delegation UUID.
+The target agent should call respond_to_group with that UUID when done.
+The response will arrive as a normal message in your queue — no polling needed.`,
+  {
+    target_jid: z.string().describe('JID of the target group to delegate to'),
+    prompt: z.string().describe('Task/instruction for the target agent'),
+    ttl_seconds: z.number().min(30).max(3600).default(300).describe('How long the UUID stays valid (default 300s)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can delegate to other groups.' }],
+        isError: true,
+      };
+    }
+
+    const uuid = crypto.randomUUID();
+
+    const data = {
+      type: 'delegate_to_group',
+      uuid,
+      callerJid: chatJid,
+      targetJid: args.target_jid,
+      prompt: args.prompt,
+      ttlSeconds: args.ttl_seconds,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Delegation sent to ${args.target_jid}. UUID: ${uuid}` }],
+    };
+  },
+);
+
+server.tool(
+  'respond_to_group',
+  `Respond to a delegation request. Use this when you receive a message with a [Delegation UUID: ...] tag.
+Sends your response back to the caller group's queue.`,
+  {
+    uuid: z.string().describe('The delegation UUID from the received message'),
+    response_text: z.string().describe('Your response to route back to the caller'),
+  },
+  async (args) => {
+    const data = {
+      type: 'respond_to_group',
+      uuid: args.uuid,
+      responseText: args.response_text,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Delegation response sent for UUID: ${args.uuid}` }],
+    };
+  },
+);
+
+server.tool(
   'ping',
   'Test tool. Returns pong.',
   {},

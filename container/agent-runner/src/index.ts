@@ -32,6 +32,7 @@ interface ContainerInput {
   model?: string;
   systemPrompt?: string;
   script?: string;
+  endpoint?: string;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -541,6 +542,11 @@ async function main(): Promise<void> {
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+
+  // Forward the group's endpoint name to the credential proxy via default headers.
+  // The proxy uses X-Nanoclaw-Endpoint to route to the correct upstream.
+  const endpoint = containerInput.endpoint || process.env.NANOCLAW_ENDPOINT || 'anthropic';
+  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = `X-Nanoclaw-Endpoint: ${endpoint}`;
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

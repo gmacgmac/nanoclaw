@@ -89,6 +89,7 @@ vi.mock('child_process', async () => {
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
+import { spawn } from 'child_process';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -243,5 +244,61 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('NANOCLAW_ENDPOINT env var', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('passes NANOCLAW_ENDPOINT=anthropic by default', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const endpointIdx = args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=anthropic');
+    // The env var is passed as the value after a '-e' flag
+    expect(endpointIdx).toBeGreaterThan(0);
+    expect(args[endpointIdx - 1]).toBe('-e');
+  });
+
+  it('passes configured endpoint from containerConfig', async () => {
+    const groupWithEndpoint: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { endpoint: 'ollama' },
+    };
+
+    const resultPromise = runContainerAgent(
+      groupWithEndpoint,
+      testInput,
+      () => {},
+      undefined,
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const endpointIdx = args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=ollama');
+    expect(endpointIdx).toBeGreaterThan(0);
+    expect(args[endpointIdx - 1]).toBe('-e');
   });
 });

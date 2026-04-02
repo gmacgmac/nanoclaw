@@ -95,6 +95,7 @@ beforeEach(() => {
     getAvailableGroups: () => [],
     writeGroupsSnapshot: () => {},
     onTasksChanged: () => {},
+    enqueueMessageCheck: () => {},
   };
 });
 
