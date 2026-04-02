@@ -87,6 +87,14 @@ export interface ContainerConfig {
       env?: Record<string, string>;
     };
   };
+
+  /**
+   * Named endpoint to use for this group's API traffic.
+   * Must match a vendor prefix defined in secrets.env (e.g. "anthropic", "ollama", "zai").
+   * The credential proxy routes requests to the correct upstream based on this value.
+   * Defaults to "anthropic" if omitted.
+   */
+  endpoint?: string;
 }
 
 export interface RegisteredGroup {
@@ -96,6 +104,7 @@ export interface RegisteredGroup {
   added_at: string;
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
+  multiAgentRouter?: boolean; // When true (main groups only): scan incoming messages for other groups' triggers and auto-delegate
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }
 

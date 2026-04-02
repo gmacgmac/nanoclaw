@@ -83,6 +83,16 @@ function createSchema(database: Database.Database): void {
       requires_trigger INTEGER DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS delegations (
+      uuid TEXT PRIMARY KEY,
+      caller_jid TEXT NOT NULL,
+      target_jid TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_delegations_status ON delegations(status);
+
     CREATE TABLE IF NOT EXISTS error_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       level TEXT NOT NULL,
@@ -130,6 +140,15 @@ function createSchema(database: Database.Database): void {
     // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add multi_agent_router column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN multi_agent_router INTEGER DEFAULT 0`,
     );
   } catch {
     /* column already exists */
@@ -606,6 +625,7 @@ export function getRegisteredGroup(
         container_config: string | null;
         requires_trigger: number | null;
         is_main: number | null;
+        multi_agent_router: number | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -628,6 +648,7 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
   };
 }
 
@@ -636,8 +657,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, multi_agent_router)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -647,6 +668,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    group.multiAgentRouter ? 1 : 0,
   );
 }
 
@@ -660,6 +682,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
     is_main: number | null;
+    multi_agent_router: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -681,6 +704,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+      multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
     };
   }
   return result;
@@ -746,6 +770,43 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Delegation accessors ---
+
+export interface DelegationRecord {
+  uuid: string;
+  caller_jid: string;
+  target_jid: string;
+  created_at: string;
+  expires_at: string;
+  status: 'pending' | 'fulfilled' | 'expired';
+}
+
+export function createDelegation(record: DelegationRecord): void {
+  db.prepare(
+    `INSERT INTO delegations (uuid, caller_jid, target_jid, created_at, expires_at, status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.uuid,
+    record.caller_jid,
+    record.target_jid,
+    record.created_at,
+    record.expires_at,
+    record.status,
+  );
+}
+
+export function getDelegationByUuid(uuid: string): DelegationRecord | undefined {
+  return db
+    .prepare('SELECT * FROM delegations WHERE uuid = ?')
+    .get(uuid) as DelegationRecord | undefined;
+}
+
+export function fulfillDelegation(uuid: string): void {
+  db.prepare(
+    `UPDATE delegations SET status = 'fulfilled' WHERE uuid = ?`,
+  ).run(uuid);
 }
 
 // --- Error log ---

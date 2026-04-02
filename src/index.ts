@@ -44,6 +44,7 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -213,6 +214,29 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Multi-agent router: if this hub group has multiAgentRouter enabled,
+  // filter out messages that match sub-agent triggers. These should have
+  // been delegated by startMessageLoop already — this prevents re-processing
+  // if processGroupMessages is called via enqueueMessageCheck or recovery.
+  let filteredMessages = missedMessages;
+  if (group.multiAgentRouter && isMainGroup) {
+    filteredMessages = missedMessages.filter((msg) => {
+      if (msg.is_from_me) return true;
+      for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+        if (targetJid === chatJid) continue;
+        if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return false;
+      }
+      return true;
+    });
+    if (filteredMessages.length === 0) {
+      // All messages were for sub-agents — advance cursor and skip
+      lastAgentTimestamp[chatJid] =
+        missedMessages[missedMessages.length - 1].timestamp;
+      saveState();
+      return true;
+    }
+  }
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
@@ -225,7 +249,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  const prompt = formatMessages(filteredMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -235,7 +259,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: filteredMessages.length },
     'Processing messages',
   );
 
@@ -387,6 +411,7 @@ async function runAgent(
         model: group.containerConfig?.model,
         systemPrompt: group.containerConfig?.systemPrompt,
         mcpServers: group.containerConfig?.mcpServers,
+        endpoint: group.containerConfig?.endpoint,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -462,6 +487,75 @@ async function startMessageLoop(): Promise<void> {
           const isMainGroup = group.isMain === true;
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
 
+          // Multi-agent router: if this group has multiAgentRouter enabled,
+          // scan messages for other groups' trigger patterns and delegate
+          // those messages instead of processing them locally.
+          if (group.multiAgentRouter && isMainGroup) {
+            const allowlistCfg = loadSenderAllowlist();
+            for (const msg of groupMessages) {
+              if (msg.is_from_me) continue;
+              if (!isTriggerAllowed(chatJid, msg.sender, allowlistCfg)) continue;
+
+              // Check if message matches any other group's trigger
+              let delegated = false;
+              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+                if (targetJid === chatJid) continue; // skip self
+                const targetTrigger = getTriggerPattern(targetGroup.trigger);
+                if (targetTrigger.test(msg.content.trim())) {
+                  // Strip the trigger prefix from the prompt
+                  const strippedPrompt = msg.content.trim().replace(targetTrigger, '').trim();
+                  const now = new Date();
+
+                  // Flow 1: direct dispatch — no delegation record, no UUID.
+                  // Sub-agent responds directly to the user via send_message(target_jid).
+                  storeMessageDirect({
+                    id: `routed-${now.getTime()}-${targetJid}`,
+                    chat_jid: targetJid,
+                    sender: msg.sender,
+                    sender_name: msg.sender_name,
+                    content: `${strippedPrompt || msg.content.trim()}\n\n[Routed from ${group.name}. Reply using send_message with target_jid: "${chatJid}"]`,
+                    timestamp: now.toISOString(),
+                    is_from_me: false,
+                    is_bot_message: false,
+                  });
+                  queue.enqueueMessageCheck(targetJid);
+                  logger.info(
+                    { callerJid: chatJid, targetJid, trigger: targetGroup.trigger },
+                    'Multi-agent router: routed message to sub-agent',
+                  );
+                  delegated = true;
+                  break;
+                }
+              }
+
+              // If message had an @mention but matched no registered group, notify user
+              if (!delegated && /^@\S+/.test(msg.content.trim())) {
+                const mentionedTrigger = msg.content.trim().match(/^(@\S+)/)?.[1] ?? '';
+                await channel.sendMessage(chatJid, `${mentionedTrigger} is not a registered agent.`).catch(() => {});
+              }
+            }
+
+            // After routing, filter out any delegated messages so the hub
+            // agent only sees messages that weren't claimed by a sub-agent
+            const isDelegatedMessage = (msg: NewMessage): boolean => {
+              if (msg.is_from_me) return false;
+              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+                if (targetJid === chatJid) continue;
+                if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return true;
+              }
+              return false;
+            };
+            const unclaimedMessages = groupMessages.filter((msg) => !isDelegatedMessage(msg));
+            if (unclaimedMessages.length === 0) {
+              // All messages were delegated — advance the hub's cursor past them
+              // so processGroupMessages won't re-fetch and re-process them.
+              const lastMsg = groupMessages[groupMessages.length - 1];
+              lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+              saveState();
+              continue;
+            }
+          }
+
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
@@ -485,8 +579,23 @@ async function startMessageLoop(): Promise<void> {
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
-          const messagesToSend =
+          let messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+
+          // If multiAgentRouter is active, filter out delegated messages from
+          // the DB re-fetch so the hub agent doesn't see them.
+          if (group.multiAgentRouter && isMainGroup) {
+            messagesToSend = messagesToSend.filter((msg) => {
+              if (msg.is_from_me) return true;
+              for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+                if (targetJid === chatJid) continue;
+                if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim())) return false;
+              }
+              return true;
+            });
+            if (messagesToSend.length === 0) continue;
+          }
+
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -721,6 +830,7 @@ async function main(): Promise<void> {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
     },
+    enqueueMessageCheck: (jid: string) => queue.enqueueMessageCheck(jid),
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
