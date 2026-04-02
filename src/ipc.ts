@@ -530,7 +530,10 @@ export async function processTaskIpc(
         break;
       }
       if (!data.uuid || !data.prompt || !data.targetJid || !data.callerJid) {
-        logger.warn({ data: { type: data.type } }, 'Invalid delegate_to_group — missing fields');
+        logger.warn(
+          { data: { type: data.type } },
+          'Invalid delegate_to_group — missing fields',
+        );
         break;
       }
       const delegateTarget = registeredGroups[data.targetJid];
@@ -541,9 +544,10 @@ export async function processTaskIpc(
         );
         break;
       }
-      const ttl = data.ttlSeconds && data.ttlSeconds >= 30 && data.ttlSeconds <= 3600
-        ? data.ttlSeconds
-        : 300;
+      const ttl =
+        data.ttlSeconds && data.ttlSeconds >= 30 && data.ttlSeconds <= 3600
+          ? data.ttlSeconds
+          : 300;
       const now = new Date();
       const expiresAt = new Date(now.getTime() + ttl * 1000);
 
@@ -573,7 +577,12 @@ export async function processTaskIpc(
 
       deps.enqueueMessageCheck(data.targetJid);
       logger.info(
-        { uuid: data.uuid, callerJid: data.callerJid, targetJid: data.targetJid, ttl },
+        {
+          uuid: data.uuid,
+          callerJid: data.callerJid,
+          targetJid: data.targetJid,
+          ttl,
+        },
         'Delegation created via IPC',
       );
       break;
@@ -581,7 +590,10 @@ export async function processTaskIpc(
 
     case 'respond_to_group': {
       if (!data.uuid || !data.responseText) {
-        logger.warn({ data: { type: data.type } }, 'Invalid respond_to_group — missing fields');
+        logger.warn(
+          { data: { type: data.type } },
+          'Invalid respond_to_group — missing fields',
+        );
         break;
       }
       const delegation = getDelegationByUuid(data.uuid);
@@ -600,7 +612,11 @@ export async function processTaskIpc(
       }
       if (!responderJid || responderJid !== delegation.target_jid) {
         logger.warn(
-          { uuid: data.uuid, sourceGroup, expectedTarget: delegation.target_jid },
+          {
+            uuid: data.uuid,
+            sourceGroup,
+            expectedTarget: delegation.target_jid,
+          },
           'Unauthorized respond_to_group — wrong responder',
         );
         break;

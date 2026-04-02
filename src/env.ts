@@ -109,7 +109,10 @@ export function scanEndpoints(): Record<string, EndpointEntry> {
 
   // Also check process.env for _BASE_URL/_API_KEY pairs
   for (const key of Object.keys(process.env)) {
-    if ((key.endsWith('_BASE_URL') || key.endsWith('_API_KEY')) && !allVars[key]) {
+    if (
+      (key.endsWith('_BASE_URL') || key.endsWith('_API_KEY')) &&
+      !allVars[key]
+    ) {
       if (process.env[key]) allVars[key] = process.env[key]!;
     }
   }

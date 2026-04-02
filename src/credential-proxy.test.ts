@@ -219,8 +219,14 @@ describe('credential-proxy', () => {
 
     it('routes to named endpoint when X-Nanoclaw-Endpoint header is set', async () => {
       mockEndpoints = {
-        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
-        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+        ollama: {
+          baseUrl: `http://127.0.0.1:${ollamaPort}`,
+          apiKey: 'ollama-key',
+        },
       };
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -250,8 +256,14 @@ describe('credential-proxy', () => {
 
     it('falls back to anthropic when endpoint header is absent', async () => {
       mockEndpoints = {
-        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
-        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+        ollama: {
+          baseUrl: `http://127.0.0.1:${ollamaPort}`,
+          apiKey: 'ollama-key',
+        },
       };
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -277,7 +289,10 @@ describe('credential-proxy', () => {
 
     it('falls back to anthropic when unknown vendor is requested', async () => {
       mockEndpoints = {
-        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
       };
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -302,8 +317,14 @@ describe('credential-proxy', () => {
 
     it('handles case-insensitive endpoint header', async () => {
       mockEndpoints = {
-        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-key' },
-        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-key' },
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+        ollama: {
+          baseUrl: `http://127.0.0.1:${ollamaPort}`,
+          apiKey: 'ollama-key',
+        },
       };
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;
@@ -327,8 +348,14 @@ describe('credential-proxy', () => {
 
     it('injects correct key per vendor without leaking other keys', async () => {
       mockEndpoints = {
-        anthropic: { baseUrl: `http://127.0.0.1:${upstreamPort}`, apiKey: 'sk-ant-secret' },
-        ollama: { baseUrl: `http://127.0.0.1:${ollamaPort}`, apiKey: 'ollama-secret' },
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-secret',
+        },
+        ollama: {
+          baseUrl: `http://127.0.0.1:${ollamaPort}`,
+          apiKey: 'ollama-secret',
+        },
       };
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;

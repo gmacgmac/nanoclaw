@@ -797,16 +797,18 @@ export function createDelegation(record: DelegationRecord): void {
   );
 }
 
-export function getDelegationByUuid(uuid: string): DelegationRecord | undefined {
-  return db
-    .prepare('SELECT * FROM delegations WHERE uuid = ?')
-    .get(uuid) as DelegationRecord | undefined;
+export function getDelegationByUuid(
+  uuid: string,
+): DelegationRecord | undefined {
+  return db.prepare('SELECT * FROM delegations WHERE uuid = ?').get(uuid) as
+    | DelegationRecord
+    | undefined;
 }
 
 export function fulfillDelegation(uuid: string): void {
-  db.prepare(
-    `UPDATE delegations SET status = 'fulfilled' WHERE uuid = ?`,
-  ).run(uuid);
+  db.prepare(`UPDATE delegations SET status = 'fulfilled' WHERE uuid = ?`).run(
+    uuid,
+  );
 }
 
 // --- Error log ---

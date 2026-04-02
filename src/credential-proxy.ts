@@ -44,7 +44,12 @@ function resolveEndpoint(
   vendor: string,
   routingTable: Record<string, EndpointEntry>,
   legacySecrets: Record<string, string>,
-): { upstreamUrl: URL; apiKey: string | undefined; oauthToken: string | undefined; authMode: AuthMode } {
+): {
+  upstreamUrl: URL;
+  apiKey: string | undefined;
+  oauthToken: string | undefined;
+  authMode: AuthMode;
+} {
   const entry = routingTable[vendor] || routingTable[DEFAULT_VENDOR];
 
   if (entry) {
@@ -57,9 +62,12 @@ function resolveEndpoint(
   }
 
   // Legacy fallback: use the flat ANTHROPIC_* secrets
-  const oauthToken = legacySecrets.CLAUDE_CODE_OAUTH_TOKEN || legacySecrets.ANTHROPIC_AUTH_TOKEN;
+  const oauthToken =
+    legacySecrets.CLAUDE_CODE_OAUTH_TOKEN || legacySecrets.ANTHROPIC_AUTH_TOKEN;
   return {
-    upstreamUrl: new URL(legacySecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'),
+    upstreamUrl: new URL(
+      legacySecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+    ),
     apiKey: legacySecrets.ANTHROPIC_API_KEY,
     oauthToken,
     authMode: legacySecrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth',
@@ -83,7 +91,9 @@ export function startCredentialProxy(
   ]);
 
   // Determine default auth mode from legacy secrets (used for logging)
-  const defaultAuthMode: AuthMode = legacySecrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  const defaultAuthMode: AuthMode = legacySecrets.ANTHROPIC_API_KEY
+    ? 'api-key'
+    : 'oauth';
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -98,7 +108,10 @@ export function startCredentialProxy(
         ).toLowerCase();
 
         logger.debug(
-          { endpointHeader: req.headers[ENDPOINT_HEADER], vendor: requestedVendor },
+          {
+            endpointHeader: req.headers[ENDPOINT_HEADER],
+            vendor: requestedVendor,
+          },
           'Proxy routing request',
         );
 
