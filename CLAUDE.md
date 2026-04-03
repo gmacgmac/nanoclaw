@@ -194,7 +194,7 @@ systemctl --user restart nanoclaw
 
 ## Container Build Cache
 
-**Root cause**: Containers run from a *cached copy* of the agent-runner source at `data/sessions/*/agent-runner-src/`, not from `container/agent-runner/src/` directly. Changes to the source won't appear until this cache is cleared. This is the most common reason MCP tool changes or SDK updates don't take effect. (Tracked: issue #722; PR #1515 may introduce `.mcp.json` per-group config as a cleaner path for MCP changes.)
+**Root cause**: Containers run from a *cached copy* of the agent-runner source at `data/sessions/*/agent-runner-src/`, not from `container/agent-runner/src/` directly. Changes to the source won't appear until this cache is cleared. This is the most common reason MCP tool changes or SDK updates don't take effect. (Tracked: issue #1236; PR #1515 may introduce `.mcp.json` per-group config as a cleaner path for MCP changes.)
 
 Multiple caching layers can prevent container code changes from appearing. The complete fix:
 
