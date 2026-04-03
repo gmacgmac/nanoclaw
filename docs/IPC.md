@@ -91,6 +91,50 @@ The `sender_name` field in the database will show `"Researcher"`, allowing dashb
 
 ---
 
+## MCP Tools
+
+Agents inside containers access IPC through MCP tools (`mcp__nanoclaw__*`):
+
+| Tool | Description | Auth |
+|------|-------------|------|
+| `send_message` | Send message to user/group (main can use `target_jid` for other groups) | All groups |
+| `schedule_task` | Schedule recurring or one-time task | Main: any group; Others: self only |
+| `list_tasks` | List scheduled tasks | Main: all; Others: own only |
+| `pause_task` | Pause a scheduled task | Main: any; Others: own only |
+| `resume_task` | Resume a paused task | Main: any; Others: own only |
+| `cancel_task` | Cancel and delete a task | Main: any; Others: own only |
+| `update_task` | Update existing task (prompt, schedule) | Main: any; Others: own only |
+| `get_registered_groups` | List registered groups (for `target_jid` discovery) | All groups |
+| `register_group` | Register a new chat/group | Main only |
+| `delegate_to_group` | Delegate task to another group's agent | Main only |
+| `respond_to_group` | Respond to a delegation request | All groups |
+| `ping` | Test tool, returns pong | All groups |
+
+### delegate_to_group
+
+Delegates a task to another group's agent. The target agent receives a message with a `[Delegation UUID: ...]` tag and should call `respond_to_group` with that UUID when done.
+
+```
+mcp__nanoclaw__delegate_to_group(
+  target_jid="dashboard@internal",
+  prompt="Summarize the last 10 messages",
+  ttl_seconds=300
+)
+```
+
+### respond_to_group
+
+Responds to a delegation request. Use when you receive a message with `[Delegation UUID: ...]`.
+
+```
+mcp__nanoclaw__respond_to_group(
+  uuid="abc-123-def",
+  response_text="Here's the summary..."
+)
+```
+
+---
+
 ## Task Operations
 
 Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
