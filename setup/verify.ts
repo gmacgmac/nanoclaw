@@ -96,14 +96,26 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
-  // 3. Check credentials
+  // 3. Check credentials (multi-vendor format in secrets.env, or legacy in .env)
   let credentials = 'missing';
+  const secretsFile = path.join(homeDir, '.config', 'nanoclaw', 'secrets.env');
   const envFile = path.join(projectRoot, '.env');
-  if (fs.existsSync(envFile)) {
-    const envContent = fs.readFileSync(envFile, 'utf-8');
-    if (/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(envContent)) {
-      credentials = 'configured';
-    }
+
+  // Check for multi-vendor format: {VENDOR}_API_KEY pairs (e.g., OLLAMA_API_KEY, ZAI_API_KEY)
+  const checkCredentials = (filePath: string): boolean => {
+    if (!fs.existsSync(filePath)) return false;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    // Multi-vendor format: VENDOR_API_KEY (not ANTHROPIC_API_KEY which is legacy)
+    if (/^(?!ANTHROPIC_API_KEY)[A-Z]+_API_KEY=/m.test(content)) return true;
+    // Legacy format: ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+    if (/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)=/m.test(content)) return true;
+    return false;
+  };
+
+  if (checkCredentials(secretsFile)) {
+    credentials = 'configured';
+  } else if (checkCredentials(envFile)) {
+    credentials = 'configured';
   }
 
   // 4. Check channel auth (detect configured channels by credentials)
@@ -165,6 +177,26 @@ export async function run(_args: string[]): Promise<void> {
     mountAllowlist = 'configured';
   }
 
+  // 7. Check sender allowlist
+  let senderAllowlist = 'missing';
+  const senderAllowlistPath = path.join(
+    homeDir,
+    '.config',
+    'nanoclaw',
+    'sender-allowlist.json',
+  );
+  if (fs.existsSync(senderAllowlistPath)) {
+    try {
+      const content = fs.readFileSync(senderAllowlistPath, 'utf-8');
+      const config = JSON.parse(content);
+      if (config.default?.allow?.length > 0) {
+        senderAllowlist = 'configured';
+      }
+    } catch {
+      // Invalid JSON, treat as missing
+    }
+  }
+
   // Determine overall status
   const status =
     service === 'running' &&
@@ -184,6 +216,7 @@ export async function run(_args: string[]): Promise<void> {
     CHANNEL_AUTH: JSON.stringify(channelAuth),
     REGISTERED_GROUPS: registeredGroups,
     MOUNT_ALLOWLIST: mountAllowlist,
+    SENDER_ALLOWLIST: senderAllowlist,
     STATUS: status,
     LOG: 'logs/setup.log',
   });

@@ -121,13 +121,47 @@ Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse th
 
 ## 4. Claude Authentication (No Script)
 
-If HAS_ENV=true from step 2, read `.env` and check for `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`. If present, confirm with user: keep or reconfigure?
+If HAS_ENV=true from step 2, check for credentials in `~/.config/nanoclaw/secrets.env` (preferred) or `.env` (fallback). Look for multi-vendor format (`OLLAMA_API_KEY`, `ZAI_API_KEY`, etc.) or legacy format (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`). If present, confirm with user: keep or reconfigure?
 
-AskUserQuestion: Claude subscription (Pro/Max) vs Anthropic API key?
+**Important:** All secrets go in `~/.config/nanoclaw/secrets.env`, NOT in `.env`. The `.env` file is for non-sensitive config only (like `TZ=Europe/London`). This keeps secrets out of the git repo.
 
-**Subscription:** Tell user to run `claude setup-token` in another terminal, copy the token, add `CLAUDE_CODE_OAUTH_TOKEN=<token>` to `.env`. Do NOT collect the token in chat.
+AskUserQuestion: Which provider will you use for the agent?
 
-**API key:** Tell user to add `ANTHROPIC_API_KEY=<key>` to `.env`.
+**Ollama (recommended):**
+- Tell user to ensure Ollama is running: `ollama list`
+- Add to `~/.config/nanoclaw/secrets.env`:
+  ```bash
+  OLLAMA_BASE_URL=http://localhost:11434/v1
+  OLLAMA_API_KEY=ollama
+  ```
+
+**Z.ai:**
+- Ask user for their Z.ai API key
+- Add to `~/.config/nanoclaw/secrets.env`:
+  ```bash
+  ZAI_BASE_URL=https://api.z.ai/api/anthropic
+  ZAI_API_KEY=<their-key>
+  ```
+
+**Anthropic direct:**
+- Ask user for their Anthropic API key
+- Add to `~/.config/nanoclaw/secrets.env`:
+  ```bash
+  ANTHROPIC_BASE_URL=https://api.anthropic.com
+  ANTHROPIC_API_KEY=<their-key>
+  ```
+
+**Subscription (OAuth):**
+- Tell user to run `claude setup-token` in another terminal, copy the token
+- Add to `~/.config/nanoclaw/secrets.env`:
+  ```bash
+  CLAUDE_CODE_OAUTH_TOKEN=<token>
+  ```
+
+After adding credentials:
+```bash
+chmod 600 ~/.config/nanoclaw/secrets.env
+```
 
 ## 5. Set Up Channels
 
@@ -168,6 +202,45 @@ AskUserQuestion: Agent access to external directories?
 **No:** `npx tsx setup/index.ts --step mounts -- --empty`
 **Yes:** Collect paths/permissions. `npx tsx setup/index.ts --step mounts -- --json '{"allowedRoots":[...],"blockedPatterns":[],"nonMainReadOnly":true}'`
 
+## 6a. Sender Allowlist
+
+Create `~/.config/nanoclaw/sender-allowlist.json` to restrict who can message the bot. This is critical for security on public channels like Telegram.
+
+AskUserQuestion: "Who should be allowed to send messages to this bot?"
+
+**Just me:** Ask for their Telegram user ID (tell them to message @RawDataBot on Telegram to get it). Create:
+```bash
+mkdir -p ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/sender-allowlist.json << 'EOF'
+{
+  "default": {
+    "allow": ["<THEIR_USER_ID>"],
+    "mode": "drop"
+  },
+  "chats": {},
+  "logDenied": true
+}
+EOF
+chmod 600 ~/.config/nanoclaw/sender-allowlist.json
+```
+
+**Anyone:** Create an open allowlist:
+```bash
+cat > ~/.config/nanoclaw/sender-allowlist.json << 'EOF'
+{
+  "default": {
+    "allow": [],
+    "mode": "allow"
+  },
+  "chats": {},
+  "logDenied": false
+}
+EOF
+chmod 600 ~/.config/nanoclaw/sender-allowlist.json
+```
+
+**Note:** The `mode: "drop"` silently ignores messages from non-allowlisted senders. `mode: "allow"` lets everyone through.
+
 ## 7. Start Service
 
 If service already running: unload first.
@@ -205,10 +278,11 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 **If STATUS=failed, fix each:**
 - SERVICE=stopped → `npm run build`, then restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux) or `bash start-nanoclaw.sh` (WSL nohup)
 - SERVICE=not_found → re-run step 7
-- CREDENTIALS=missing → re-run step 4
+- CREDENTIALS=missing → re-run step 4 (ensure secrets.env has vendor keys like `OLLAMA_API_KEY` or `ZAI_API_KEY`)
 - CHANNEL_AUTH shows `not_found` for any channel → re-invoke that channel's skill (e.g. `/add-telegram`)
 - REGISTERED_GROUPS=0 → re-invoke the channel skills from step 5
 - MOUNT_ALLOWLIST=missing → `npx tsx setup/index.ts --step mounts -- --empty`
+- SENDER_ALLOWLIST=missing → re-run step 6a (create sender-allowlist.json)
 
 Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log`
 
