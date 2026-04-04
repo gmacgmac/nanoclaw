@@ -186,6 +186,12 @@ export async function processIpcMessageData(
   const senderSource = data.source || sourceGroup;
   // Priority: sender (from MCP tool) > sender_name (from IPC) > source
   const senderName = data.sender || data.sender_name || senderSource;
+
+  // Dashboard messages are user messages, not bot messages.
+  // They must be stored with is_from_me: false so the message loop
+  // processes them and the agent responds.
+  const isDashboardMessage = data.source === 'dashboard';
+
   storeMessageDirect({
     id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     chat_jid: data.chatJid,
@@ -193,8 +199,8 @@ export async function processIpcMessageData(
     sender_name: senderName,
     content: data.text,
     timestamp: new Date().toISOString(),
-    is_from_me: true,
-    is_bot_message: true,
+    is_from_me: !isDashboardMessage,
+    is_bot_message: !isDashboardMessage,
   });
   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
 }

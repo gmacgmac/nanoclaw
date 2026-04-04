@@ -98,6 +98,22 @@ sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_
 sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
 ```
 
+### Model Configuration Precedence
+
+1. `container_config.model` (database) — overrides everything
+2. `settings.json` → `ANTHROPIC_MODEL` — group default
+3. SDK default
+
+To use `settings.json` (easier to edit), remove `model` from database:
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_remove(container_config, '$.model') WHERE folder = 'mygroup'"
+```
+
+**Endpoint** must be in database (no settings.json fallback):
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.endpoint', 'zai') WHERE folder = 'mygroup'"
+```
+
 ## Session Architecture
 
 Sessions persist across container restarts — agents are NOT stateless between messages.
@@ -238,17 +254,29 @@ sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'"
 # VERIFY: Should return nothing
 sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder='<folder>'"
 
-# 2. Delete transcript files
+# 2. Delete transcript files (agent's conversation context)
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
 # VERIFY: Should return nothing
 ls data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl 2>/dev/null
 
-# 3. (Optional) Clear auto-memory
+# 3. Delete message history from database (incoming + outgoing)
+sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid='<jid>'"
+# VERIFY: Should return nothing
+sqlite3 store/messages.db "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
+
+# 4. (Optional) Clear auto-memory
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
 
-# 4. Restart service
+# 5. Restart service
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
+
+**What gets cleared:**
+| Step | What it clears | Why |
+|------|----------------|-----|
+| Session row | SDK's session ID → transcript mapping | Prevents "No conversation found" error |
+| JSONL files | Agent's full conversation context | Thinking, tool calls, responses — the agent's memory |
+| DB messages | `messages` table for this chat | Incoming user messages + outgoing bot messages (used by queue and dashboard UI) |
 
 **CRITICAL: Verify each step.** The SDK will fail with "No conversation found with session ID" if the database has a session ID but the JSONL file is missing. Always confirm the DELETE succeeded before deleting files.
 
