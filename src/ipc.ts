@@ -223,6 +223,7 @@ export async function processTaskIpc(
     folder?: string;
     trigger?: string;
     requiresTrigger?: boolean;
+    multiAgentRouter?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
     // For delegate_to_group
     uuid?: string;
@@ -517,6 +518,7 @@ export async function processTaskIpc(
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig,
           requiresTrigger: data.requiresTrigger,
+          multiAgentRouter: data.multiAgentRouter,
           isMain: existingGroup?.isMain,
         });
       } else {
