@@ -425,6 +425,7 @@ async function runQuery(
   if (containerInput.model) {
     sdkEnv.ANTHROPIC_MODEL = containerInput.model;
   }
+  log(`Using model: ${sdkEnv.ANTHROPIC_MODEL || 'default'}`);
 
   // Build system prompt: global CLAUDE.md + per-group systemPrompt from config
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';

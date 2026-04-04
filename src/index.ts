@@ -605,8 +605,22 @@ async function startMessageLoop(): Promise<void> {
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
-          let messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
+
+          // If nothing pending, the cursor has advanced past all "new" messages
+          // (e.g., processed by enqueueMessageCheck for routed messages). Don't
+          // re-process groupMessages - that would double-send to the container.
+          if (allPending.length === 0) {
+            // Advance global cursor past these messages to prevent re-seeing them
+            for (const msg of groupMessages) {
+              if (msg.timestamp > lastTimestamp) {
+                lastTimestamp = msg.timestamp;
+              }
+            }
+            saveState();
+            continue;
+          }
+
+          let messagesToSend = allPending;
 
           // If multiAgentRouter is active, filter out delegated messages from
           // the DB re-fetch so the hub agent doesn't see them.

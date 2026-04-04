@@ -107,18 +107,21 @@ export function startCredentialProxy(
           (req.headers[ENDPOINT_HEADER] as string) || DEFAULT_VENDOR
         ).toLowerCase();
 
-        logger.debug(
-          {
-            endpointHeader: req.headers[ENDPOINT_HEADER],
-            vendor: requestedVendor,
-          },
-          'Proxy routing request',
-        );
-
         const { upstreamUrl, apiKey, oauthToken, authMode } = resolveEndpoint(
           requestedVendor,
           routingTable,
           legacySecrets,
+        );
+
+        logger.info(
+          {
+            endpointHeader: req.headers[ENDPOINT_HEADER],
+            vendor: requestedVendor,
+            upstreamUrl: upstreamUrl.toString(),
+            authMode,
+            hasApiKey: !!apiKey,
+          },
+          'Proxy routing request',
         );
 
         const isHttps = upstreamUrl.protocol === 'https:';
@@ -141,7 +144,9 @@ export function startCredentialProxy(
 
         if (authMode === 'api-key') {
           // API key mode: inject x-api-key on every request
+          // Strip any Authorization header from OAuth-style SDK requests
           delete headers['x-api-key'];
+          delete headers['authorization'];
           headers['x-api-key'] = apiKey;
         } else {
           // OAuth mode: replace placeholder Bearer token with the real one
@@ -153,11 +158,29 @@ export function startCredentialProxy(
           }
         }
 
+        // Combine base URL pathname with request path
+        const basePath = upstreamUrl.pathname.replace(/\/$/, '');
+        const requestPath = basePath + req.url;
+
+        logger.info(
+          {
+            method: req.method,
+            path: req.url,
+            basePath,
+            requestPath,
+            upstreamHost: upstreamUrl.hostname,
+            authMode,
+            authHeader: req.headers['authorization'] ? 'present' : 'none',
+            xApiKeyHeader: req.headers['x-api-key'] ? 'present' : 'none',
+          },
+          'Proxy forwarding request',
+        );
+
         const upstream = makeRequest(
           {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
+            path: requestPath,
             method: req.method,
             headers,
           } as RequestOptions,

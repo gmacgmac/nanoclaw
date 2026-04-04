@@ -32,6 +32,8 @@ When a group's container fails to start or shows session errors, the session may
 
 ### Correct Way to Reset a Session
 
+Use this when the session is corrupted but you want to **keep message history**:
+
 ```bash
 # 1. Stop the host (clears in-memory cache)
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
@@ -48,15 +50,47 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 # On Linux: systemctl --user start nanoclaw
 ```
 
-### Dashboard Group Specific
+### Clear Chat History (Fresh Start)
 
-For `dashboard@internal`, also clear:
+Use this when you want to **completely reset** a group — no conversation memory:
 
 ```bash
-# Clear messages
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = 'dashboard@internal'"
+GROUP="telegram_main"
+JID="tg:6013943815"  # The chat_jid for this group
 
-# Clear test files (optional)
+# 1. Stop the host (clears in-memory cache)
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+
+# 2. Delete session entry from SQLite
+sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '$GROUP'"
+
+# 3. Delete transcript files (agent's conversation context)
+rm -rf data/sessions/$GROUP/.claude/projects/
+
+# 4. Delete message history (incoming + outgoing)
+sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '$JID'"
+
+# 5. Restart host
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+**What gets cleared:**
+| Step | What it clears | Why |
+|------|----------------|-----|
+| Session row | SDK's session ID → transcript mapping | Prevents "No conversation found" error |
+| JSONL files | Agent's full conversation context | Thinking, tool calls, responses — the agent's memory |
+| DB messages | `messages` table for this chat | Incoming user messages + outgoing bot messages |
+
+### Dashboard Group Specific
+
+For `dashboard@internal`, the same process applies. Use:
+
+```bash
+GROUP="dashboard"
+JID="dashboard@internal"
+
+# Follow the "Clear Chat History" steps above
+# Then optionally clear test files:
 rm -f groups/dashboard/hello.txt
 rm -f groups/dashboard/results.txt
 ```
@@ -154,19 +188,20 @@ mv data/ipc/errors/* /tmp/nanoclaw-errors/
 Nuclear option - completely reset a group to fresh state:
 
 ```bash
-GROUP="dashboard"
+GROUP="dashboard"          # Folder name
+JID="dashboard@internal"   # Chat JID (check registered_groups table)
 
 # Stop host
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 
-# Clear session
+# Clear session (agent's conversation context)
 sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '$GROUP'"
 rm -rf data/sessions/$GROUP/.claude/projects/
 
-# Clear messages
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid LIKE '%$GROUP%'"
+# Clear message history (incoming + outgoing)
+sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '$JID'"
 
-# Clear IPC
+# Clear IPC queue
 rm -rf data/ipc/$GROUP/messages/*
 rm -rf data/ipc/$GROUP/tasks/*
 
@@ -175,6 +210,11 @@ rm -rf groups/$GROUP/*
 
 # Restart host
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+**To find the JID for a group:**
+```bash
+sqlite3 store/messages.db "SELECT jid, folder FROM registered_groups"
 ```
 
 ---
