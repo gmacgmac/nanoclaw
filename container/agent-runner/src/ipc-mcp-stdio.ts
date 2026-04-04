@@ -239,6 +239,8 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    requires_trigger: z.boolean().optional().describe('True: only respond to messages starting with trigger. False: respond to all messages. Default: true for groups, false for solo chats.'),
+    multi_agent_router: z.boolean().optional().describe('When true on a main group: scan incoming messages for other groups\' triggers and auto-delegate. Only works if this group is main. Default: false.'),
   },
   async (args) => {
     if (!isMain) {
@@ -248,7 +250,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       };
     }
 
-    const data = {
+    const data: Record<string, unknown> = {
       type: 'register_group',
       jid: args.jid,
       name: args.name,
@@ -256,6 +258,8 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       trigger: args.trigger,
       timestamp: new Date().toISOString(),
     };
+    if (args.requires_trigger !== undefined) data.requiresTrigger = args.requires_trigger;
+    if (args.multi_agent_router !== undefined) data.multiAgentRouter = args.multi_agent_router;
 
     writeIpcFile(TASKS_DIR, data);
 
