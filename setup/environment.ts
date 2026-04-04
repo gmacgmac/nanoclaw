@@ -3,6 +3,7 @@
  * Replaces 01-check-environment.sh
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import Database from 'better-sqlite3';
@@ -41,6 +42,15 @@ export async function run(_args: string[]): Promise<void> {
 
   // Check existing config
   const hasEnv = fs.existsSync(path.join(projectRoot, '.env'));
+  const hasSecretsEnv = fs.existsSync(
+    path.join(os.homedir(), '.config', 'nanoclaw', 'secrets.env'),
+  );
+  const hasMountAllowlist = fs.existsSync(
+    path.join(os.homedir(), '.config', 'nanoclaw', 'mount-allowlist.json'),
+  );
+  const hasSenderAllowlist = fs.existsSync(
+    path.join(os.homedir(), '.config', 'nanoclaw', 'sender-allowlist.json'),
+  );
 
   const authDir = path.join(projectRoot, 'store', 'auth');
   const hasAuth = fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
@@ -73,6 +83,9 @@ export async function run(_args: string[]): Promise<void> {
       appleContainer,
       docker,
       hasEnv,
+      hasSecretsEnv,
+      hasMountAllowlist,
+      hasSenderAllowlist,
       hasAuth,
       hasRegisteredGroups,
     },
@@ -86,6 +99,9 @@ export async function run(_args: string[]): Promise<void> {
     APPLE_CONTAINER: appleContainer,
     DOCKER: docker,
     HAS_ENV: hasEnv,
+    HAS_SECRETS_ENV: hasSecretsEnv,
+    HAS_MOUNT_ALLOWLIST: hasMountAllowlist,
+    HAS_SENDER_ALLOWLIST: hasSenderAllowlist,
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,
     STATUS: 'success',
