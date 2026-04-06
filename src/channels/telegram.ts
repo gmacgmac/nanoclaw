@@ -45,7 +45,10 @@ async function downloadTelegramFile(
     await fs.promises.mkdir(mediaDir, { recursive: true });
 
     // Generate filename with human-readable timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, '-')
+      .slice(0, 19);
     const ext = file.file_path.split('.').pop() || 'bin';
     const baseName = originalName
       ? originalName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 50)
@@ -56,7 +59,10 @@ async function downloadTelegramFile(
     // Download and save
     const response = await fetch(fileUrl);
     if (!response.ok) {
-      logger.error({ status: response.status }, 'Failed to download Telegram file');
+      logger.error(
+        { status: response.status },
+        'Failed to download Telegram file',
+      );
       return null;
     }
     const buffer = await response.arrayBuffer();
@@ -278,7 +284,13 @@ export class TelegramChannel implements Channel {
 
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
 
       // Download the file
       const filepath = await downloadTelegramFile(

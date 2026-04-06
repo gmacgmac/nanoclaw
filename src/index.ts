@@ -137,7 +137,13 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   // Create chats table row for internal groups (required for message processing)
   if (jid.endsWith('@internal')) {
-    storeChatMetadata(jid, new Date().toISOString(), group.name, 'dashboard', false);
+    storeChatMetadata(
+      jid,
+      new Date().toISOString(),
+      group.name,
+      'dashboard',
+      false,
+    );
   }
 
   // Create group folder
