@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  getAllChats,
   getAllTasks,
   getRegisteredGroup,
   getTaskById,
@@ -89,7 +90,10 @@ beforeEach(() => {
     registerGroup: (jid, group) => {
       groups[jid] = group;
       setRegisteredGroup(jid, group);
-      // Mock the fs.mkdirSync that registerGroup does
+      // Create chats row for internal groups (mirrors src/index.ts behavior)
+      if (jid.endsWith('@internal')) {
+        storeChatMetadata(jid, new Date().toISOString(), group.name, 'dashboard', false);
+      }
     },
     syncGroups: async () => {},
     getAvailableGroups: () => [],
@@ -708,6 +712,32 @@ describe('register_group success', () => {
     );
 
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+  });
+
+  it('register_group creates chats row for internal groups', async () => {
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'test-internal@internal',
+        name: 'Test Internal',
+        folder: 'test-internal',
+        trigger: '@test',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    // Verify group was registered
+    const group = getRegisteredGroup('test-internal@internal');
+    expect(group).toBeDefined();
+    expect(group!.name).toBe('Test Internal');
+
+    // Verify chats row was created for internal group
+    const chats = getAllChats();
+    const internalChat = chats.find((c) => c.jid === 'test-internal@internal');
+    expect(internalChat).toBeDefined();
+    expect(internalChat!.name).toBe('Test Internal');
   });
 });
 

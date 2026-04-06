@@ -74,7 +74,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control. `{}` = no access, `{ "*": { readonly: true } }` = all |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
-| `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`) |
+| `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`). Prefer `settings.json` for easier editing |
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
@@ -91,23 +91,37 @@ Use `json_set()` to update nested fields:
 # Set endpoint
 sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.endpoint', 'ollama') WHERE folder = 'mygroup'"
 
-# Set model
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.model', 'sonnet') WHERE folder = 'mygroup'"
-
 # View current config
 sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
 ```
 
-### Model Configuration Precedence
+### Model Configuration
 
-1. `container_config.model` (database) — overrides everything
-2. `settings.json` → `ANTHROPIC_MODEL` — group default
-3. SDK default
+Two ways to set per-group models:
 
-To use `settings.json` (easier to edit), remove `model` from database:
+**Preferred: `settings.json`** (easier to edit)
+```bash
+# File: data/sessions/{folder}/.claude/settings.json
+{
+  "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+}
+```
+
+**Alternative: database** (overrides everything)
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.model', 'sonnet') WHERE folder = 'mygroup'"
+```
+
+To switch from database to settings.json (recommended), remove the model from the database:
 ```bash
 sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_remove(container_config, '$.model') WHERE folder = 'mygroup'"
 ```
+
+The model precedence:
+1. `container_config.model` (database) — overrides everything
+2. `data/sessions/{folder}/.claude/settings.json` → `ANTHROPIC_MODEL` — group-specific model
+3. `.env` → `ANTHROPIC_MODEL` — global default
+4. SDK default
 
 **Endpoint** must be in database (no settings.json fallback):
 ```bash
@@ -162,6 +176,12 @@ Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) f
 | `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+
+## Multi-Agent Routing
+
+For configuring sub-agents and delegation, see:
+- [AGENT_TEAM_PATTERNS.md](docs/AGENT_TEAM_PATTERNS.md) — Conceptual patterns (Flow 1 vs Flow 2)
+- [DELEGATION_SETUP.md](docs/DELEGATION_SETUP.md) — Setup, SQL commands, troubleshooting
 
 ## Contributing
 

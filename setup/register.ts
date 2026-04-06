@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { STORE_DIR } from '../src/config.ts';
-import { initDatabase, setRegisteredGroup } from '../src/db.ts';
+import { initDatabase, setRegisteredGroup, storeChatMetadata } from '../src/db.ts';
 import { isValidGroupFolder } from '../src/group-folder.ts';
 import { logger } from '../src/logger.ts';
 import { emitStatus } from './status.ts';
@@ -108,6 +108,11 @@ export async function run(args: string[]): Promise<void> {
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });
+
+  // Create chats table row for internal groups (required for message processing)
+  if (parsed.jid.endsWith('@internal')) {
+    storeChatMetadata(parsed.jid, new Date().toISOString(), parsed.name, 'dashboard', false);
+  }
 
   logger.info('Wrote registration to SQLite');
 

@@ -1,7 +1,9 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -16,6 +18,56 @@ export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+}
+
+/**
+ * Download a Telegram file and save it to the group's media directory.
+ * Returns the local file path, or null if download fails.
+ */
+async function downloadTelegramFile(
+  api: { getFile: Api['getFile'] },
+  botToken: string,
+  fileId: string,
+  groupFolder: string,
+  originalName?: string,
+): Promise<string | null> {
+  try {
+    const file = await api.getFile(fileId);
+    if (!file.file_path) return null;
+
+    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${file.file_path}`;
+
+    // Resolve group folder path
+    const groupDir = path.join(GROUPS_DIR, groupFolder);
+    const mediaDir = path.join(groupDir, 'media');
+
+    // Ensure media directory exists
+    await fs.promises.mkdir(mediaDir, { recursive: true });
+
+    // Generate filename with human-readable timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const ext = file.file_path.split('.').pop() || 'bin';
+    const baseName = originalName
+      ? originalName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 50)
+      : 'attachment';
+    const filename = `${timestamp}_${baseName}.${ext}`;
+    const filepath = path.join(mediaDir, filename);
+
+    // Download and save
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      logger.error({ status: response.status }, 'Failed to download Telegram file');
+      return null;
+    }
+    const buffer = await response.arrayBuffer();
+    await fs.promises.writeFile(filepath, Buffer.from(buffer));
+
+    logger.info({ filepath, groupFolder }, 'Telegram attachment downloaded');
+    return filepath;
+  } catch (err) {
+    logger.error({ err }, 'Failed to download Telegram file');
+    return null;
+  }
 }
 
 /**
@@ -199,20 +251,122 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
-    this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
-    });
+    // Handler for downloadable attachments (photo, video, audio, document)
+    const handleAttachment = async (
+      ctx: any,
+      placeholder: string,
+      getFileId: (msg: any) => string | undefined,
+      getFileName?: (msg: any) => string | undefined,
+    ) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const fileId = getFileId(ctx.message);
+      if (!fileId) {
+        storeNonText(ctx, placeholder);
+        return;
+      }
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+
+      // Download the file
+      const filepath = await downloadTelegramFile(
+        this.bot!.api,
+        this.botToken,
+        fileId,
+        group.folder,
+        getFileName?.(ctx.message),
+      );
+
+      const content = filepath
+        ? `${placeholder}: ${filepath}${caption}`
+        : `${placeholder}${caption}`;
+
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+    };
+
+    // Photo: get the largest size
+    this.bot.on('message:photo', (ctx) =>
+      handleAttachment(
+        ctx,
+        '[Photo]',
+        (msg) => msg.photo?.[msg.photo.length - 1]?.file_id,
+      ),
+    );
+
+    // Video
+    this.bot.on('message:video', (ctx) =>
+      handleAttachment(
+        ctx,
+        '[Video]',
+        (msg) => msg.video?.file_id,
+        (msg) => msg.video?.file_name,
+      ),
+    );
+
+    // Voice message
+    this.bot.on('message:voice', (ctx) =>
+      handleAttachment(ctx, '[Voice]', (msg) => msg.voice?.file_id),
+    );
+
+    // Audio file
+    this.bot.on('message:audio', (ctx) =>
+      handleAttachment(
+        ctx,
+        '[Audio]',
+        (msg) => msg.audio?.file_id,
+        (msg) => msg.audio?.file_name || msg.audio?.title,
+      ),
+    );
+
+    // Document
+    this.bot.on('message:document', (ctx) =>
+      handleAttachment(
+        ctx,
+        '[Document]',
+        (msg) => msg.document?.file_id,
+        (msg) => msg.document?.file_name,
+      ),
+    );
+
+    // Sticker (no file download needed)
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
       storeNonText(ctx, `[Sticker ${emoji}]`);
     });
-    this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
-    this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+
+    // Location (no file)
+    this.bot.on('message:location', (ctx) => {
+      const lat = ctx.message.location?.latitude;
+      const lon = ctx.message.location?.longitude;
+      storeNonText(ctx, `[Location: ${lat}, ${lon}]`);
+    });
+
+    // Contact (no file)
+    this.bot.on('message:contact', (ctx) => {
+      const name = ctx.message.contact?.first_name || '';
+      const phone = ctx.message.contact?.phone_number || '';
+      storeNonText(ctx, `[Contact: ${name} ${phone}]`);
+    });
 
     // Handle errors gracefully
     this.bot.catch((err) => {

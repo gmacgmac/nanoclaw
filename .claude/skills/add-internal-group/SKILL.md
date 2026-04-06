@@ -112,7 +112,22 @@ npx tsx setup/index.ts register -- \
   --is-main
 ```
 
-## Phase 4: Create Group CLAUDE.md
+## Phase 4: Create Chats Table Row
+
+**CRITICAL:** Internal groups require a row in the `chats` table for message processing. The foreign key constraint in `messages` table requires a valid chat_jid reference.
+
+```bash
+sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('{folder}@internal', '{name}', datetime('now'), 'dashboard', 0)"
+```
+
+Example:
+```bash
+sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('research@internal', 'Research', datetime('now'), 'dashboard', 0)"
+```
+
+**Without this row, messages queued for the internal group will not be processed.**
+
+## Phase 5: Create Group CLAUDE.md
 
 Create `groups/{folder}/CLAUDE.md` with appropriate content based on the group's purpose.
 
@@ -168,14 +183,16 @@ This agent's responses are stored in the database for UI polling.
 Use clear formatting with markdown.
 ```
 
-## Phase 5: Restart Service
+## Phase 6: Restart Service
+
+**Restart is NOT required** if the service is already running. The message loop will pick up new internal groups on the next cycle. Only restart if you want to force immediate processing.
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 # Linux: systemctl --user restart nanoclaw
 ```
 
-## Phase 6: Verify
+## Phase 7: Verify
 
 Check registration:
 
@@ -213,6 +230,20 @@ sqlite3 store/messages.db "UPDATE registered_groups SET multi_agent_router = 1 W
    - Response routed back to Telegram
 
 ## Troubleshooting
+
+### Group not responding at all (no container launch)
+
+**Most common cause:** Missing row in `chats` table. The `messages` table has a foreign key constraint to `chats`. Without this row, messages cannot be queued.
+
+Check:
+```bash
+sqlite3 store/messages.db "SELECT * FROM chats WHERE jid='{folder}@internal'"
+```
+
+If empty, create it:
+```bash
+sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('{folder}@internal', '{name}', datetime('now'), 'dashboard', 0)"
+```
 
 ### Group not responding to delegation
 

@@ -135,8 +135,14 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
 
+  // Create chats table row for internal groups (required for message processing)
+  if (jid.endsWith('@internal')) {
+    storeChatMetadata(jid, new Date().toISOString(), group.name, 'dashboard', false);
+  }
+
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(groupDir, 'media'), { recursive: true });
 
   // Copy CLAUDE.md template into the new group folder so agents have
   // identity and instructions from the first run.  (Fixes #1391)
