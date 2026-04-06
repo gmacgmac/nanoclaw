@@ -92,7 +92,13 @@ beforeEach(() => {
       setRegisteredGroup(jid, group);
       // Create chats row for internal groups (mirrors src/index.ts behavior)
       if (jid.endsWith('@internal')) {
-        storeChatMetadata(jid, new Date().toISOString(), group.name, 'dashboard', false);
+        storeChatMetadata(
+          jid,
+          new Date().toISOString(),
+          group.name,
+          'dashboard',
+          false,
+        );
       }
     },
     syncGroups: async () => {},
