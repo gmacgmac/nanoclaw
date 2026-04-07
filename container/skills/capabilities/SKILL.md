@@ -36,7 +36,7 @@ Each directory is an installed skill. The directory name is the skill name (e.g.
 
 Read the allowed tools from your SDK configuration. You always have access to:
 - **Core:** Bash, Read, Write, Edit, Glob, Grep
-- **Web:** WebSearch, WebFetch
+- **Web (MCP):** mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
 - **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
 - **MCP:** mcp__nanoclaw__* (messaging, tasks, group management)
@@ -86,7 +86,7 @@ Present the report as a clean, readable message. Example:
 
 *Tools:*
 • Core: Bash, Read, Write, Edit, Glob, Grep
-• Web: WebSearch, WebFetch
+• Web (MCP): mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 • Orchestration: Task, TeamCreate, SendMessage
 • MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group
 

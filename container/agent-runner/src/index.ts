@@ -33,6 +33,7 @@ interface ContainerInput {
   systemPrompt?: string;
   script?: string;
   endpoint?: string;
+  webSearchVendor?: string;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -547,7 +548,11 @@ async function main(): Promise<void> {
   // Forward the group's endpoint name to the credential proxy via default headers.
   // The proxy uses X-Nanoclaw-Endpoint to route to the correct upstream.
   const endpoint = containerInput.endpoint || process.env.NANOCLAW_ENDPOINT || 'anthropic';
-  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = `X-Nanoclaw-Endpoint: ${endpoint}`;
+  const webSearchVendor = containerInput.webSearchVendor || process.env.NANOCLAW_WEB_SEARCH_VENDOR || 'ollama';
+  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = [
+    `X-Nanoclaw-Endpoint: ${endpoint}`,
+    `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
+  ].join('\n');
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

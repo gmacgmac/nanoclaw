@@ -65,7 +65,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • WebSearch, WebFetch (internet access)                     │    │
 │  │    • agent-browser (only if skill explicitly allowed)          │    │
 │  │    • mcp__nanoclaw__* (scheduler tools via IPC — always on)    │    │
-│  │    • Per-group MCP servers (e.g. brave-search)                 │    │
+│  │    • Per-group MCP servers (e.g. brave-search, nanoclaw-web-search)  │    │
 │  │                                                                │    │
 │  └──────────────────────────────────────────────────────────────┘    │
 │                                                                       │
@@ -281,9 +281,11 @@ nanoclaw/
 │   ├── binaries/                  # Host-stored binaries (NOT in Docker image)
 │   │   └── agent-browser/         # MUST be committed to git — runtime source for browser skill
 │   ├── mcp-servers/               # Self-built MCP servers (built into Docker image)
-│   │   └── brave-search/          # Brave Search API wrapper
+│   │   ├── brave-search/          # Brave Search API wrapper
+│   │   └── nanoclaw-web-search/   # Web search via credential proxy (any vendor)
 │   └── skills/
-│       └── agent-browser.md       # Browser automation skill
+│       ├── agent-browser.md       # Browser automation skill
+│       └── web-search/SKILL.md    # Web search MCP tool guidance
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
@@ -394,6 +396,8 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
+| `endpoint` | `string` | `"anthropic"` | Named inference endpoint (vendor in secrets.env) |
+| `webSearchVendor` | `string` | `"ollama"` | Named web search vendor (in secrets.env) |
 
 #### `skills` — Per-Group Skill Selection
 
@@ -519,6 +523,8 @@ Add additional MCP servers to a group's container alongside the always-present `
 The `nanoclaw` server is always present and cannot be overridden — if a group config includes a key named `nanoclaw`, it is silently ignored.
 
 **Brave Search MCP**: A self-built MCP server at `container/mcp-servers/brave-search/` that wraps the Brave Search API. The API key (`BRAVE_SEARCH_API_KEY`) is read from `~/.config/nanoclaw/secrets.env` on the host and injected as a container env var — the container never sees the host secrets file.
+
+**NanoClaw Web Search MCP**: A self-built MCP server at `container/mcp-servers/nanoclaw-web-search/` that exposes `web_search` and `web_fetch` tools. Unlike brave-search (which injects an API key directly), web search routes through the credential proxy — the MCP server only needs the proxy host/port and vendor name. The proxy injects real API keys at request time. Configured via `webSearchVendor` in `containerConfig` (defaults to `"ollama"`). Requires `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY` in `secrets.env`. See [OLLAMA_WEB_SEARCH_INTEGRATION.md](OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
 
 ### Claude Authentication
 

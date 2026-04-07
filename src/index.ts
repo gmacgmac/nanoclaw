@@ -425,6 +425,7 @@ async function runAgent(
         systemPrompt: group.containerConfig?.systemPrompt,
         mcpServers: group.containerConfig?.mcpServers,
         endpoint: group.containerConfig?.endpoint,
+        webSearchVendor: group.containerConfig?.webSearchVendor,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

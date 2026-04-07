@@ -53,28 +53,47 @@ export const DATA_DIR = process.env.NANOCLAW_DATA_DIR
   : path.resolve(PROJECT_ROOT, 'data');
 
 export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || envConfig.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+  process.env.CONTAINER_IMAGE ||
+  envConfig.CONTAINER_IMAGE ||
+  'nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || envConfig.CONTAINER_TIMEOUT || '1800000',
   10,
 );
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
-  process.env.CONTAINER_MAX_OUTPUT_SIZE || envConfig.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
+  process.env.CONTAINER_MAX_OUTPUT_SIZE ||
+    envConfig.CONTAINER_MAX_OUTPUT_SIZE ||
+    '10485760',
   10,
 ); // 10MB default
 export const CREDENTIAL_PROXY_PORT = parseInt(
-  process.env.CREDENTIAL_PROXY_PORT || envConfig.CREDENTIAL_PROXY_PORT || '3001',
+  process.env.CREDENTIAL_PROXY_PORT ||
+    envConfig.CREDENTIAL_PROXY_PORT ||
+    '3001',
   10,
 );
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
-  parseInt(process.env.MAX_MESSAGES_PER_PROMPT || envConfig.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
+  parseInt(
+    process.env.MAX_MESSAGES_PER_PROMPT ||
+      envConfig.MAX_MESSAGES_PER_PROMPT ||
+      '10',
+    10,
+  ) || 10,
 );
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || envConfig.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+export const IDLE_TIMEOUT = parseInt(
+  process.env.IDLE_TIMEOUT || envConfig.IDLE_TIMEOUT || '1800000',
+  10,
+); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
-  parseInt(process.env.MAX_CONCURRENT_CONTAINERS || envConfig.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
+  parseInt(
+    process.env.MAX_CONCURRENT_CONTAINERS ||
+      envConfig.MAX_CONCURRENT_CONTAINERS ||
+      '5',
+    10,
+  ) || 5,
 );
 
 function escapeRegex(str: string): string {

@@ -20,7 +20,12 @@ import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
 
-import { readEnvFile, scanEndpoints, EndpointEntry } from './env.js';
+import {
+  readEnvFile,
+  scanEndpoints,
+  scanWebSearchEndpoints,
+  EndpointEntry,
+} from './env.js';
 import { logger } from './logger.js';
 
 export type AuthMode = 'api-key' | 'oauth';
@@ -32,8 +37,17 @@ export interface ProxyConfig {
 /** Header containers use to select an endpoint. */
 export const ENDPOINT_HEADER = 'x-nanoclaw-endpoint';
 
+/** Header containers use to select a web search vendor. */
+export const WEB_SEARCH_VENDOR_HEADER = 'x-nanoclaw-web-search-vendor';
+
 /** Default vendor when header is absent or vendor is unknown. */
 const DEFAULT_VENDOR = 'anthropic';
+
+/** Default web search vendor when header is absent. */
+const DEFAULT_WEB_SEARCH_VENDOR = 'ollama';
+
+/** Request paths that trigger web search routing instead of inference routing. */
+const WEB_SEARCH_PATHS = ['/web_search', '/web_fetch'];
 
 /**
  * Resolve the upstream URL and API key for a given vendor name.
@@ -82,6 +96,10 @@ export function startCredentialProxy(
   const routingTable = scanEndpoints();
   const vendorNames = Object.keys(routingTable);
 
+  // Build web search routing table from secrets.env
+  const webSearchTable = scanWebSearchEndpoints();
+  const webSearchVendors = Object.keys(webSearchTable);
+
   // Legacy secrets for backward compatibility (OAuth, single-endpoint setups)
   const legacySecrets = readEnvFile([
     'ANTHROPIC_API_KEY',
@@ -102,7 +120,96 @@ export function startCredentialProxy(
       req.on('end', () => {
         const body = Buffer.concat(chunks);
 
-        // Determine which endpoint to route to
+        // Check if this is a web search request (path-based routing)
+        const isWebSearch = WEB_SEARCH_PATHS.some(
+          (p) => req.url === p || req.url?.startsWith(p + '?'),
+        );
+
+        if (isWebSearch) {
+          const vendor = (
+            (req.headers[WEB_SEARCH_VENDOR_HEADER] as string) ||
+            DEFAULT_WEB_SEARCH_VENDOR
+          ).toLowerCase();
+
+          const wsEntry = webSearchTable[vendor];
+          if (!wsEntry) {
+            logger.warn(
+              { vendor, available: webSearchVendors },
+              'Web search vendor not found',
+            );
+            res.writeHead(404, { 'content-type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: `Web search vendor "${vendor}" not configured. Available: [${webSearchVendors.join(', ')}]`,
+              }),
+            );
+            return;
+          }
+
+          const wsUpstream = new URL(wsEntry.baseUrl);
+          const isHttps = wsUpstream.protocol === 'https:';
+          const makeReq = isHttps ? httpsRequest : httpRequest;
+
+          const headers: Record<string, string | number | string[] | undefined> =
+            {
+              ...(req.headers as Record<string, string>),
+              host: wsUpstream.host,
+              'content-length': body.length,
+              authorization: `Bearer ${wsEntry.apiKey}`,
+            };
+
+          // Strip hop-by-hop and routing headers
+          delete headers['connection'];
+          delete headers['keep-alive'];
+          delete headers['transfer-encoding'];
+          delete headers[WEB_SEARCH_VENDOR_HEADER];
+          delete headers[ENDPOINT_HEADER];
+          delete headers['x-api-key'];
+
+          const basePath = wsUpstream.pathname.replace(/\/$/, '');
+          const requestPath = basePath + req.url;
+
+          logger.info(
+            {
+              method: req.method,
+              path: req.url,
+              vendor,
+              upstream: wsUpstream.hostname,
+            },
+            'Proxy forwarding web search request',
+          );
+
+          const upstream = makeReq(
+            {
+              hostname: wsUpstream.hostname,
+              port: wsUpstream.port || (isHttps ? 443 : 80),
+              path: requestPath,
+              method: req.method,
+              headers,
+            } as RequestOptions,
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
+          );
+
+          upstream.on('error', (err) => {
+            logger.error(
+              { err, url: req.url, vendor },
+              'Web search proxy upstream error',
+            );
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            }
+          });
+
+          upstream.write(body);
+          upstream.end();
+          return;
+        }
+
+        // --- Inference routing (existing logic) ---
         const requestedVendor = (
           (req.headers[ENDPOINT_HEADER] as string) || DEFAULT_VENDOR
         ).toLowerCase();
@@ -208,7 +315,13 @@ export function startCredentialProxy(
 
     server.listen(port, host, () => {
       logger.info(
-        { port, host, authMode: defaultAuthMode, endpoints: vendorNames },
+        {
+          port,
+          host,
+          authMode: defaultAuthMode,
+          endpoints: vendorNames,
+          webSearchEndpoints: webSearchVendors,
+        },
         'Credential proxy started',
       );
       resolve(server);

@@ -95,6 +95,15 @@ export interface ContainerConfig {
    * Defaults to "anthropic" if omitted.
    */
   endpoint?: string;
+
+  /**
+   * Named web search vendor for this group's web search traffic.
+   * Must match a vendor prefix defined in secrets.env
+   * (e.g. "ollama" for OLLAMA_WEB_SEARCH_BASE_URL / OLLAMA_WEB_SEARCH_API_KEY).
+   * The credential proxy routes web search requests to the correct upstream.
+   * Defaults to "ollama" if omitted.
+   */
+  webSearchVendor?: string;
 }
 
 export interface RegisteredGroup {

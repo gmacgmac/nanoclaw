@@ -133,3 +133,69 @@ export function scanEndpoints(): Record<string, EndpointEntry> {
 
   return endpoints;
 }
+
+/**
+ * Scan secrets.env (and .env fallback) for all named web search endpoint pairs.
+ * Convention: {VENDOR}_WEB_SEARCH_BASE_URL + {VENDOR}_WEB_SEARCH_API_KEY.
+ * Returns a map keyed by lowercase vendor name.
+ *
+ * Does NOT load values into process.env.
+ */
+export function scanWebSearchEndpoints(): Record<string, EndpointEntry> {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const secretsFile = path.join(homeDir, '.config', 'nanoclaw', 'secrets.env');
+  const envFile = path.join(process.cwd(), '.env');
+
+  const allVars: Record<string, string> = {};
+
+  for (const filePath of [envFile, secretsFile]) {
+    let content: string;
+    try {
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      let value = trimmed.slice(eqIdx + 1).trim();
+      if (
+        value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (value) allVars[key] = value;
+    }
+  }
+
+  const suffix = '_WEB_SEARCH_BASE_URL';
+  for (const key of Object.keys(process.env)) {
+    if (
+      (key.endsWith(suffix) || key.endsWith('_WEB_SEARCH_API_KEY')) &&
+      !allVars[key]
+    ) {
+      if (process.env[key]) allVars[key] = process.env[key]!;
+    }
+  }
+
+  const endpoints: Record<string, EndpointEntry> = {};
+  for (const key of Object.keys(allVars)) {
+    if (!key.endsWith(suffix)) continue;
+    const vendor = key.slice(0, -suffix.length);
+    if (!vendor) continue;
+    const apiKeyKey = `${vendor}_WEB_SEARCH_API_KEY`;
+    const baseUrl = allVars[key];
+    const apiKey = allVars[apiKeyKey];
+    if (baseUrl && apiKey) {
+      endpoints[vendor.toLowerCase()] = { baseUrl, apiKey };
+    }
+  }
+
+  return endpoints;
+}
+

@@ -304,3 +304,166 @@ describe('NANOCLAW_ENDPOINT env var', () => {
     expect(args[endpointIdx - 1]).toBe('-e');
   });
 });
+
+describe('NANOCLAW_WEB_SEARCH env vars', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('injects web search env vars when nanoclaw-web-search MCP is configured', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        webSearchVendor: 'ollama',
+        mcpServers: {
+          'nanoclaw-web-search': {
+            command: 'node',
+            args: ['/app/mcp-servers/nanoclaw-web-search/dist/index.js'],
+          },
+        },
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+
+    // NANOCLAW_WEB_SEARCH_VENDOR
+    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama');
+    expect(vendorIdx).toBeGreaterThan(0);
+    expect(args[vendorIdx - 1]).toBe('-e');
+
+    // NANOCLAW_PROXY_HOST
+    const hostIdx = args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_HOST='));
+    expect(hostIdx).toBeGreaterThan(0);
+    expect(args[hostIdx - 1]).toBe('-e');
+
+    // NANOCLAW_PROXY_PORT
+    const portIdx = args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_PORT='));
+    expect(portIdx).toBeGreaterThan(0);
+    expect(args[portIdx - 1]).toBe('-e');
+  });
+
+  it('defaults webSearchVendor to ollama when not specified', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        mcpServers: {
+          'nanoclaw-web-search': {
+            command: 'node',
+            args: ['/app/mcp-servers/nanoclaw-web-search/dist/index.js'],
+          },
+        },
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama');
+    expect(vendorIdx).toBeGreaterThan(0);
+  });
+
+  it('uses custom webSearchVendor when configured', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        webSearchVendor: 'zai',
+        mcpServers: {
+          'nanoclaw-web-search': {
+            command: 'node',
+            args: ['/app/mcp-servers/nanoclaw-web-search/dist/index.js'],
+          },
+        },
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=zai');
+    expect(vendorIdx).toBeGreaterThan(0);
+  });
+
+  it('does NOT inject web search env vars when nanoclaw-web-search MCP is absent', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        mcpServers: {
+          'brave-search': { command: 'node', args: ['server.js'] },
+        },
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const vendorIdx = args.findIndex((a) => a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='));
+    expect(vendorIdx).toBe(-1);
+  });
+
+  it('does NOT inject web search env vars when containerConfig is absent', async () => {
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const vendorIdx = args.findIndex((a) => a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='));
+    expect(vendorIdx).toBe(-1);
+  });
+
+  it('web search env vars coexist with brave-search and endpoint', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        endpoint: 'ollama',
+        webSearchVendor: 'ollama',
+        mcpServers: {
+          'brave-search': { command: 'node', args: ['server.js'] },
+          'nanoclaw-web-search': {
+            command: 'node',
+            args: ['/app/mcp-servers/nanoclaw-web-search/dist/index.js'],
+          },
+        },
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+
+    // All three should be present
+    expect(args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=ollama')).toBeGreaterThan(0);
+    expect(args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama')).toBeGreaterThan(0);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_HOST='))).toBeGreaterThan(0);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_PORT='))).toBeGreaterThan(0);
+  });
+});
