@@ -497,6 +497,23 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
+    // Token usage logging — confirms input_tokens availability across providers
+    if (message.type === 'assistant' && 'message' in message) {
+      const usage = (message as any).message?.usage;
+      if (usage) {
+        const entry = `[${new Date().toISOString()}] input=${usage.input_tokens || '?'} output=${usage.output_tokens || '?'}\n`;
+        const logPath = '/workspace/group/token-usage.log';
+        try {
+          const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
+          fs.writeFileSync(logPath, entry + existing);
+        } catch (e) {
+          log(`Token log write failed: ${(e as Error).message}`);
+        }
+      } else {
+        log('Assistant message has no usage field');
+      }
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);

@@ -150,13 +150,15 @@ export function startCredentialProxy(
           const isHttps = wsUpstream.protocol === 'https:';
           const makeReq = isHttps ? httpsRequest : httpRequest;
 
-          const headers: Record<string, string | number | string[] | undefined> =
-            {
-              ...(req.headers as Record<string, string>),
-              host: wsUpstream.host,
-              'content-length': body.length,
-              authorization: `Bearer ${wsEntry.apiKey}`,
-            };
+          const headers: Record<
+            string,
+            string | number | string[] | undefined
+          > = {
+            ...(req.headers as Record<string, string>),
+            host: wsUpstream.host,
+            'content-length': body.length,
+            authorization: `Bearer ${wsEntry.apiKey}`,
+          };
 
           // Strip hop-by-hop and routing headers
           delete headers['connection'];

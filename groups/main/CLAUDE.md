@@ -34,7 +34,18 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
-## Memory
+## Memory Protocol
+
+@memory/MEMORY.md
+
+You have a persistent memory system at `memory/`.
+
+- `memory/MEMORY.md` — durable facts (preferences, names, decisions). Write here immediately when you learn something lasting. Keep it concise — one line per fact.
+- `memory/YYYY-MM-DD.md` — daily running notes (task state, observations, context from today's conversations). Create the file if it doesn't exist. Append, don't overwrite.
+
+Before ending any response where something important was discussed, check: should this be written to memory?
+
+## Conversation History
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
 

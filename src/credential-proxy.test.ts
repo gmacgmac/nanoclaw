@@ -4,7 +4,10 @@ import type { AddressInfo } from 'net';
 
 const mockEnv: Record<string, string> = {};
 let mockEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
-let mockWebSearchEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
+let mockWebSearchEndpoints: Record<
+  string,
+  { baseUrl: string; apiKey: string }
+> = {};
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({ ...mockEnv })),
   scanEndpoints: vi.fn(() => ({ ...mockEndpoints })),

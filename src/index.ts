@@ -149,6 +149,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
   fs.mkdirSync(path.join(groupDir, 'media'), { recursive: true });
+  fs.mkdirSync(path.join(groupDir, 'memory'), { recursive: true });
 
   // Copy CLAUDE.md template into the new group folder so agents have
   // identity and instructions from the first run.  (Fixes #1391)
@@ -168,6 +169,16 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
       fs.writeFileSync(groupMdFile, content);
       logger.info({ folder: group.folder }, 'Created CLAUDE.md from template');
     }
+  }
+
+  // Seed memory file so @memory/MEMORY.md import works from first run
+  const memoryFile = path.join(groupDir, 'memory', 'MEMORY.md');
+  if (!fs.existsSync(memoryFile)) {
+    fs.writeFileSync(
+      memoryFile,
+      '# Memory\n\nDurable facts and preferences. Updated by the agent during conversations.\n\n<!-- Agent: append facts below this line. Keep concise — one line per fact. -->\n',
+    );
+    logger.info({ folder: group.folder }, 'Created memory/MEMORY.md seed');
   }
 
   logger.info(
