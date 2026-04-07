@@ -142,7 +142,10 @@ describe('memory directory bootstrap', () => {
 
     // Verify mkdirSync was called with the sessions .claude path (not auto-memory)
     const sessionsPathCall = mkdirSyncMock.mock.calls.find(
-      ([p]) => typeof p === 'string' && p.includes('sessions') && p.includes('.claude'),
+      ([p]) =>
+        typeof p === 'string' &&
+        p.includes('sessions') &&
+        p.includes('.claude'),
     );
     expect(sessionsPathCall).toBeDefined();
     expect(sessionsPathCall![1]).toEqual({ recursive: true });

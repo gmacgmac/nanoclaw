@@ -497,20 +497,30 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
-    // Token usage logging — confirms input_tokens availability across providers
+    // Token usage logging — deduplicate by message ID (SDK emits thinking + text
+    // as separate assistant events with the same msg_ ID). Last write wins so we
+    // capture the final emission which has accurate output_tokens.
     if (message.type === 'assistant' && 'message' in message) {
-      const usage = (message as any).message?.usage;
-      if (usage) {
-        const entry = `[${new Date().toISOString()}] input=${usage.input_tokens || '?'} output=${usage.output_tokens || '?'}\n`;
+      const msg = (message as any).message;
+      const msgId = msg?.id;
+      const usage = msg?.usage;
+      const contentTypes = Array.isArray(msg?.content) ? msg.content.map((c: any) => c.type).join(',') : 'unknown';
+      log(`Token tracking: id=${msgId} content=[${contentTypes}] input=${usage?.input_tokens ?? '?'} output=${usage?.output_tokens ?? '?'}`);
+      if (msgId && usage) {
+        const entry = `[${new Date().toISOString()}] id=${msgId} type=${contentTypes} input=${usage.input_tokens ?? '?'} output=${usage.output_tokens ?? '?'}`;
         const logPath = '/workspace/group/token-usage.log';
         try {
           const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-          fs.writeFileSync(logPath, entry + existing);
+          // Replace previous entry for same msg ID, or prepend if new
+          const lines = existing.split('\n').filter(l => l.trim());
+          const filtered = lines.filter(l => !l.includes(`id=${msgId}`));
+          filtered.unshift(entry);
+          fs.writeFileSync(logPath, filtered.join('\n') + '\n');
         } catch (e) {
           log(`Token log write failed: ${(e as Error).message}`);
         }
-      } else {
-        log('Assistant message has no usage field');
+      } else if (!msgId) {
+        log('Assistant message has no message ID');
       }
     }
 
