@@ -23,7 +23,8 @@ function buildCustomHeaders(
   envWebSearchVendor?: string,
 ): string {
   const endpoint = containerEndpoint || envEndpoint || 'anthropic';
-  const webSearchVendor = containerWebSearchVendor || envWebSearchVendor || 'ollama';
+  const webSearchVendor =
+    containerWebSearchVendor || envWebSearchVendor || 'ollama';
   return [
     `X-Nanoclaw-Endpoint: ${endpoint}`,
     `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
@@ -32,13 +33,23 @@ function buildCustomHeaders(
 
 describe('agent-runner custom headers', () => {
   it('includes both endpoint and web search vendor headers', () => {
-    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined);
+    const headers = buildCustomHeaders(
+      'anthropic',
+      undefined,
+      'ollama',
+      undefined,
+    );
     expect(headers).toContain('X-Nanoclaw-Endpoint: anthropic');
     expect(headers).toContain('X-Nanoclaw-Web-Search-Vendor: ollama');
   });
 
   it('headers are newline-separated', () => {
-    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined);
+    const headers = buildCustomHeaders(
+      'anthropic',
+      undefined,
+      'ollama',
+      undefined,
+    );
     const lines = headers.split('\n');
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^X-Nanoclaw-Endpoint:/);
@@ -46,12 +57,22 @@ describe('agent-runner custom headers', () => {
   });
 
   it('defaults endpoint to anthropic when nothing provided', () => {
-    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined);
+    const headers = buildCustomHeaders(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
     expect(headers).toContain('X-Nanoclaw-Endpoint: anthropic');
   });
 
   it('defaults web search vendor to ollama when nothing provided', () => {
-    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined);
+    const headers = buildCustomHeaders(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
     expect(headers).toContain('X-Nanoclaw-Web-Search-Vendor: ollama');
   });
 
@@ -71,7 +92,6 @@ describe('agent-runner custom headers', () => {
     expect(headers).toContain('X-Nanoclaw-Web-Search-Vendor: brave');
   });
 });
-
 
 // ---------------------------------------------------------------------------
 // 2. MCP server: proxy caller logic
@@ -123,7 +143,10 @@ async function proxyWebSearch(
     throw new Error(`Web search proxy error: HTTP ${response.status}`);
   }
 
-  const data = (await response.json()) as { results?: WebSearchResult[]; error?: string };
+  const data = (await response.json()) as {
+    results?: WebSearchResult[];
+    error?: string;
+  };
   if (data.error) {
     throw new Error(`Web search error: ${data.error}`);
   }
@@ -168,7 +191,12 @@ async function proxyWebFetch(
     throw new Error(`Web fetch proxy error: HTTP ${response.status}`);
   }
 
-  const data = (await response.json()) as { title?: string; content?: string; links?: string[]; error?: string };
+  const data = (await response.json()) as {
+    title?: string;
+    content?: string;
+    links?: string[];
+    error?: string;
+  };
   if (data.error) {
     throw new Error(`Web fetch error: ${data.error}`);
   }
@@ -210,7 +238,9 @@ describe('MCP server proxy callers', () => {
         res.end(responseBody);
       });
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
     port = (server.address() as AddressInfo).port;
   });
 
@@ -221,7 +251,11 @@ describe('MCP server proxy callers', () => {
   // --- web_search ---
 
   it('web_search sends POST to /web_search with vendor header', async () => {
-    responseBody = JSON.stringify({ results: [{ title: 'Test', url: 'https://example.com', content: 'snippet' }] });
+    responseBody = JSON.stringify({
+      results: [
+        { title: 'Test', url: 'https://example.com', content: 'snippet' },
+      ],
+    });
     await proxyWebSearch('127.0.0.1', port, 'ollama', 'test query', 5);
 
     expect(lastUrl).toBe('/web_search');
@@ -250,41 +284,57 @@ describe('MCP server proxy callers', () => {
 
   it('web_search returns "No results found." for empty results', async () => {
     responseBody = JSON.stringify({ results: [] });
-    const result = await proxyWebSearch('127.0.0.1', port, 'ollama', 'nothing', 5);
+    const result = await proxyWebSearch(
+      '127.0.0.1',
+      port,
+      'ollama',
+      'nothing',
+      5,
+    );
     expect(result).toBe('No results found.');
   });
 
   it('web_search throws on 404 with vendor error', async () => {
     responseStatus = 404;
-    responseBody = JSON.stringify({ error: 'Web search vendor "fake" not configured' });
-    await expect(proxyWebSearch('127.0.0.1', port, 'fake', 'test', 5))
-      .rejects.toThrow('not configured');
+    responseBody = JSON.stringify({
+      error: 'Web search vendor "fake" not configured',
+    });
+    await expect(
+      proxyWebSearch('127.0.0.1', port, 'fake', 'test', 5),
+    ).rejects.toThrow('not configured');
   });
 
   it('web_search throws on 429 rate limit', async () => {
     responseStatus = 429;
     responseBody = '{}';
-    await expect(proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5))
-      .rejects.toThrow('rate limit');
+    await expect(
+      proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5),
+    ).rejects.toThrow('rate limit');
   });
 
   it('web_search throws on upstream error field', async () => {
     responseBody = JSON.stringify({ error: 'upstream failure' });
-    await expect(proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5))
-      .rejects.toThrow('upstream failure');
+    await expect(
+      proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5),
+    ).rejects.toThrow('upstream failure');
   });
 
   it('web_search throws on 500', async () => {
     responseStatus = 500;
     responseBody = '{}';
-    await expect(proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5))
-      .rejects.toThrow('HTTP 500');
+    await expect(
+      proxyWebSearch('127.0.0.1', port, 'ollama', 'test', 5),
+    ).rejects.toThrow('HTTP 500');
   });
 
   // --- web_fetch ---
 
   it('web_fetch sends POST to /web_fetch with vendor header', async () => {
-    responseBody = JSON.stringify({ title: 'Page', content: 'Hello', links: [] });
+    responseBody = JSON.stringify({
+      title: 'Page',
+      content: 'Hello',
+      links: [],
+    });
     await proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com');
 
     expect(lastUrl).toBe('/web_fetch');
@@ -299,7 +349,12 @@ describe('MCP server proxy callers', () => {
       content: 'Page content here',
       links: ['https://link1.com', 'https://link2.com'],
     });
-    const result = await proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com');
+    const result = await proxyWebFetch(
+      '127.0.0.1',
+      port,
+      'ollama',
+      'https://example.com',
+    );
 
     expect(result).toContain('Title: Example Page');
     expect(result).toContain('Page content here');
@@ -309,27 +364,35 @@ describe('MCP server proxy callers', () => {
 
   it('web_fetch returns "No content returned." for empty response', async () => {
     responseBody = JSON.stringify({});
-    const result = await proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com');
+    const result = await proxyWebFetch(
+      '127.0.0.1',
+      port,
+      'ollama',
+      'https://example.com',
+    );
     expect(result).toBe('No content returned.');
   });
 
   it('web_fetch throws on 404', async () => {
     responseStatus = 404;
     responseBody = JSON.stringify({ error: 'vendor not configured' });
-    await expect(proxyWebFetch('127.0.0.1', port, 'fake', 'https://example.com'))
-      .rejects.toThrow('not configured');
+    await expect(
+      proxyWebFetch('127.0.0.1', port, 'fake', 'https://example.com'),
+    ).rejects.toThrow('not configured');
   });
 
   it('web_fetch throws on 429 rate limit', async () => {
     responseStatus = 429;
     responseBody = '{}';
-    await expect(proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com'))
-      .rejects.toThrow('rate limit');
+    await expect(
+      proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com'),
+    ).rejects.toThrow('rate limit');
   });
 
   it('web_fetch throws on upstream error field', async () => {
     responseBody = JSON.stringify({ error: 'fetch failed' });
-    await expect(proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com'))
-      .rejects.toThrow('fetch failed');
+    await expect(
+      proxyWebFetch('127.0.0.1', port, 'ollama', 'https://example.com'),
+    ).rejects.toThrow('fetch failed');
   });
 });

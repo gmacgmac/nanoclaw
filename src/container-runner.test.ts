@@ -140,12 +140,12 @@ describe('memory directory bootstrap', () => {
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
-    // Verify mkdirSync was called with the memory path
-    const memoryPathCall = mkdirSyncMock.mock.calls.find(
-      ([p]) => typeof p === 'string' && p.includes('-workspace-group/memory'),
+    // Verify mkdirSync was called with the sessions .claude path (not auto-memory)
+    const sessionsPathCall = mkdirSyncMock.mock.calls.find(
+      ([p]) => typeof p === 'string' && p.includes('sessions') && p.includes('.claude'),
     );
-    expect(memoryPathCall).toBeDefined();
-    expect(memoryPathCall![1]).toEqual({ recursive: true });
+    expect(sessionsPathCall).toBeDefined();
+    expect(sessionsPathCall![1]).toEqual({ recursive: true });
   });
 });
 
@@ -330,7 +330,12 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
@@ -339,7 +344,9 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const args = spawnMock.mock.calls[0][1] as string[];
 
     // NANOCLAW_WEB_SEARCH_VENDOR
-    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama');
+    const vendorIdx = args.findIndex(
+      (a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama',
+    );
     expect(vendorIdx).toBeGreaterThan(0);
     expect(args[vendorIdx - 1]).toBe('-e');
 
@@ -367,14 +374,21 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama');
+    const vendorIdx = args.findIndex(
+      (a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama',
+    );
     expect(vendorIdx).toBeGreaterThan(0);
   });
 
@@ -392,14 +406,21 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    const vendorIdx = args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=zai');
+    const vendorIdx = args.findIndex(
+      (a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=zai',
+    );
     expect(vendorIdx).toBeGreaterThan(0);
   });
 
@@ -413,26 +434,40 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    const vendorIdx = args.findIndex((a) => a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='));
+    const vendorIdx = args.findIndex((a) =>
+      a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='),
+    );
     expect(vendorIdx).toBe(-1);
   });
 
   it('does NOT inject web search env vars when containerConfig is absent', async () => {
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    const vendorIdx = args.findIndex((a) => a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='));
+    const vendorIdx = args.findIndex((a) =>
+      a.startsWith('NANOCLAW_WEB_SEARCH_VENDOR='),
+    );
     expect(vendorIdx).toBe(-1);
   });
 
@@ -452,7 +487,12 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
@@ -461,9 +501,17 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const args = spawnMock.mock.calls[0][1] as string[];
 
     // All three should be present
-    expect(args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=ollama')).toBeGreaterThan(0);
-    expect(args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama')).toBeGreaterThan(0);
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_HOST='))).toBeGreaterThan(0);
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_PORT='))).toBeGreaterThan(0);
+    expect(
+      args.findIndex((a) => a === 'NANOCLAW_ENDPOINT=ollama'),
+    ).toBeGreaterThan(0);
+    expect(
+      args.findIndex((a) => a === 'NANOCLAW_WEB_SEARCH_VENDOR=ollama'),
+    ).toBeGreaterThan(0);
+    expect(
+      args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_HOST=')),
+    ).toBeGreaterThan(0);
+    expect(
+      args.findIndex((a) => a.startsWith('NANOCLAW_PROXY_PORT=')),
+    ).toBeGreaterThan(0);
   });
 });

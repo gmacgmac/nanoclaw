@@ -178,17 +178,10 @@ function buildVolumeMounts(
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
 
-  // Pre-create Claude Code auto-memory directory.
-  // Claude Code writes MEMORY.md to ~/.claude/projects/<project-hash>/memory/
-  // but does not create the directory itself — writes fail silently without it.
-  // The project hash is derived from WORKDIR (/workspace/group) → "-workspace-group".
-  const memoryDir = path.join(
-    groupSessionsDir,
-    'projects',
-    '-workspace-group',
-    'memory',
-  );
-  fs.mkdirSync(memoryDir, { recursive: true });
+  // NOTE: Auto-memory (CLI feature at ~/.claude/projects/<hash>/memory/) is NOT
+  // supported by the SDK's programmatic query() API. Memory persistence is handled
+  // via workspace-level memory/ directory + @import in CLAUDE.md instead.
+  // See: PR_context-management-memories.md for the full architecture.
 
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {

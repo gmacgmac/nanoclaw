@@ -198,4 +198,3 @@ export function scanWebSearchEndpoints(): Record<string, EndpointEntry> {
 
   return endpoints;
 }
-
