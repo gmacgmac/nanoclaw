@@ -52,6 +52,10 @@ RUN npm run build
 COPY mcp-servers/brave-search/ /app/mcp-servers/brave-search/
 RUN cd /app/mcp-servers/brave-search && npm install --ignore-scripts && npm run build
 
+# Copy and build NanoClaw Web Search MCP server
+COPY mcp-servers/nanoclaw-web-search/ /app/mcp-servers/nanoclaw-web-search/
+RUN cd /app/mcp-servers/nanoclaw-web-search && npm install --ignore-scripts && npm run build
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 

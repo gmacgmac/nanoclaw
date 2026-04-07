@@ -48,6 +48,7 @@ export interface ContainerInput {
   systemPrompt?: string;
   script?: string;
   endpoint?: string;
+  webSearchVendor?: string;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -395,6 +396,16 @@ function buildContainerArgs(
         'brave-search MCP configured but BRAVE_SEARCH_API_KEY not found in secrets',
       );
     }
+  }
+
+  // Inject web search proxy connection details if this group uses nanoclaw-web-search MCP.
+  // Unlike brave-search (which injects an API key), web search routes through the proxy.
+  // The MCP server only needs to know where the proxy is and which vendor to request.
+  if (group.containerConfig?.mcpServers?.['nanoclaw-web-search']) {
+    const webSearchVendor = group.containerConfig?.webSearchVendor ?? 'ollama';
+    args.push('-e', `NANOCLAW_WEB_SEARCH_VENDOR=${webSearchVendor}`);
+    args.push('-e', `NANOCLAW_PROXY_HOST=${CONTAINER_HOST_GATEWAY}`);
+    args.push('-e', `NANOCLAW_PROXY_PORT=${CREDENTIAL_PROXY_PORT}`);
   }
 
   // Run as host user so bind-mounted files are accessible.

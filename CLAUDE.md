@@ -265,42 +265,39 @@ rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
 sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<group>'"
 ```
 
-**"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing both (see "To clear chat history for a group" below) and VERIFY each step.
+**"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing the session row and restarting (see "To clear chat history for a group" below).
 
 **To clear chat history for a group** (fresh start, no conversation memory):
+
+**CRITICAL:**
+1. Run DELETE and VERIFY in a single chained command with `&&` — sqlite3 commands in separate shell invocations may not commit properly.
+2. Restart is REQUIRED — NanoClaw holds session IDs in memory (`src/index.ts:357`). The database delete will be undone if you don't restart.
+
 ```bash
-# 1. Delete session row from database
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'"
-# VERIFY: Should return nothing
-sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder='<folder>'"
+# 1. Delete session row from database (MUST chain with VERIFY)
+sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'" && sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder='<folder>'"
+# Expected: no output (empty result means DELETE succeeded)
 
-# 2. Delete transcript files (agent's conversation context)
-rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
-# VERIFY: Should return nothing
-ls data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl 2>/dev/null
-
-# 3. Delete message history from database (incoming + outgoing)
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid='<jid>'"
-# VERIFY: Should return nothing
-sqlite3 store/messages.db "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
-
-# 4. (Optional) Clear auto-memory
-rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
-
-# 5. Restart service
+# 2. Restart service (REQUIRED — clears in-memory session cache)
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
-**What gets cleared:**
-| Step | What it clears | Why |
-|------|----------------|-----|
-| Session row | SDK's session ID → transcript mapping | Prevents "No conversation found" error |
-| JSONL files | Agent's full conversation context | Thinking, tool calls, responses — the agent's memory |
-| DB messages | `messages` table for this chat | Incoming user messages + outgoing bot messages (used by queue and dashboard UI) |
+That's it. The JSONL file can remain — without a session row, the SDK starts a fresh session on the next message.
 
-**CRITICAL: Verify each step.** The SDK will fail with "No conversation found with session ID" if the database has a session ID but the JSONL file is missing. Always confirm the DELETE succeeded before deleting files.
+**Optional additional cleanup:**
+```bash
+# Delete message history from database (incoming + outgoing)
+sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid='<jid>'" && sqlite3 store/messages.db "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
+# Expected: "0"
 
-For detailed explanation, see [agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md](agentic-tools/nanoclaw/CONTAINER_CACHE_ISSUE.md).
+# Clear auto-memory
+rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
+
+# Remove orphaned JSONL files (optional cleanup, not required)
+rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
+```
+
+**Why restart is required:** The `sessions` object in `src/index.ts` caches session IDs in memory. Deleting from the database only clears persistence — the next message recreates the row from memory. Restart reloads from the now-empty database.
 
 ## Memory
 

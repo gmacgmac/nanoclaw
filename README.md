@@ -69,7 +69,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 - **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content from the Web
+- **Web access** - Search and fetch content from the Web (works with any endpoint via `nanoclaw-web-search` MCP)
 - **Container isolation** - Agents are sandboxed in Docker (macOS/Linux), [Docker Sandboxes](docs/docker-sandboxes.md) (micro VM isolation), or Apple Container (macOS)
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
@@ -180,6 +180,28 @@ This allows you to use:
 - Custom model deployments with Anthropic-compatible APIs
 
 Note: The model must support the Anthropic API format for best compatibility.
+
+**Web search on non-Anthropic endpoints:** Claude's built-in `WebSearch`/`WebFetch` are server-side tools that only work with Anthropic's API. For other endpoints, add the `nanoclaw-web-search` MCP server to your group's `containerConfig` and set the web search vendor in `secrets.env`:
+
+```bash
+# ~/.config/nanoclaw/secrets.env
+OLLAMA_WEB_SEARCH_BASE_URL=https://ollama.com/api
+OLLAMA_WEB_SEARCH_API_KEY=your-key
+```
+
+```json
+{
+  "webSearchVendor": "ollama",
+  "mcpServers": {
+    "nanoclaw-web-search": {
+      "command": "node",
+      "args": ["/app/mcp-servers/nanoclaw-web-search/dist/index.js"]
+    }
+  }
+}
+```
+
+See [docs/OLLAMA_WEB_SEARCH_INTEGRATION.md](docs/OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
 
 **How do I debug issues?**
 

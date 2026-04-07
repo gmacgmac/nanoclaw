@@ -4,9 +4,11 @@ import type { AddressInfo } from 'net';
 
 const mockEnv: Record<string, string> = {};
 let mockEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
+let mockWebSearchEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({ ...mockEnv })),
   scanEndpoints: vi.fn(() => ({ ...mockEndpoints })),
+  scanWebSearchEndpoints: vi.fn(() => ({ ...mockWebSearchEndpoints })),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -71,6 +73,7 @@ describe('credential-proxy', () => {
     await new Promise<void>((r) => upstreamServer?.close(() => r()));
     for (const key of Object.keys(mockEnv)) delete mockEnv[key];
     mockEndpoints = {};
+    mockWebSearchEndpoints = {};
   });
 
   async function startProxy(env: Record<string, string>): Promise<number> {
@@ -379,6 +382,287 @@ describe('credential-proxy', () => {
       expect(lastOllamaHeaders['x-api-key']).toBe('ollama-secret');
       // Anthropic upstream was not contacted
       expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+    });
+  });
+
+  // --- Web search routing tests ---
+
+  describe('web search routing', () => {
+    let wsServer: http.Server;
+    let wsPort: number;
+    let lastWsHeaders: http.IncomingHttpHeaders;
+    let lastWsUrl: string;
+
+    beforeEach(async () => {
+      lastWsHeaders = {};
+      lastWsUrl = '';
+      wsServer = http.createServer((req, res) => {
+        lastWsHeaders = { ...req.headers };
+        lastWsUrl = req.url || '';
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ results: [] }));
+      });
+      await new Promise<void>((resolve) =>
+        wsServer.listen(0, '127.0.0.1', resolve),
+      );
+      wsPort = (wsServer.address() as AddressInfo).port;
+    });
+
+    afterEach(async () => {
+      await new Promise<void>((r) => wsServer?.close(() => r()));
+    });
+
+    it('routes /web_search to web search vendor with Bearer auth', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: { 'content-type': 'application/json' },
+        },
+        JSON.stringify({ query: 'test', max_results: 5 }),
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(lastWsHeaders['authorization']).toBe('Bearer ollama-ws-key');
+      expect(lastWsUrl).toBe('/web_search');
+    });
+
+    it('routes /web_fetch to web search vendor with Bearer auth', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_fetch',
+          headers: { 'content-type': 'application/json' },
+        },
+        JSON.stringify({ url: 'https://example.com' }),
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(lastWsHeaders['authorization']).toBe('Bearer ollama-ws-key');
+      expect(lastWsUrl).toBe('/web_fetch');
+    });
+
+    it('defaults to ollama when vendor header is absent', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      // No X-Nanoclaw-Web-Search-Vendor header
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: { 'content-type': 'application/json' },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(lastWsHeaders['authorization']).toBe('Bearer ollama-ws-key');
+    });
+
+    it('routes to specified vendor via header', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+        brave: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'brave-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-web-search-vendor': 'brave',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(200);
+      // Brave upstream got the request
+      expect(lastWsHeaders['authorization']).toBe('Bearer brave-ws-key');
+      // Ollama (default) did NOT get the request
+      expect(lastUpstreamHeaders['authorization']).toBeUndefined();
+    });
+
+    it('returns 404 for unknown web search vendor', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-web-search-vendor': 'nonexistent',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(404);
+      const body = JSON.parse(res.body);
+      expect(body.error).toContain('nonexistent');
+      expect(body.error).toContain('not configured');
+    });
+
+    it('strips routing headers before forwarding to upstream', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-web-search-vendor': 'ollama',
+            'x-nanoclaw-endpoint': 'some-value',
+            'x-api-key': 'should-be-stripped',
+          },
+        },
+        '{}',
+      );
+
+      expect(lastWsHeaders['x-nanoclaw-web-search-vendor']).toBeUndefined();
+      expect(lastWsHeaders['x-nanoclaw-endpoint']).toBeUndefined();
+      expect(lastWsHeaders['x-api-key']).toBeUndefined();
+    });
+
+    it('handles case-insensitive vendor header', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-web-search-vendor': 'OLLAMA',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(lastWsHeaders['authorization']).toBe('Bearer ollama-ws-key');
+    });
+
+    it('does not interfere with inference routing for non-web-search paths', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+      };
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: `http://127.0.0.1:${wsPort}`,
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Inference went to anthropic upstream, not web search
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+      expect(lastWsHeaders['authorization']).toBeUndefined();
+    });
+
+    it('returns 502 when web search upstream is unreachable', async () => {
+      mockWebSearchEndpoints = {
+        ollama: {
+          baseUrl: 'http://127.0.0.1:59999',
+          apiKey: 'ollama-ws-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/web_search',
+          headers: { 'content-type': 'application/json' },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(502);
+      expect(res.body).toBe('Bad Gateway');
     });
   });
 });
