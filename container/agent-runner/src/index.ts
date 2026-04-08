@@ -34,6 +34,7 @@ interface ContainerInput {
   script?: string;
   endpoint?: string;
   webSearchVendor?: string;
+  contextWindowSize?: number;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -48,6 +49,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  flushCompleted?: boolean;
 }
 
 interface SessionEntry {
@@ -70,7 +72,43 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_INPUT_FLUSH_SENTINEL = path.join(IPC_INPUT_DIR, '_flush');
+const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
 const IPC_POLL_MS = 500;
+
+// Module-level token tracking — updated by runQuery(), read by main()
+let lastInputTokens = 0;
+
+// Placeholder flush prompt — replaced by BE_06 with the real prompt
+function getFlushPrompt(): string {
+  const today = new Date().toISOString().split('T')[0];
+  return [
+    '<internal>',
+    'MEMORY FLUSH — context window is filling up. Perform these steps now:',
+    '',
+    '1. DURABLE FACTS → memory/MEMORY.md',
+    '   - Read the current memory/MEMORY.md',
+    '   - Append any NEW facts learned in this conversation (names, preferences, decisions, relationships, project context)',
+    '   - Remove any facts that have been superseded by newer information',
+    '   - Keep it concise — one bullet point per fact, no prose',
+    '   - Do NOT duplicate facts already present',
+    '',
+    '2. SESSION SUMMARY → memory/COMPACT.md',
+    '   - Write a compact summary of what was discussed and worked on in this session',
+    '   - Include any in-progress tasks, pending questions, or agreed next steps',
+    '   - Include enough context that the next session feels like a seamless continuation',
+    '   - Cap at ~2000 words — this is a bridge, not a transcript',
+    '   - Write as a fresh file (overwrite if it exists)',
+    '',
+    `3. DAILY NOTE → memory/${today}.md`,
+    '   - Append any notable observations or task progress from today to the daily note',
+    '   - Create the file if it does not exist',
+    '',
+    'When finished (or if there is nothing to store), reply with exactly:',
+    '<internal>done</internal>',
+    '</internal>',
+  ].join('\n');
+}
 
 // All known tools (SDK + claude_code preset built-ins).
 // Update this list when upgrading the Claude Agent SDK.
@@ -312,6 +350,31 @@ function shouldClose(): boolean {
 }
 
 /**
+ * Check for _flush sentinel.
+ */
+function shouldFlush(): boolean {
+  if (fs.existsSync(IPC_INPUT_FLUSH_SENTINEL)) {
+    try { fs.unlinkSync(IPC_INPUT_FLUSH_SENTINEL); } catch { /* ignore */ }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Write a status message to the IPC messages directory.
+ * Uses atomic write (tmp + rename) to prevent partial reads.
+ */
+function sendStatusMessage(text: string, chatJid: string, groupFolder: string): void {
+  fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(IPC_MESSAGES_DIR, filename);
+  const data = { type: 'message', chatJid, text, groupFolder, timestamp: new Date().toISOString() };
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data));
+  fs.renameSync(tempPath, filepath);
+}
+
+/**
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
@@ -507,6 +570,10 @@ async function runQuery(
       const contentTypes = Array.isArray(msg?.content) ? msg.content.map((c: any) => c.type).join(',') : 'unknown';
       log(`Token tracking: id=${msgId} content=[${contentTypes}] input=${usage?.input_tokens ?? '?'} output=${usage?.output_tokens ?? '?'}`);
       if (msgId && usage) {
+        // Update module-level tracker — last write wins (final emission per msg_ ID is accurate)
+        if (usage.input_tokens) {
+          lastInputTokens = usage.input_tokens;
+        }
         const entry = `[${new Date().toISOString()}] id=${msgId} type=${contentTypes} input=${usage.input_tokens ?? '?'} output=${usage.output_tokens ?? '?'}`;
         const logPath = '/workspace/group/token-usage.log';
         try {
@@ -568,6 +635,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Resolve context window size (DB config → default 128000)
+  const contextWindowSize = containerInput.contextWindowSize || 128000;
+  log(`Context window size: ${contextWindowSize}`);
+
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
@@ -589,6 +660,8 @@ async function main(): Promise<void> {
 
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  // Clean up stale _flush sentinel from previous container runs
+  try { fs.unlinkSync(IPC_INPUT_FLUSH_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -603,6 +676,8 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let flushedThisSession = false;
+
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
@@ -621,6 +696,46 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
+      }
+
+      // --- Memory flush threshold check ---
+      if (!flushedThisSession && lastInputTokens > contextWindowSize * 0.8) {
+        log(`Token threshold crossed (${lastInputTokens}/${contextWindowSize}), injecting memory flush`);
+
+        sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
+        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        flushedThisSession = true;
+
+        if (flushResult.newSessionId) {
+          sessionId = flushResult.newSessionId;
+        }
+        if (flushResult.lastAssistantUuid) {
+          resumeAt = flushResult.lastAssistantUuid;
+        }
+
+        sendStatusMessage('Ready for next message', containerInput.chatJid, containerInput.groupFolder);
+        log('Memory flush complete, signalling host');
+        writeOutput({ status: 'success', result: null, newSessionId: sessionId, flushCompleted: true });
+      }
+
+      // --- Manual flush sentinel check ---
+      if (!flushedThisSession && shouldFlush()) {
+        log('Manual flush requested via MCP tool');
+
+        sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
+        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        flushedThisSession = true;
+
+        if (flushResult.newSessionId) {
+          sessionId = flushResult.newSessionId;
+        }
+        if (flushResult.lastAssistantUuid) {
+          resumeAt = flushResult.lastAssistantUuid;
+        }
+
+        sendStatusMessage('Ready for next message', containerInput.chatJid, containerInput.groupFolder);
+        log('Manual flush complete, signalling host');
+        writeOutput({ status: 'success', result: null, newSessionId: sessionId, flushCompleted: true });
       }
 
       // Emit session update so host can track it

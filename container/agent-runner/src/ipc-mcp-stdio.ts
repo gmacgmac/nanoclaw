@@ -440,6 +440,21 @@ Sends your response back to the caller group's queue.`,
 );
 
 server.tool(
+  'manual_flush',
+  'Trigger memory compaction. Writes MEMORY.md, COMPACT.md, and a daily note, then starts a fresh session. Use when asked to save/compact/flush memory.',
+  {},
+  async () => {
+    const sentinelPath = '/workspace/ipc/input/_flush';
+    fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
+    fs.writeFileSync(sentinelPath, '');
+
+    return {
+      content: [{ type: 'text' as const, text: 'Memory flush requested. Compaction will begin after this response.' }],
+    };
+  },
+);
+
+server.tool(
   'ping',
   'Test tool. Returns pong.',
   {},
