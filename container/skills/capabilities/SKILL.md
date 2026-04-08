@@ -55,6 +55,7 @@ The NanoClaw MCP server exposes these tools (via `mcp__nanoclaw__*` prefix):
 - `register_group` — register a new chat/group (main only)
 - `delegate_to_group` — delegate a task to another group's agent, response arrives back in your queue (main only)
 - `respond_to_group` — respond to a delegation request using the UUID from the received message
+- `manual_flush` — manually trigger memory flush (compacts conversation into long-term memory)
 - `ping` — test tool, returns pong
 
 ### 4. Container skills (Bash tools)
@@ -88,7 +89,7 @@ Present the report as a clean, readable message. Example:
 • Core: Bash, Read, Write, Edit, Glob, Grep
 • Web (MCP): mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 • Orchestration: Task, TeamCreate, SendMessage
-• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group
+• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group, manual_flush
 
 *Container Tools:*
 • agent-browser: ✓
