@@ -49,6 +49,7 @@ export interface ContainerInput {
   script?: string;
   endpoint?: string;
   webSearchVendor?: string;
+  contextWindowSize?: number;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -63,6 +64,7 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  flushCompleted?: boolean;
 }
 
 interface VolumeMount {

@@ -97,6 +97,13 @@ export interface ContainerConfig {
   endpoint?: string;
 
   /**
+   * Context window size for this group's model (in tokens).
+   * Used to calculate flush thresholds (80% live, 50% nightly).
+   * Defaults to 128000 if omitted.
+   */
+  contextWindowSize?: number;
+
+  /**
    * Named web search vendor for this group's web search traffic.
    * Must match a vendor prefix defined in secrets.env
    * (e.g. "ollama" for OLLAMA_WEB_SEARCH_BASE_URL / OLLAMA_WEB_SEARCH_API_KEY).

@@ -42,6 +42,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
   storeMessageDirect,
@@ -49,6 +50,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { getNightlyFlushPrompt } from './nightly-maintenance.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   restoreRemoteControl,
@@ -61,7 +63,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -408,6 +410,11 @@ async function runAgent(
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
+        if (output.flushCompleted) {
+          deleteSession(group.folder);
+          delete sessions[group.folder];
+          logger.info({ group: group.name }, 'Session cleared after memory flush');
+        }
         await onOutput(output);
       }
     : undefined;
@@ -437,6 +444,7 @@ async function runAgent(
         mcpServers: group.containerConfig?.mcpServers,
         endpoint: group.containerConfig?.endpoint,
         webSearchVendor: group.containerConfig?.webSearchVendor,
+        contextWindowSize: group.containerConfig?.contextWindowSize,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -446,6 +454,12 @@ async function runAgent(
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
+    }
+
+    if (output.flushCompleted) {
+      deleteSession(group.folder);
+      delete sessions[group.folder];
+      logger.info({ group: group.name }, 'Session cleared after memory flush');
     }
 
     if (output.status === 'error') {
@@ -865,6 +879,17 @@ async function main(): Promise<void> {
       }
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
+    },
+  });
+  startNightlyCron({
+    runFlush: async (group, chatJid) => {
+      const result = await runAgent(group, getNightlyFlushPrompt(), chatJid);
+      return result === 'success';
+    },
+    clearSession: (groupFolder) => {
+      deleteSession(groupFolder);
+      delete sessions[groupFolder];
+      logger.info({ groupFolder }, 'Nightly cron cleared session');
     },
   });
   startIpcWatcher({

@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { NightlyDependencies, runNightlyMaintenance } from './nightly-maintenance.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -278,7 +279,48 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   loop();
 }
 
+// --- Nightly maintenance cron ---
+
+let nightlyCronRunning = false;
+
+/**
+ * Start the nightly maintenance cron. Runs at the given cron expression
+ * (default: midnight in the configured timezone). Checks groups for context
+ * usage above 50% and triggers flush + session reset. Also cleans old trash.
+ */
+export function startNightlyCron(
+  nightlyDeps: NightlyDependencies,
+  cronExpression: string = '0 0 * * *',
+): void {
+  if (nightlyCronRunning) {
+    logger.debug('Nightly cron already running, skipping duplicate start');
+    return;
+  }
+  nightlyCronRunning = true;
+
+  const scheduleNext = () => {
+    const interval = CronExpressionParser.parse(cronExpression, { tz: TIMEZONE });
+    const nextRun = interval.next().toDate();
+    const delayMs = nextRun.getTime() - Date.now();
+
+    logger.info({ nextRun: nextRun.toISOString(), delayMs }, 'Nightly cron scheduled');
+
+    setTimeout(async () => {
+      logger.info('Nightly maintenance cron firing');
+      try {
+        await runNightlyMaintenance(nightlyDeps);
+      } catch (err) {
+        logger.error({ err }, 'Nightly maintenance failed');
+      }
+      scheduleNext();
+    }, delayMs);
+  };
+
+  scheduleNext();
+}
+
 /** @internal - for tests only. */
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
+  nightlyCronRunning = false;
 }

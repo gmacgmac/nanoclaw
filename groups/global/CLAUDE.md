@@ -41,6 +41,7 @@ Files you create are saved in `/workspace/group/`. Use this for notes, research,
 ## Memory Protocol
 
 @memory/MEMORY.md
+@memory/COMPACT.md
 
 You have a persistent memory system at `memory/`.
 
