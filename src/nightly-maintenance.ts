@@ -105,7 +105,8 @@ export async function runNightlyMaintenance(
     if (!sessions[group.folder]) continue;
     result.groupsChecked++;
 
-    const contextWindowSize = group.containerConfig?.contextWindowSize || DEFAULT_CONTEXT_WINDOW;
+    const contextWindowSize =
+      group.containerConfig?.contextWindowSize || DEFAULT_CONTEXT_WINDOW;
     const lastTokens = parseLastInputTokens(group.folder);
 
     if (lastTokens <= 0) continue;
@@ -120,7 +121,12 @@ export async function runNightlyMaintenance(
     }
 
     logger.info(
-      { group: group.folder, usage: `${(usage * 100).toFixed(1)}%`, lastTokens, contextWindowSize },
+      {
+        group: group.folder,
+        usage: `${(usage * 100).toFixed(1)}%`,
+        lastTokens,
+        contextWindowSize,
+      },
       'Group above nightly flush threshold, triggering flush',
     );
 
@@ -129,7 +135,10 @@ export async function runNightlyMaintenance(
       if (flushed) {
         clearSession(group.folder);
         result.groupsFlushed.push(group.folder);
-        logger.info({ group: group.folder }, 'Nightly flush + session reset complete');
+        logger.info(
+          { group: group.folder },
+          'Nightly flush + session reset complete',
+        );
       }
     } catch (err) {
       logger.error({ group: group.folder, err }, 'Nightly flush failed');

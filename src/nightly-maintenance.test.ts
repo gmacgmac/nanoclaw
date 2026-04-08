@@ -45,7 +45,10 @@ describe('parseLastInputTokens', () => {
   });
 
   it('returns 0 for malformed log line without input=', () => {
-    fs.writeFileSync(logPath, '[2026-04-07T10:00:00Z] id=msg_001 type=message output=500\n');
+    fs.writeFileSync(
+      logPath,
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message output=500\n',
+    );
     expect(parseLastInputTokens(groupFolder)).toBe(0);
   });
 
@@ -57,7 +60,7 @@ describe('parseLastInputTokens', () => {
 // --- getNightlyFlushPrompt ---
 
 describe('getNightlyFlushPrompt', () => {
-  it('returns a string containing today\'s date and <internal> tags', () => {
+  it("returns a string containing today's date and <internal> tags", () => {
     const prompt = getNightlyFlushPrompt();
     const today = new Date().toISOString().split('T')[0];
     expect(prompt).toContain('<internal>');
@@ -74,7 +77,10 @@ describe('runNightlyMaintenance', () => {
   const groupDir = path.join(GROUPS_DIR, 'maint-group');
   const logPath = path.join(groupDir, 'token-usage.log');
 
-  const makeGroup = (folder: string, contextWindowSize?: number): RegisteredGroup => ({
+  const makeGroup = (
+    folder: string,
+    contextWindowSize?: number,
+  ): RegisteredGroup => ({
     name: folder,
     folder,
     trigger: `@${folder}`,
@@ -87,7 +93,10 @@ describe('runNightlyMaintenance', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(path.join(GROUPS_DIR, 'maint-group'), { recursive: true, force: true });
+    fs.rmSync(path.join(GROUPS_DIR, 'maint-group'), {
+      recursive: true,
+      force: true,
+    });
     // Clean up any other test group dirs
     for (const d of ['below-group', 'above-group', 'no-session-group']) {
       fs.rmSync(path.join(GROUPS_DIR, d), { recursive: true, force: true });
@@ -96,7 +105,10 @@ describe('runNightlyMaintenance', () => {
 
   it('flushes groups above 50% and clears session', async () => {
     // Group at 70% of 100k context window
-    fs.writeFileSync(logPath, '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n');
+    fs.writeFileSync(
+      logPath,
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
+    );
 
     const runFlush = vi.fn().mockResolvedValue(true);
     const clearSession = vi.fn();
@@ -119,8 +131,15 @@ describe('runNightlyMaintenance', () => {
   it('skips groups below 50% threshold', async () => {
     // Group at 30% of 128k default context window
     fs.mkdirSync(path.join(GROUPS_DIR, 'below-group'), { recursive: true });
-    const belowLogPath = path.join(GROUPS_DIR, 'below-group', 'token-usage.log');
-    fs.writeFileSync(belowLogPath, '[2026-04-07T10:00:00Z] id=msg_001 type=message input=38000 output=200\n');
+    const belowLogPath = path.join(
+      GROUPS_DIR,
+      'below-group',
+      'token-usage.log',
+    );
+    fs.writeFileSync(
+      belowLogPath,
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=38000 output=200\n',
+    );
 
     const runFlush = vi.fn();
     const clearSession = vi.fn();
@@ -159,7 +178,10 @@ describe('runNightlyMaintenance', () => {
   });
 
   it('does not clear session when flush fails', async () => {
-    fs.writeFileSync(logPath, '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n');
+    fs.writeFileSync(
+      logPath,
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
+    );
 
     const runFlush = vi.fn().mockResolvedValue(false);
     const clearSession = vi.fn();
@@ -178,7 +200,10 @@ describe('runNightlyMaintenance', () => {
   });
 
   it('handles flush errors gracefully without crashing', async () => {
-    fs.writeFileSync(logPath, '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n');
+    fs.writeFileSync(
+      logPath,
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
+    );
 
     const runFlush = vi.fn().mockRejectedValue(new Error('container crashed'));
     const clearSession = vi.fn();
