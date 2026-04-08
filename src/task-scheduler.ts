@@ -3,7 +3,10 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { NightlyDependencies, runNightlyMaintenance } from './nightly-maintenance.js';
+import {
+  NightlyDependencies,
+  runNightlyMaintenance,
+} from './nightly-maintenance.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -299,11 +302,16 @@ export function startNightlyCron(
   nightlyCronRunning = true;
 
   const scheduleNext = () => {
-    const interval = CronExpressionParser.parse(cronExpression, { tz: TIMEZONE });
+    const interval = CronExpressionParser.parse(cronExpression, {
+      tz: TIMEZONE,
+    });
     const nextRun = interval.next().toDate();
     const delayMs = nextRun.getTime() - Date.now();
 
-    logger.info({ nextRun: nextRun.toISOString(), delayMs }, 'Nightly cron scheduled');
+    logger.info(
+      { nextRun: nextRun.toISOString(), delayMs },
+      'Nightly cron scheduled',
+    );
 
     setTimeout(async () => {
       logger.info('Nightly maintenance cron firing');

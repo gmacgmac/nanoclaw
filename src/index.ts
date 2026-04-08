@@ -413,7 +413,10 @@ async function runAgent(
         if (output.flushCompleted) {
           deleteSession(group.folder);
           delete sessions[group.folder];
-          logger.info({ group: group.name }, 'Session cleared after memory flush');
+          logger.info(
+            { group: group.name },
+            'Session cleared after memory flush',
+          );
         }
         await onOutput(output);
       }
