@@ -404,6 +404,8 @@ async function runAgent(
   );
 
   // Wrap onOutput to track session ID from streamed results
+  let sessionFlushed = false;
+
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
@@ -411,8 +413,14 @@ async function runAgent(
           setSession(group.folder, output.newSessionId);
         }
         if (output.flushCompleted) {
-          deleteSession(group.folder);
+          logger.info(
+            { group: group.name },
+            'Flush completed — stopping container, clearing session',
+          );
+          queue.closeStdin(chatJid);
           delete sessions[group.folder];
+          deleteSession(group.folder);
+          sessionFlushed = true;
           logger.info(
             { group: group.name },
             'Session cleared after memory flush',
@@ -454,15 +462,21 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    // Don't re-set session if flush already cleared it during streaming
+    if (output.newSessionId && !sessionFlushed) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
 
     if (output.flushCompleted) {
-      deleteSession(group.folder);
+      logger.info(
+        { group: group.name },
+        'Flush completed (post-output) — stopping container, clearing session',
+      );
+      queue.closeStdin(chatJid);
       delete sessions[group.folder];
-      logger.info({ group: group.name }, 'Session cleared after memory flush');
+      deleteSession(group.folder);
+      logger.info({ group: group.name }, 'Session cleared after memory flush (post-output)');
     }
 
     if (output.status === 'error') {
