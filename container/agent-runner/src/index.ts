@@ -86,6 +86,8 @@ function getFlushPrompt(): string {
     '<internal>',
     'MEMORY FLUSH — context window is filling up. Perform these steps now:',
     '',
+    'IMPORTANT: Use ONLY file tools (Read, Write, Edit). Do NOT call manual_flush, send_message, schedule_task, or any MCP tools. Do NOT call any tools starting with mcp__.',
+    '',
     '1. DURABLE FACTS → memory/MEMORY.md',
     '   - Read the current memory/MEMORY.md',
     '   - Append any NEW facts learned in this conversation (names, preferences, decisions, relationships, project context)',
@@ -410,16 +412,20 @@ function drainIpcInput(): string[] {
  * Wait for a new IPC message or _close sentinel.
  * Returns the messages as a single string, or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
+function waitForIpcMessage(): Promise<{ type: 'message'; text: string } | { type: 'close' } | { type: 'flush' }> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
-        resolve(null);
+        resolve({ type: 'close' });
+        return;
+      }
+      if (shouldFlush()) {
+        resolve({ type: 'flush' });
         return;
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
-        resolve(messages.join('\n'));
+        resolve({ type: 'message', text: messages.join('\n') });
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -441,13 +447,20 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  options?: { acceptIpc?: boolean },
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; flushRequestedDuringQuery: boolean }> {
+  const acceptIpc = options?.acceptIpc !== false; // default true
   const stream = new MessageStream();
   stream.push(prompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
+  // Flush queries are single-turn — end the stream immediately so the
+  // SDK's for-await loop exits after the agent responds.
+  if (!acceptIpc) {
+    stream.end();
+  }  // Poll IPC for follow-up messages and _close/_flush sentinels during the query
   let ipcPolling = true;
   let closedDuringQuery = false;
+  let flushRequestedDuringQuery = false;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
     if (shouldClose()) {
@@ -457,10 +470,19 @@ async function runQuery(
       ipcPolling = false;
       return;
     }
-    const messages = drainIpcInput();
-    for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
+    if (acceptIpc && shouldFlush()) {
+      log('Flush sentinel detected during query, ending stream');
+      flushRequestedDuringQuery = true;
+      stream.end();
+      ipcPolling = false;
+      return;
+    }
+    if (acceptIpc) {
+      const messages = drainIpcInput();
+      for (const text of messages) {
+        log(`Piping IPC message into active query (${text.length} chars)`);
+        stream.push(text);
+      }
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -614,8 +636,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, flushRequestedDuringQuery: ${flushRequestedDuringQuery}`);
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, flushRequestedDuringQuery };
 }
 
 async function main(): Promise<void> {
@@ -698,12 +720,25 @@ async function main(): Promise<void> {
         break;
       }
 
+      // --- Flush requested during query (agent called manual_flush) ---
+      if (!flushedThisSession && queryResult.flushRequestedDuringQuery) {
+        log('Flush sentinel consumed during query, running flush prompt');
+        sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
+        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
+        flushedThisSession = true;
+        if (flushResult.newSessionId) sessionId = flushResult.newSessionId;
+        if (flushResult.lastAssistantUuid) resumeAt = flushResult.lastAssistantUuid;
+        sendStatusMessage('Ready for next message', containerInput.chatJid, containerInput.groupFolder);
+        log('Flush (during-query) complete, signalling host');
+        writeOutput({ status: 'success', result: null, newSessionId: sessionId, flushCompleted: true });
+      }
+
       // --- Memory flush threshold check ---
       if (!flushedThisSession && lastInputTokens > contextWindowSize * 0.8) {
         log(`Token threshold crossed (${lastInputTokens}/${contextWindowSize}), injecting memory flush`);
 
         sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
-        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
         flushedThisSession = true;
 
         if (flushResult.newSessionId) {
@@ -723,7 +758,7 @@ async function main(): Promise<void> {
         log('Manual flush requested via MCP tool');
 
         sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
-        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
         flushedThisSession = true;
 
         if (flushResult.newSessionId) {
@@ -738,20 +773,41 @@ async function main(): Promise<void> {
         writeOutput({ status: 'success', result: null, newSessionId: sessionId, flushCompleted: true });
       }
 
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      // Emit session update so host can track it (skip if we just flushed —
+      // the flush marker already carried newSessionId, and re-emitting would
+      // undo the host's session cleanup)
+      if (!flushedThisSession) {
+        writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      }
 
       log('Query ended, waiting for next IPC message...');
 
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
+      // Wait for the next message, _close sentinel, or _flush sentinel
+      const nextEvent = await waitForIpcMessage();
+      if (nextEvent.type === 'close') {
         log('Close sentinel received, exiting');
         break;
       }
 
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      if (nextEvent.type === 'flush') {
+        if (!flushedThisSession) {
+          log('Flush sentinel received while idle, running flush');
+          sendStatusMessage('Creating long term memories...', containerInput.chatJid, containerInput.groupFolder);
+          const flushResult = await runQuery(getFlushPrompt(), sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
+          flushedThisSession = true;
+          if (flushResult.newSessionId) sessionId = flushResult.newSessionId;
+          if (flushResult.lastAssistantUuid) resumeAt = flushResult.lastAssistantUuid;
+          sendStatusMessage('Ready for next message', containerInput.chatJid, containerInput.groupFolder);
+          log('Idle flush complete, signalling host');
+          writeOutput({ status: 'success', result: null, newSessionId: sessionId, flushCompleted: true });
+        } else {
+          log('Flush sentinel received but already flushed this session, ignoring');
+        }
+        continue;
+      }
+
+      log(`Got new message (${nextEvent.text.length} chars), starting new query`);
+      prompt = nextEvent.text;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
