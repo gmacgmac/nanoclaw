@@ -15,10 +15,44 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { validateUrl, type SsrfValidatorOptions } from './lib/ssrf-validator.js';
 
 const MAX_RESULTS = 10;
 const DEFAULT_RESULTS = 5;
 const DEFAULT_VENDOR = 'ollama';
+
+// --- SSRF Protection Config ---
+// Parsed from NANOCLAW_SSRF_CONFIG env var (JSON), set by container-runner.
+// Absent or invalid → SSRF protection enabled with defaults (secure by default).
+
+interface SsrfConfig {
+  enabled: boolean;
+  allowPrivateNetworks?: boolean;
+}
+
+function parseSsrfConfig(): SsrfConfig {
+  const raw = process.env.NANOCLAW_SSRF_CONFIG;
+  if (!raw) return { enabled: true }; // secure by default
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<SsrfConfig>;
+    return {
+      enabled: parsed.enabled !== false, // only explicitly false disables
+      allowPrivateNetworks: parsed.allowPrivateNetworks === true,
+    };
+  } catch {
+    process.stderr.write('[nanoclaw-web-search] Invalid NANOCLAW_SSRF_CONFIG, defaulting to enabled\n');
+    return { enabled: true };
+  }
+}
+
+const ssrfConfig = parseSsrfConfig();
+
+function getSsrfOptions(): SsrfValidatorOptions {
+  return {
+    allowPrivateNetworks: ssrfConfig.allowPrivateNetworks,
+  };
+}
 
 function getProxyUrl(path: string): string {
   const host = process.env.NANOCLAW_PROXY_HOST;
@@ -103,6 +137,14 @@ async function proxyWebSearch(
 }
 
 async function proxyWebFetch(targetUrl: string): Promise<string> {
+  // SSRF protection: validate the agent-supplied URL before forwarding to proxy
+  if (ssrfConfig.enabled) {
+    const validation = await validateUrl(targetUrl, getSsrfOptions());
+    if (!validation.allowed) {
+      throw new Error(`URL blocked by SSRF protection: ${validation.reason}`);
+    }
+  }
+
   const url = getProxyUrl('/web_fetch');
   const response = await fetch(url, {
     method: 'POST',

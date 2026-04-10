@@ -401,6 +401,18 @@ function buildContainerArgs(
     args.push('-e', `NANOCLAW_WEB_SEARCH_VENDOR=${webSearchVendor}`);
     args.push('-e', `NANOCLAW_PROXY_HOST=${CONTAINER_HOST_GATEWAY}`);
     args.push('-e', `NANOCLAW_PROXY_PORT=${CREDENTIAL_PROXY_PORT}`);
+
+    // SSRF protection config — secure by default (enabled: true).
+    // Only groups with ssrfProtection explicitly set to false can bypass.
+    const ssrfEnabled = group.containerConfig?.ssrfProtection !== false;
+    const ssrfAllowPrivate =
+      typeof group.containerConfig?.ssrfProtection === 'object' &&
+      group.containerConfig.ssrfProtection?.allowPrivateNetworks === true;
+    const ssrfConfigJson = JSON.stringify({
+      enabled: ssrfEnabled,
+      ...(ssrfAllowPrivate && { allowPrivateNetworks: true }),
+    });
+    args.push('-e', `NANOCLAW_SSRF_CONFIG=${ssrfConfigJson}`);
   }
 
   // Run as host user so bind-mounted files are accessible.

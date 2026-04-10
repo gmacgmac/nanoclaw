@@ -111,6 +111,24 @@ export interface ContainerConfig {
    * Defaults to "ollama" if omitted.
    */
   webSearchVendor?: string;
+
+  /**
+   * Prompt injection scanning mode for context files.
+   * Scans CLAUDE.md, MEMORY.md, COMPACT.md, and daily notes before container launch.
+   * - undefined / absent → 'warn' (secure default — log but don't block)
+   * - 'off' → skip scanning entirely
+   * - 'warn' → log findings, continue with container launch
+   * - 'block' → abort container launch on critical findings, notify user
+   */
+  injectionScanMode?: 'off' | 'warn' | 'block';
+
+  /**
+   * SSRF protection for outbound web_fetch requests.
+   * - undefined / absent → enabled (secure by default)
+   * - false → disabled (for groups that intentionally need internal network access)
+   * - { allowPrivateNetworks: true } → allow private networks but still block metadata
+   */
+  ssrfProtection?: boolean | { allowPrivateNetworks: boolean };
 }
 
 export interface RegisteredGroup {
