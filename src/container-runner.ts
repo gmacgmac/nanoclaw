@@ -421,7 +421,9 @@ function buildContainerArgs(
 
     // Collect container paths where readonly !== true and path is under /workspace/extra/
     const writeMountPaths = mounts
-      .filter((m) => !m.readonly && m.containerPath.startsWith('/workspace/extra/'))
+      .filter(
+        (m) => !m.readonly && m.containerPath.startsWith('/workspace/extra/'),
+      )
       .map((m) => m.containerPath);
     args.push('-e', `NANOCLAW_WRITE_MOUNTS=${JSON.stringify(writeMountPaths)}`);
   }

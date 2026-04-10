@@ -536,7 +536,12 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
       containerConfig: { approvalMode: true },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
@@ -553,8 +558,16 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
     // We need to override it for this test to return write mounts.
     const { validateAdditionalMounts } = await import('./mount-security.js');
     vi.mocked(validateAdditionalMounts).mockReturnValueOnce([
-      { hostPath: '/home/user/finance', containerPath: '/workspace/extra/finance', readonly: false },
-      { hostPath: '/home/user/docs', containerPath: '/workspace/extra/docs', readonly: true },
+      {
+        hostPath: '/home/user/finance',
+        containerPath: '/workspace/extra/finance',
+        readonly: false,
+      },
+      {
+        hostPath: '/home/user/docs',
+        containerPath: '/workspace/extra/docs',
+        readonly: true,
+      },
     ]);
 
     const group: RegisteredGroup = {
@@ -568,7 +581,12 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
@@ -588,27 +606,45 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
       containerConfig: { approvalMode: false },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(-1);
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(-1);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(
+      -1,
+    );
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(
+      -1,
+    );
   });
 
   it('does NOT pass approval env vars when approvalMode is absent', async () => {
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(-1);
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(-1);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(
+      -1,
+    );
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(
+      -1,
+    );
   });
 
   it('passes empty NANOCLAW_WRITE_MOUNTS when no write mounts exist', async () => {
@@ -617,7 +653,12 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
       containerConfig: { approvalMode: true },
     };
 
-    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    const resultPromise = runContainerAgent(
+      group,
+      testInput,
+      () => {},
+      undefined,
+    );
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;

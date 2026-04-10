@@ -257,7 +257,8 @@ export async function processIpcMessageData(
   if (data.type === 'approval_request') {
     if (!data.chatJid || !data.command) return;
 
-    const patternDescs = data.patterns?.map((p) => p.description).join(', ') || 'unknown risk';
+    const patternDescs =
+      data.patterns?.map((p) => p.description).join(', ') || 'unknown risk';
     const targets = data.targetPaths?.join(', ') || 'unknown paths';
     const ttl = data.ttl || 120;
     const approvalMsg = [
@@ -274,7 +275,12 @@ export async function processIpcMessageData(
     // If there's already a pending approval for this JID, auto-deny the old one
     const existingPending = pendingApprovals.get(data.chatJid);
     if (existingPending) {
-      const inputDir = path.join(DATA_DIR, 'ipc', existingPending.sourceGroup, 'input');
+      const inputDir = path.join(
+        DATA_DIR,
+        'ipc',
+        existingPending.sourceGroup,
+        'input',
+      );
       fs.mkdirSync(inputDir, { recursive: true });
       const responsePath = path.join(inputDir, '_approval_response');
       fs.writeFileSync(
