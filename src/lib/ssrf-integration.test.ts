@@ -78,7 +78,10 @@ describe('SSRF Config Parsing (parseSsrfConfig)', () => {
   });
 
   it('parses enabled: true', () => {
-    expect(parseSsrfConfig('{"enabled":true}')).toEqual({ enabled: true, allowPrivateNetworks: false });
+    expect(parseSsrfConfig('{"enabled":true}')).toEqual({
+      enabled: true,
+      allowPrivateNetworks: false,
+    });
   });
 
   it('parses enabled: false', () => {
@@ -89,14 +92,19 @@ describe('SSRF Config Parsing (parseSsrfConfig)', () => {
   });
 
   it('parses allowPrivateNetworks: true', () => {
-    expect(parseSsrfConfig('{"enabled":true,"allowPrivateNetworks":true}')).toEqual({
+    expect(
+      parseSsrfConfig('{"enabled":true,"allowPrivateNetworks":true}'),
+    ).toEqual({
       enabled: true,
       allowPrivateNetworks: true,
     });
   });
 
   it('ignores unknown fields', () => {
-    expect(parseSsrfConfig('{"enabled":true,"foo":"bar"}')).toEqual({ enabled: true, allowPrivateNetworks: false });
+    expect(parseSsrfConfig('{"enabled":true,"foo":"bar"}')).toEqual({
+      enabled: true,
+      allowPrivateNetworks: false,
+    });
   });
 });
 
@@ -140,7 +148,9 @@ describe('SSRF gating in proxyWebFetch context', () => {
   });
 
   it('blocks metadata endpoint (169.254.169.254)', async () => {
-    const result = await validateUrl('http://169.254.169.254/latest/meta-data/');
+    const result = await validateUrl(
+      'http://169.254.169.254/latest/meta-data/',
+    );
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('link-local');
   });
@@ -191,7 +201,9 @@ describe('SSRF gating in proxyWebFetch context', () => {
   });
 
   it('blocks cloud metadata hostname', async () => {
-    const result = await validateUrl('http://metadata.google.internal/computeMetadata/v1/');
+    const result = await validateUrl(
+      'http://metadata.google.internal/computeMetadata/v1/',
+    );
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('cloud metadata');
   });

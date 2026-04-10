@@ -75,7 +75,10 @@ export function discoverContextFiles(
   }
 
   // global/CLAUDE.md — for non-main groups, the global folder is also mounted
-  if (globalFolderPath && fs.existsSync(path.join(globalFolderPath, 'CLAUDE.md'))) {
+  if (
+    globalFolderPath &&
+    fs.existsSync(path.join(globalFolderPath, 'CLAUDE.md'))
+  ) {
     files.push('global/CLAUDE.md');
   }
 
