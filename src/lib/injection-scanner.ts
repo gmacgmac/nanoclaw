@@ -60,19 +60,22 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'instruction-override',
-    regex: /\b(?:ignore|disregard|forget|override|bypass|skip|drop)\b.{0,40}\b(?:prior|previous|above|earlier|system|original|all)\b.{0,40}\b(?:instructions?|prompts?|rules?|guidelines?|context)\b/i,
+    regex:
+      /\b(?:ignore|disregard|forget|override|bypass|skip|drop)\b.{0,40}\b(?:prior|previous|above|earlier|system|original|all)\b.{0,40}\b(?:instructions?|prompts?|rules?|guidelines?|context)\b/i,
     severity: 'critical',
     description: 'Attempts to override prior instructions',
   },
   {
     name: 'instruction-override-reverse',
-    regex: /\b(?:prior|previous|above|earlier|system|original|all)\b.{0,40}\b(?:instructions?|prompts?|rules?|guidelines?|context)\b.{0,40}\b(?:ignore[d]?|disregard(?:ed)?|forgotten?|overrid(?:den|e)|bypass(?:ed)?)\b/i,
+    regex:
+      /\b(?:prior|previous|above|earlier|system|original|all)\b.{0,40}\b(?:instructions?|prompts?|rules?|guidelines?|context)\b.{0,40}\b(?:ignore[d]?|disregard(?:ed)?|forgotten?|overrid(?:den|e)|bypass(?:ed)?)\b/i,
     severity: 'critical',
     description: 'Attempts to override prior instructions (reversed phrasing)',
   },
   {
     name: 'new-instructions',
-    regex: /\b(?:you\s+are\s+now|from\s+now\s+on|new\s+instructions?|real\s+instructions?|actual\s+instructions?|true\s+instructions?)\b/i,
+    regex:
+      /\b(?:you\s+are\s+now|from\s+now\s+on|new\s+instructions?|real\s+instructions?|actual\s+instructions?|true\s+instructions?)\b/i,
     severity: 'critical',
     description: 'Attempts to inject new identity or instructions',
   },
@@ -82,13 +85,15 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'curl-exfil',
-    regex: /\bcurl\b.{0,200}(?:\$[\w{]|\/etc\/|\.env\b|secrets?\b|credentials?\b|\.netrc|\.ssh|api[_-]?key|token\b)/i,
+    regex:
+      /\bcurl\b.{0,200}(?:\$[\w{]|\/etc\/|\.env\b|secrets?\b|credentials?\b|\.netrc|\.ssh|api[_-]?key|token\b)/i,
     severity: 'critical',
     description: 'curl command with potential credential exfiltration',
   },
   {
     name: 'wget-exfil',
-    regex: /\bwget\b.{0,200}(?:\$[\w{]|\/etc\/|\.env\b|secrets?\b|credentials?\b|\.netrc|\.ssh|api[_-]?key|token\b)/i,
+    regex:
+      /\bwget\b.{0,200}(?:\$[\w{]|\/etc\/|\.env\b|secrets?\b|credentials?\b|\.netrc|\.ssh|api[_-]?key|token\b)/i,
     severity: 'critical',
     description: 'wget command with potential credential exfiltration',
   },
@@ -98,7 +103,8 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'secret-file-read',
-    regex: /\b(?:cat|less|more|head|tail|bat|type|read|open|source)\b.{0,60}(?:\.env\b|secrets?\.env|credentials?\b|\.netrc|~\/\.ssh\/|\/home\/\w+\/\.ssh\/)/i,
+    regex:
+      /\b(?:cat|less|more|head|tail|bat|type|read|open|source)\b.{0,60}(?:\.env\b|secrets?\.env|credentials?\b|\.netrc|~\/\.ssh\/|\/home\/\w+\/\.ssh\/)/i,
     severity: 'critical',
     description: 'Attempts to read secret/credential files',
   },
@@ -108,7 +114,8 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'base64-exec',
-    regex: /\bbase64\s+(?:-d|--decode)\b.{0,40}\b(?:sh|bash|zsh|eval|exec|python|node)\b/i,
+    regex:
+      /\bbase64\s+(?:-d|--decode)\b.{0,40}\b(?:sh|bash|zsh|eval|exec|python|node)\b/i,
     severity: 'critical',
     description: 'Base64-decoded content piped to shell execution',
   },
@@ -126,7 +133,8 @@ const BUILTIN_PATTERNS: PatternDef[] = [
     name: 'settings-override',
     regex: /\/home\/node\/\.claude\/settings\.json/i,
     severity: 'critical',
-    description: 'Attempts to write to Claude settings.json (permission/model override)',
+    description:
+      'Attempts to write to Claude settings.json (permission/model override)',
   },
 
   // -----------------------------------------------------------------------
@@ -134,7 +142,8 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'suspicious-html-comment',
-    regex: /<!--[\s\S]{0,500}?\b(?:system|prompt|instruction|ignore|override|secret|password|credential)\b[\s\S]{0,500}?-->/i,
+    regex:
+      /<!--[\s\S]{0,500}?\b(?:system|prompt|instruction|ignore|override|secret|password|credential)\b[\s\S]{0,500}?-->/i,
     severity: 'warning',
     description: 'HTML comment containing suspicious keywords',
   },
@@ -152,7 +161,8 @@ const BUILTIN_PATTERNS: PatternDef[] = [
     name: 'bidi-override',
     regex: /[\u202A-\u202E\u2066-\u2069]/,
     severity: 'warning',
-    description: 'Bidirectional text override characters (can hide content direction)',
+    description:
+      'Bidirectional text override characters (can hide content direction)',
   },
 
   // -----------------------------------------------------------------------
@@ -160,9 +170,11 @@ const BUILTIN_PATTERNS: PatternDef[] = [
   // -----------------------------------------------------------------------
   {
     name: 'hidden-html-content',
-    regex: /<(?:div|span|p)\s[^>]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^>]*>/i,
+    regex:
+      /<(?:div|span|p)\s[^>]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^>]*>/i,
     severity: 'warning',
-    description: 'HTML element with hidden styling (content invisible to human review)',
+    description:
+      'HTML element with hidden styling (content invisible to human review)',
   },
 
   // -----------------------------------------------------------------------
@@ -227,8 +239,14 @@ export function scanForInjection(
 
     // For multi-line patterns (like HTML comments), scan full content first
     // then map match position back to line number
-    if (pattern.name === 'suspicious-html-comment' || pattern.name === 'hidden-html-content') {
-      const globalRegex = new RegExp(pattern.regex.source, pattern.regex.flags + (pattern.regex.flags.includes('g') ? '' : 'g'));
+    if (
+      pattern.name === 'suspicious-html-comment' ||
+      pattern.name === 'hidden-html-content'
+    ) {
+      const globalRegex = new RegExp(
+        pattern.regex.source,
+        pattern.regex.flags + (pattern.regex.flags.includes('g') ? '' : 'g'),
+      );
       let match: RegExpExecArray | null;
       while ((match = globalRegex.exec(content)) !== null) {
         const lineNum = content.slice(0, match.index).split('\n').length;

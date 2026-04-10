@@ -13,7 +13,10 @@ const mockLookup = vi.mocked(dnsPromises.lookup);
 
 // Helper: make DNS resolve to a given IP
 function dnsResolves(ip: string) {
-  mockLookup.mockResolvedValue({ address: ip, family: ip.includes(':') ? 6 : 4 });
+  mockLookup.mockResolvedValue({
+    address: ip,
+    family: ip.includes(':') ? 6 : 4,
+  });
 }
 
 // Helper: make DNS fail
@@ -77,7 +80,9 @@ describe('scheme validation', () => {
 // ---------------------------------------------------------------------------
 describe('cloud metadata hostnames', () => {
   it('blocks metadata.google.internal', async () => {
-    const r = await validateUrl('http://metadata.google.internal/computeMetadata/v1/');
+    const r = await validateUrl(
+      'http://metadata.google.internal/computeMetadata/v1/',
+    );
     expect(r.allowed).toBe(false);
     expect(r.reason).toMatch(/metadata/i);
   });
@@ -252,7 +257,9 @@ describe('DNS resolution', () => {
 describe('public URLs', () => {
   it('allows Brave Search API', async () => {
     dnsResolves('185.235.41.65');
-    const r = await validateUrl('https://api.search.brave.com/res/v1/web/search?q=test');
+    const r = await validateUrl(
+      'https://api.search.brave.com/res/v1/web/search?q=test',
+    );
     expect(r.allowed).toBe(true);
   });
 
@@ -268,18 +275,24 @@ describe('public URLs', () => {
 // ---------------------------------------------------------------------------
 describe('SsrfValidatorOptions', () => {
   it('allowPrivateNetworks bypasses RFC 1918 block', async () => {
-    const r = await validateUrl('http://192.168.1.1/', { allowPrivateNetworks: true });
+    const r = await validateUrl('http://192.168.1.1/', {
+      allowPrivateNetworks: true,
+    });
     expect(r.allowed).toBe(true);
   });
 
   it('allowPrivateNetworks bypasses loopback block', async () => {
-    const r = await validateUrl('http://127.0.0.1/', { allowPrivateNetworks: true });
+    const r = await validateUrl('http://127.0.0.1/', {
+      allowPrivateNetworks: true,
+    });
     expect(r.allowed).toBe(true);
   });
 
   it('allowPrivateNetworks bypasses DNS-resolved private IP', async () => {
     dnsResolves('10.0.0.5');
-    const r = await validateUrl('http://internal.example.com/', { allowPrivateNetworks: true });
+    const r = await validateUrl('http://internal.example.com/', {
+      allowPrivateNetworks: true,
+    });
     expect(r.allowed).toBe(true);
   });
 

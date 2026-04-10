@@ -72,23 +72,47 @@ function inCidr(ip: number, cidrBase: number, prefixLen: number): boolean {
 }
 
 /** Pre-parsed blocked IPv4 CIDR ranges */
-const BLOCKED_IPV4_CIDRS: Array<{ base: number; prefix: number; label: string }> = [
+const BLOCKED_IPV4_CIDRS: Array<{
+  base: number;
+  prefix: number;
+  label: string;
+}> = [
   // Loopback
-  { base: parseIpv4('127.0.0.0')!, prefix: 8,  label: 'loopback (127.0.0.0/8)' },
+  { base: parseIpv4('127.0.0.0')!, prefix: 8, label: 'loopback (127.0.0.0/8)' },
   // RFC 1918 private
-  { base: parseIpv4('10.0.0.0')!,  prefix: 8,  label: 'private (10.0.0.0/8)' },
-  { base: parseIpv4('172.16.0.0')!, prefix: 12, label: 'private (172.16.0.0/12)' },
-  { base: parseIpv4('192.168.0.0')!, prefix: 16, label: 'private (192.168.0.0/16)' },
+  { base: parseIpv4('10.0.0.0')!, prefix: 8, label: 'private (10.0.0.0/8)' },
+  {
+    base: parseIpv4('172.16.0.0')!,
+    prefix: 12,
+    label: 'private (172.16.0.0/12)',
+  },
+  {
+    base: parseIpv4('192.168.0.0')!,
+    prefix: 16,
+    label: 'private (192.168.0.0/16)',
+  },
   // Link-local — includes AWS/GCP metadata at 169.254.169.254
-  { base: parseIpv4('169.254.0.0')!, prefix: 16, label: 'link-local (169.254.0.0/16)' },
+  {
+    base: parseIpv4('169.254.0.0')!,
+    prefix: 16,
+    label: 'link-local (169.254.0.0/16)',
+  },
   // CGNAT / shared address space (RFC 6598) — Tailscale, WireGuard
-  { base: parseIpv4('100.64.0.0')!, prefix: 10, label: 'CGNAT (100.64.0.0/10)' },
+  {
+    base: parseIpv4('100.64.0.0')!,
+    prefix: 10,
+    label: 'CGNAT (100.64.0.0/10)',
+  },
   // Unspecified
-  { base: parseIpv4('0.0.0.0')!,   prefix: 8,  label: 'unspecified (0.0.0.0/8)' },
+  { base: parseIpv4('0.0.0.0')!, prefix: 8, label: 'unspecified (0.0.0.0/8)' },
   // Multicast
-  { base: parseIpv4('224.0.0.0')!, prefix: 4,  label: 'multicast (224.0.0.0/4)' },
+  {
+    base: parseIpv4('224.0.0.0')!,
+    prefix: 4,
+    label: 'multicast (224.0.0.0/4)',
+  },
   // Reserved (broadcast / future use)
-  { base: parseIpv4('240.0.0.0')!, prefix: 4,  label: 'reserved (240.0.0.0/4)' },
+  { base: parseIpv4('240.0.0.0')!, prefix: 4, label: 'reserved (240.0.0.0/4)' },
 ];
 
 /**
@@ -137,8 +161,12 @@ function isBlockedIpv6(ip: string): string | null {
   }
 
   // Link-local IPv6: fe80::/10
-  if (lower.startsWith('fe8') || lower.startsWith('fe9') ||
-      lower.startsWith('fea') || lower.startsWith('feb')) {
+  if (
+    lower.startsWith('fe8') ||
+    lower.startsWith('fe9') ||
+    lower.startsWith('fea') ||
+    lower.startsWith('feb')
+  ) {
     return 'link-local IPv6 (fe80::/10)';
   }
 
@@ -199,18 +227,28 @@ export async function validateUrl(
   const hostname = parsed.hostname.toLowerCase();
 
   // 2. Check additionalAllowedHosts first (explicit exceptions)
-  if (options.additionalAllowedHosts?.some((h) => h.toLowerCase() === hostname)) {
+  if (
+    options.additionalAllowedHosts?.some((h) => h.toLowerCase() === hostname)
+  ) {
     return { allowed: true };
   }
 
   // 3. Check additionalBlockedHosts
-  if (options.additionalBlockedHosts?.some((h) => h.toLowerCase() === hostname)) {
-    return { allowed: false, reason: `Blocked by additionalBlockedHosts: ${hostname}` };
+  if (
+    options.additionalBlockedHosts?.some((h) => h.toLowerCase() === hostname)
+  ) {
+    return {
+      allowed: false,
+      reason: `Blocked by additionalBlockedHosts: ${hostname}`,
+    };
   }
 
   // 4. Cloud metadata hostname check (before DNS — these are always blocked)
   if (BLOCKED_HOSTNAMES.has(hostname)) {
-    return { allowed: false, reason: `Blocked cloud metadata hostname: ${hostname}` };
+    return {
+      allowed: false,
+      reason: `Blocked cloud metadata hostname: ${hostname}`,
+    };
   }
 
   // 5. If it looks like a bare IP, check it directly (no DNS needed)
@@ -239,13 +277,19 @@ export async function validateUrl(
   const resolvedIpv4Block = isBlockedIpv4(resolvedAddress);
   if (resolvedIpv4Block !== null) {
     if (options.allowPrivateNetworks) return { allowed: true };
-    return { allowed: false, reason: `Resolved IP in blocked range: ${resolvedIpv4Block} (${resolvedAddress})` };
+    return {
+      allowed: false,
+      reason: `Resolved IP in blocked range: ${resolvedIpv4Block} (${resolvedAddress})`,
+    };
   }
 
   const resolvedIpv6Block = isBlockedIpv6(resolvedAddress);
   if (resolvedIpv6Block !== null) {
     if (options.allowPrivateNetworks) return { allowed: true };
-    return { allowed: false, reason: `Resolved IP in blocked range: ${resolvedIpv6Block} (${resolvedAddress})` };
+    return {
+      allowed: false,
+      reason: `Resolved IP in blocked range: ${resolvedIpv6Block} (${resolvedAddress})`,
+    };
   }
 
   return { allowed: true };

@@ -52,7 +52,12 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { getNightlyFlushPrompt } from './nightly-maintenance.js';
 import { scanContextFiles, ContextScanResult } from './lib/context-scanner.js';
-import { findChannel, formatMessages, formatOutbound, routeOutbound } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  routeOutbound,
+} from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -981,76 +986,94 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
-  startNightlyCron({
-    runFlush: (group, chatJid) => {
-      // Route nightly flush through the queue so the container gets proper
-      // lifecycle management (active=true, closeStdin works, concurrency
-      // limiting, drainGroup cleanup). Same pattern as scheduled tasks.
-      return new Promise<boolean>((resolve) => {
-        const taskId = `nightly-flush-${group.folder}-${Date.now()}`;
-        queue.enqueueTask(chatJid, taskId, async () => {
-          const FLUSH_CLOSE_DELAY_MS = 10000;
-          let closeScheduled = false;
-          let flushSucceeded = false;
+  startNightlyCron(
+    {
+      runFlush: (group, chatJid) => {
+        // Route nightly flush through the queue so the container gets proper
+        // lifecycle management (active=true, closeStdin works, concurrency
+        // limiting, drainGroup cleanup). Same pattern as scheduled tasks.
+        return new Promise<boolean>((resolve) => {
+          const taskId = `nightly-flush-${group.folder}-${Date.now()}`;
+          queue.enqueueTask(chatJid, taskId, async () => {
+            const FLUSH_CLOSE_DELAY_MS = 10000;
+            let closeScheduled = false;
+            let flushSucceeded = false;
 
-          try {
-            const output = await runContainerAgent(
-              group,
-              {
-                prompt: getNightlyFlushPrompt(),
-                sessionId: sessions[group.folder],
-                groupFolder: group.folder,
-                chatJid,
-                isMain: group.isMain === true,
-                assistantName: ASSISTANT_NAME,
-                allowedTools: group.containerConfig?.allowedTools,
-                model: group.containerConfig?.model,
-                systemPrompt: group.containerConfig?.systemPrompt,
-                mcpServers: group.containerConfig?.mcpServers,
-                endpoint: group.containerConfig?.endpoint,
-                webSearchVendor: group.containerConfig?.webSearchVendor,
-                contextWindowSize: group.containerConfig?.contextWindowSize,
-              },
-              (proc, containerName) =>
-                queue.registerProcess(chatJid, proc, containerName, group.folder),
-              async (streamedOutput: ContainerOutput) => {
-                // Track session ID from streamed results
-                if (streamedOutput.newSessionId) {
-                  sessions[group.folder] = streamedOutput.newSessionId;
-                  setSession(group.folder, streamedOutput.newSessionId);
-                }
-                // Schedule container close on any result or success
-                if (!closeScheduled && (streamedOutput.result !== null || streamedOutput.status === 'success')) {
-                  closeScheduled = true;
-                  setTimeout(() => queue.closeStdin(chatJid), FLUSH_CLOSE_DELAY_MS);
-                }
-                if (streamedOutput.flushCompleted) {
-                  flushSucceeded = true;
-                }
-              },
-            );
+            try {
+              const output = await runContainerAgent(
+                group,
+                {
+                  prompt: getNightlyFlushPrompt(),
+                  sessionId: sessions[group.folder],
+                  groupFolder: group.folder,
+                  chatJid,
+                  isMain: group.isMain === true,
+                  assistantName: ASSISTANT_NAME,
+                  allowedTools: group.containerConfig?.allowedTools,
+                  model: group.containerConfig?.model,
+                  systemPrompt: group.containerConfig?.systemPrompt,
+                  mcpServers: group.containerConfig?.mcpServers,
+                  endpoint: group.containerConfig?.endpoint,
+                  webSearchVendor: group.containerConfig?.webSearchVendor,
+                  contextWindowSize: group.containerConfig?.contextWindowSize,
+                },
+                (proc, containerName) =>
+                  queue.registerProcess(
+                    chatJid,
+                    proc,
+                    containerName,
+                    group.folder,
+                  ),
+                async (streamedOutput: ContainerOutput) => {
+                  // Track session ID from streamed results
+                  if (streamedOutput.newSessionId) {
+                    sessions[group.folder] = streamedOutput.newSessionId;
+                    setSession(group.folder, streamedOutput.newSessionId);
+                  }
+                  // Schedule container close on any result or success
+                  if (
+                    !closeScheduled &&
+                    (streamedOutput.result !== null ||
+                      streamedOutput.status === 'success')
+                  ) {
+                    closeScheduled = true;
+                    setTimeout(
+                      () => queue.closeStdin(chatJid),
+                      FLUSH_CLOSE_DELAY_MS,
+                    );
+                  }
+                  if (streamedOutput.flushCompleted) {
+                    flushSucceeded = true;
+                  }
+                },
+              );
 
-            if (output.flushCompleted) flushSucceeded = true;
-            // Nightly flush: the entire container's purpose is the flush prompt.
-            // A successful exit means the flush worked — no sentinel needed.
-            if (output.status === 'success') flushSucceeded = true;
-            if (output.status === 'error') {
-              logger.error({ group: group.name, error: output.error }, 'Nightly flush container error');
+              if (output.flushCompleted) flushSucceeded = true;
+              // Nightly flush: the entire container's purpose is the flush prompt.
+              // A successful exit means the flush worked — no sentinel needed.
+              if (output.status === 'success') flushSucceeded = true;
+              if (output.status === 'error') {
+                logger.error(
+                  { group: group.name, error: output.error },
+                  'Nightly flush container error',
+                );
+              }
+            } catch (err) {
+              logger.error({ group: group.name, err }, 'Nightly flush failed');
             }
-          } catch (err) {
-            logger.error({ group: group.name, err }, 'Nightly flush failed');
-          }
 
-          resolve(flushSucceeded);
+            resolve(flushSucceeded);
+          });
         });
-      });
+      },
+      clearSession: (groupFolder) => {
+        deleteSession(groupFolder);
+        delete sessions[groupFolder];
+        logger.info({ groupFolder }, 'Nightly cron cleared session');
+      },
     },
-    clearSession: (groupFolder) => {
-      deleteSession(groupFolder);
-      delete sessions[groupFolder];
-      logger.info({ groupFolder }, 'Nightly cron cleared session');
-    },
-  }, '0 0 * * *');
+    '0 0 * * *',
+  );
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
