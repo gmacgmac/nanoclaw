@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-import { processIpcMessageData, checkApprovalResponse, IpcDeps } from './ipc.js';
+import {
+  processIpcMessageData,
+  checkApprovalResponse,
+  IpcDeps,
+} from './ipc.js';
 import { RegisteredGroup } from './types.js';
 
 // Mock config
@@ -78,7 +82,13 @@ describe('processIpcMessageData — approval_request', () => {
         type: 'approval_request',
         chatJid: 'tg:main',
         command: 'rm -rf /workspace/extra/finance/old/',
-        patterns: [{ name: 'rm-recursive', description: 'Recursive file deletion', matched: 'rm -rf' }],
+        patterns: [
+          {
+            name: 'rm-recursive',
+            description: 'Recursive file deletion',
+            matched: 'rm -rf',
+          },
+        ],
         targetPaths: ['/workspace/extra/finance'],
         timestamp: Date.now(),
         ttl: 120,
@@ -132,10 +142,14 @@ describe('processIpcMessageData — approval_request', () => {
   });
 
   it('auto-denies when sendMessage fails (no channel)', async () => {
-    const failingSend = vi.fn(async () => { throw new Error('No channel'); });
+    const failingSend = vi.fn(async () => {
+      throw new Error('No channel');
+    });
     const failDeps = { ...deps, sendMessage: failingSend };
 
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     await processIpcMessageData(
@@ -167,7 +181,9 @@ describe('processIpcMessageData — approval_request', () => {
   });
 
   it('auto-denies previous pending approval when new request arrives for same JID', async () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     // First request — stores pending approval
@@ -176,7 +192,13 @@ describe('processIpcMessageData — approval_request', () => {
         type: 'approval_request',
         chatJid: 'tg:main',
         command: 'rm -rf /workspace/extra/a/',
-        patterns: [{ name: 'rm-recursive', description: 'Recursive delete', matched: 'rm -rf' }],
+        patterns: [
+          {
+            name: 'rm-recursive',
+            description: 'Recursive delete',
+            matched: 'rm -rf',
+          },
+        ],
         targetPaths: ['/workspace/extra/a'],
         timestamp: Date.now(),
         ttl: 120,
@@ -195,7 +217,13 @@ describe('processIpcMessageData — approval_request', () => {
         type: 'approval_request',
         chatJid: 'tg:main',
         command: 'rm -rf /workspace/extra/b/',
-        patterns: [{ name: 'rm-recursive', description: 'Recursive delete', matched: 'rm -rf' }],
+        patterns: [
+          {
+            name: 'rm-recursive',
+            description: 'Recursive delete',
+            matched: 'rm -rf',
+          },
+        ],
         targetPaths: ['/workspace/extra/b'],
         timestamp: Date.now(),
         ttl: 120,
@@ -251,7 +279,13 @@ describe('checkApprovalResponse', () => {
         type: 'approval_request',
         chatJid: 'tg:user123',
         command: 'rm -rf /workspace/extra/finance/',
-        patterns: [{ name: 'rm-recursive', description: 'Recursive delete', matched: 'rm -rf' }],
+        patterns: [
+          {
+            name: 'rm-recursive',
+            description: 'Recursive delete',
+            matched: 'rm -rf',
+          },
+        ],
         targetPaths: ['/workspace/extra/finance'],
         timestamp: Date.now(),
         ttl: 300,
@@ -272,12 +306,18 @@ describe('checkApprovalResponse', () => {
   });
 
   it('returns false for non-approval text', () => {
-    const result = checkApprovalResponse('tg:user123', 'hello world', confirmSend);
+    const result = checkApprovalResponse(
+      'tg:user123',
+      'hello world',
+      confirmSend,
+    );
     expect(result).toBe(false);
   });
 
   it('approves on "yes" and writes response file', () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     const result = checkApprovalResponse('tg:user123', 'yes', confirmSend);
@@ -293,14 +333,19 @@ describe('checkApprovalResponse', () => {
     expect(written.approved).toBe(true);
 
     // Confirmation message sent
-    expect(confirmSend).toHaveBeenCalledWith('tg:user123', '✅ Command approved');
+    expect(confirmSend).toHaveBeenCalledWith(
+      'tg:user123',
+      '✅ Command approved',
+    );
 
     mkdirSpy.mockRestore();
     writeSpy.mockRestore();
   });
 
   it('denies on "no" and writes response file', () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     const result = checkApprovalResponse('tg:user123', 'no', confirmSend);
@@ -341,8 +386,12 @@ describe('checkApprovalResponse', () => {
         deps,
       );
 
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
-      const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      const mkdirSpy = vi
+        .spyOn(fs, 'mkdirSync')
+        .mockImplementation(() => undefined);
+      const writeSpy = vi
+        .spyOn(fs, 'writeFileSync')
+        .mockImplementation(() => {});
 
       const result = checkApprovalResponse('tg:variant', variant, confirmSend);
       expect(result).toBe(true);
@@ -377,10 +426,18 @@ describe('checkApprovalResponse', () => {
         deps,
       );
 
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
-      const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      const mkdirSpy = vi
+        .spyOn(fs, 'mkdirSync')
+        .mockImplementation(() => undefined);
+      const writeSpy = vi
+        .spyOn(fs, 'writeFileSync')
+        .mockImplementation(() => {});
 
-      const result = checkApprovalResponse('tg:deny-variant', variant, confirmSend);
+      const result = checkApprovalResponse(
+        'tg:deny-variant',
+        variant,
+        confirmSend,
+      );
       expect(result).toBe(true);
 
       const writeCall = writeSpy.mock.calls.find(
@@ -395,7 +452,9 @@ describe('checkApprovalResponse', () => {
   });
 
   it('handles whitespace-padded responses', () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     const result = checkApprovalResponse('tg:user123', '  yes  ', confirmSend);
@@ -406,7 +465,9 @@ describe('checkApprovalResponse', () => {
   });
 
   it('clears pending approval after response', () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     checkApprovalResponse('tg:user123', 'yes', confirmSend);
@@ -420,7 +481,9 @@ describe('checkApprovalResponse', () => {
   });
 
   it('writes response to correct IPC input directory', () => {
-    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+    const mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
     checkApprovalResponse('tg:user123', 'yes', confirmSend);
