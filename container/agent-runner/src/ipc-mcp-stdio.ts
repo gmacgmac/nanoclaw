@@ -9,7 +9,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
+import { requiresApproval } from './lib/command-approval.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -451,6 +453,102 @@ server.tool(
     return {
       content: [{ type: 'text' as const, text: 'Memory flush requested. Compaction will begin after this response.' }],
     };
+  },
+);
+
+server.tool(
+  'execute_command',
+  'Execute a shell command. Use this instead of Bash for running commands. Dangerous commands targeting write-mounted paths require user approval.',
+  {
+    command: z.string().describe('The shell command to execute'),
+    timeout: z.number().optional().describe('Timeout in milliseconds (default: 120000)'),
+  },
+  async (args) => {
+    const timeoutMs = args.timeout ?? 120_000;
+    const approvalMode = process.env.NANOCLAW_APPROVAL_MODE === 'true';
+
+    let writeMounts: string[] = [];
+    if (process.env.NANOCLAW_WRITE_MOUNTS) {
+      try {
+        writeMounts = JSON.parse(process.env.NANOCLAW_WRITE_MOUNTS);
+      } catch {
+        // Malformed env var — treat as no write mounts (fail-safe)
+      }
+    }
+
+    // Check if approval is needed
+    if (approvalMode && writeMounts.length > 0) {
+      const decision = requiresApproval(args.command, writeMounts);
+
+      if (decision.needed) {
+        // Write approval request to IPC
+        const requestFilename = writeIpcFile(MESSAGES_DIR, {
+          type: 'approval_request',
+          chatJid,
+          groupFolder,
+          command: args.command,
+          patterns: decision.patterns,
+          targetPaths: decision.targetPaths,
+          timestamp: Date.now(),
+          ttl: Math.floor(timeoutMs / 1000),
+        });
+
+        // Poll for approval response (fail-closed on timeout)
+        const inputDir = path.join(IPC_DIR, 'input');
+        const pollInterval = 1000;
+        const deadline = Date.now() + timeoutMs;
+        let approved = false;
+        let responded = false;
+
+        while (Date.now() < deadline) {
+          try {
+            const files = fs.existsSync(inputDir) ? fs.readdirSync(inputDir) : [];
+            const responseFile = files.find((f) => f.includes('_approval_response'));
+            if (responseFile) {
+              const responsePath = path.join(inputDir, responseFile);
+              const data = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+              fs.unlinkSync(responsePath);
+              approved = data.approved === true;
+              responded = true;
+              break;
+            }
+          } catch {
+            // Ignore read errors during polling
+          }
+          await new Promise((r) => setTimeout(r, pollInterval));
+        }
+
+        if (!responded || !approved) {
+          const reason = responded ? 'denied by user' : 'timed out (auto-denied)';
+          return {
+            content: [{ type: 'text' as const, text: `Command denied by user approval policy (${reason})` }],
+            isError: true,
+          };
+        }
+      }
+    }
+
+    // Execute the command
+    try {
+      const output = execSync(args.command, {
+        shell: '/bin/bash',
+        timeout: timeoutMs,
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { content: [{ type: 'text' as const, text: output || '(no output)' }] };
+    } catch (err: unknown) {
+      const execErr = err as { status?: number; stdout?: string; stderr?: string; message?: string };
+      const exitCode = execErr.status ?? 1;
+      const stderr = execErr.stderr ?? '';
+      const stdout = execErr.stdout ?? '';
+      const combined = [stdout, stderr].filter(Boolean).join('\n') || execErr.message || 'Unknown error';
+      return {
+        content: [{ type: 'text' as const, text: `Exit code ${exitCode}:\n${combined}` }],
+        isError: true,
+      };
+    }
   },
 );
 

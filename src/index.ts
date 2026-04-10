@@ -49,7 +49,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher } from './ipc.js';
+import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyFlushPrompt } from './nightly-maintenance.js';
 import { scanContextFiles, ContextScanResult } from './lib/context-scanner.js';
 import {
@@ -524,6 +524,17 @@ async function runAgent(
       );
     }
 
+    // Tool swapping: when approvalMode is enabled, remove Bash so the agent
+    // uses mcp__nanoclaw__execute_command instead (which has approval checks).
+    let effectiveAllowedTools = group.containerConfig?.allowedTools;
+    if (group.containerConfig?.approvalMode === true && effectiveAllowedTools) {
+      effectiveAllowedTools = effectiveAllowedTools.filter((t) => t !== 'Bash');
+      logger.info(
+        { group: group.name },
+        'approvalMode enabled — Bash replaced with execute_command',
+      );
+    }
+
     const output = await runContainerAgent(
       group,
       {
@@ -534,7 +545,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
-        allowedTools: group.containerConfig?.allowedTools,
+        allowedTools: effectiveAllowedTools,
         model: group.containerConfig?.model,
         systemPrompt: group.containerConfig?.systemPrompt,
         mcpServers: group.containerConfig?.mcpServers,
@@ -918,6 +929,17 @@ async function main(): Promise<void> {
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
         return;
+      }
+
+      // Command approval response — intercept yes/no replies before storage
+      if (!msg.is_from_me && !msg.is_bot_message) {
+        const sendFn = async (jid: string, text: string) => {
+          const ch = findChannel(channels, jid);
+          if (ch?.isConnected()) await ch.sendMessage(jid, text);
+        };
+        if (checkApprovalResponse(chatJid, msg.content, sendFn)) {
+          return; // Consumed by approval flow — do not forward to agent
+        }
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing

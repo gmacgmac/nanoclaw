@@ -35,6 +35,86 @@ export interface IpcDeps {
   enqueueMessageCheck: (jid: string) => void;
 }
 
+// --- Command approval state ---
+
+interface PendingApproval {
+  sourceGroup: string;
+  timestamp: number;
+  ttl: number; // seconds
+}
+
+const pendingApprovals = new Map<string, PendingApproval>();
+
+/**
+ * Check if an inbound user message is an approval response.
+ * Returns true if the message was consumed (should NOT be forwarded to agent).
+ */
+export function checkApprovalResponse(
+  chatJid: string,
+  messageText: string,
+  sendMessage: (jid: string, text: string) => Promise<void>,
+): boolean {
+  const pending = pendingApprovals.get(chatJid);
+  if (!pending) return false;
+
+  const trimmed = messageText.trim().toLowerCase();
+  const approveWords = ['yes', 'approve', 'y'];
+  const denyWords = ['no', 'deny', 'n'];
+
+  const isApprove = approveWords.includes(trimmed);
+  const isDeny = denyWords.includes(trimmed);
+
+  if (!isApprove && !isDeny) return false;
+
+  // Write approval response to the group's IPC input directory
+  const inputDir = path.join(DATA_DIR, 'ipc', pending.sourceGroup, 'input');
+  fs.mkdirSync(inputDir, { recursive: true });
+  const responsePath = path.join(inputDir, '_approval_response');
+  fs.writeFileSync(
+    responsePath,
+    JSON.stringify({ type: 'approval_response', approved: isApprove }),
+  );
+
+  pendingApprovals.delete(chatJid);
+
+  // Send confirmation (fire-and-forget)
+  const confirmMsg = isApprove ? '✅ Command approved' : '❌ Command denied';
+  sendMessage(chatJid, confirmMsg).catch(() => {});
+
+  logger.info(
+    { chatJid, sourceGroup: pending.sourceGroup, approved: isApprove },
+    'Approval response written',
+  );
+
+  return true;
+}
+
+/**
+ * Clean up expired pending approvals. Called from the IPC poll loop.
+ */
+function cleanupExpiredApprovals(): void {
+  const now = Date.now();
+  for (const [jid, pending] of pendingApprovals) {
+    const expiresAt = pending.timestamp + pending.ttl * 1000;
+    if (now >= expiresAt) {
+      // Auto-deny: write rejection response
+      const inputDir = path.join(DATA_DIR, 'ipc', pending.sourceGroup, 'input');
+      fs.mkdirSync(inputDir, { recursive: true });
+      const responsePath = path.join(inputDir, '_approval_response');
+      fs.writeFileSync(
+        responsePath,
+        JSON.stringify({ type: 'approval_response', approved: false }),
+      );
+
+      pendingApprovals.delete(jid);
+      logger.info(
+        { chatJid: jid, sourceGroup: pending.sourceGroup },
+        'Approval request expired, auto-denied',
+      );
+    }
+  }
+}
+
 let ipcWatcherRunning = false;
 
 export function startIpcWatcher(deps: IpcDeps): void {
@@ -139,6 +219,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
       }
     }
 
+    // Clean up expired approval requests (auto-deny on timeout)
+    cleanupExpiredApprovals();
+
     setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
   };
 
@@ -158,11 +241,84 @@ export async function processIpcMessageData(
     source?: string;
     sender_name?: string;
     sender?: string;
+    // approval_request fields
+    command?: string;
+    patterns?: Array<{ name: string; description: string; matched: string }>;
+    targetPaths?: string[];
+    timestamp?: number;
+    ttl?: number;
+    groupFolder?: string;
   },
   sourceGroup: string,
   isMain: boolean,
   deps: IpcDeps,
 ): Promise<void> {
+  // --- Handle approval requests from execute_command MCP tool ---
+  if (data.type === 'approval_request') {
+    if (!data.chatJid || !data.command) return;
+
+    const patternDescs = data.patterns?.map((p) => p.description).join(', ') || 'unknown risk';
+    const targets = data.targetPaths?.join(', ') || 'unknown paths';
+    const ttl = data.ttl || 120;
+    const approvalMsg = [
+      '⚠️ Command requires approval:',
+      '',
+      `Command: \`${data.command}\``,
+      `Risk: ${patternDescs}`,
+      `Targets: ${targets} (write-mounted)`,
+      '',
+      'Reply "yes" to approve, "no" to deny.',
+      `Auto-deny in ${ttl}s.`,
+    ].join('\n');
+
+    // If there's already a pending approval for this JID, auto-deny the old one
+    const existingPending = pendingApprovals.get(data.chatJid);
+    if (existingPending) {
+      const inputDir = path.join(DATA_DIR, 'ipc', existingPending.sourceGroup, 'input');
+      fs.mkdirSync(inputDir, { recursive: true });
+      const responsePath = path.join(inputDir, '_approval_response');
+      fs.writeFileSync(
+        responsePath,
+        JSON.stringify({ type: 'approval_response', approved: false }),
+      );
+      logger.info(
+        { chatJid: data.chatJid, sourceGroup: existingPending.sourceGroup },
+        'Previous pending approval auto-denied (replaced by new request)',
+      );
+    }
+
+    try {
+      await deps.sendMessage(data.chatJid, approvalMsg);
+    } catch (err) {
+      // No channel for this JID — fail-closed (auto-deny)
+      logger.warn(
+        { chatJid: data.chatJid, sourceGroup, err },
+        'Approval request: no channel for JID, auto-denying',
+      );
+      const inputDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+      fs.mkdirSync(inputDir, { recursive: true });
+      const responsePath = path.join(inputDir, '_approval_response');
+      fs.writeFileSync(
+        responsePath,
+        JSON.stringify({ type: 'approval_response', approved: false }),
+      );
+      return;
+    }
+
+    pendingApprovals.set(data.chatJid, {
+      sourceGroup,
+      timestamp: data.timestamp || Date.now(),
+      ttl,
+    });
+
+    logger.info(
+      { chatJid: data.chatJid, sourceGroup, command: data.command },
+      'Approval request sent to user',
+    );
+    return;
+  }
+
+  // --- Handle regular messages ---
   if (data.type !== 'message' || !data.chatJid || !data.text) return;
 
   const registeredGroups = deps.registeredGroups();

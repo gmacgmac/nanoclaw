@@ -415,6 +415,17 @@ function buildContainerArgs(
     args.push('-e', `NANOCLAW_SSRF_CONFIG=${ssrfConfigJson}`);
   }
 
+  // Command approval mode — pass config + write mount paths to container
+  if (group.containerConfig?.approvalMode === true) {
+    args.push('-e', 'NANOCLAW_APPROVAL_MODE=true');
+
+    // Collect container paths where readonly !== true and path is under /workspace/extra/
+    const writeMountPaths = mounts
+      .filter((m) => !m.readonly && m.containerPath.startsWith('/workspace/extra/'))
+      .map((m) => m.containerPath);
+    args.push('-e', `NANOCLAW_WRITE_MOUNTS=${JSON.stringify(writeMountPaths)}`);
+  }
+
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).
