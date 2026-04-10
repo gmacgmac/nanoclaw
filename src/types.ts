@@ -129,6 +129,16 @@ export interface ContainerConfig {
    * - { allowPrivateNetworks: true } → allow private networks but still block metadata
    */
   ssrfProtection?: boolean | { allowPrivateNetworks: boolean };
+
+  /**
+   * Command approval mode for dangerous commands on write-mounted paths.
+   * When enabled, Bash is replaced with mcp__nanoclaw__execute_command which
+   * pauses on dangerous commands and requests user approval via messaging channel.
+   * - undefined / absent → false (backward compatible — Bash available as normal)
+   * - false → Bash available, no approval checks
+   * - true → Bash replaced with execute_command, dangerous commands require approval
+   */
+  approvalMode?: boolean;
 }
 
 export interface RegisteredGroup {

@@ -518,3 +518,115 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     ).toBeGreaterThan(0);
   });
 });
+
+describe('NANOCLAW_APPROVAL_MODE env vars', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('passes NANOCLAW_APPROVAL_MODE=true when approvalMode is enabled', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { approvalMode: true },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const modeIdx = args.findIndex((a) => a === 'NANOCLAW_APPROVAL_MODE=true');
+    expect(modeIdx).toBeGreaterThan(0);
+    expect(args[modeIdx - 1]).toBe('-e');
+  });
+
+  it('passes NANOCLAW_WRITE_MOUNTS as JSON array when approvalMode is enabled', async () => {
+    // validateAdditionalMounts is mocked to return empty by default.
+    // We need to override it for this test to return write mounts.
+    const { validateAdditionalMounts } = await import('./mount-security.js');
+    vi.mocked(validateAdditionalMounts).mockReturnValueOnce([
+      { hostPath: '/home/user/finance', containerPath: '/workspace/extra/finance', readonly: false },
+      { hostPath: '/home/user/docs', containerPath: '/workspace/extra/docs', readonly: true },
+    ]);
+
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        approvalMode: true,
+        additionalMounts: [
+          { hostPath: '~/finance', readonly: false },
+          { hostPath: '~/docs', readonly: true },
+        ],
+      },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const mountsArg = args.find((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='));
+    expect(mountsArg).toBeDefined();
+    const parsed = JSON.parse(mountsArg!.replace('NANOCLAW_WRITE_MOUNTS=', ''));
+    // Only the non-readonly mount under /workspace/extra/ should be included
+    expect(parsed).toEqual(['/workspace/extra/finance']);
+  });
+
+  it('does NOT pass approval env vars when approvalMode is false', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { approvalMode: false },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(-1);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(-1);
+  });
+
+  it('does NOT pass approval env vars when approvalMode is absent', async () => {
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(-1);
+    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(-1);
+  });
+
+  it('passes empty NANOCLAW_WRITE_MOUNTS when no write mounts exist', async () => {
+    const group: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { approvalMode: true },
+    };
+
+    const resultPromise = runContainerAgent(group, testInput, () => {}, undefined);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnMock = vi.mocked(spawn);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const mountsArg = args.find((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='));
+    expect(mountsArg).toBeDefined();
+    const parsed = JSON.parse(mountsArg!.replace('NANOCLAW_WRITE_MOUNTS=', ''));
+    expect(parsed).toEqual([]);
+  });
+});
