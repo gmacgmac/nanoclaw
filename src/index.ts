@@ -51,7 +51,8 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { getNightlyFlushPrompt } from './nightly-maintenance.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { scanContextFiles, ContextScanResult } from './lib/context-scanner.js';
+import { findChannel, formatMessages, formatOutbound, routeOutbound } from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -65,7 +66,7 @@ import {
 } from './sender-allowlist.js';
 import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { logger } from './logger.js';
+import { logger, log } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -431,6 +432,85 @@ async function runAgent(
     : undefined;
 
   try {
+    // --- Prompt injection scanning (BE_04) ---
+    const scanMode = group.containerConfig?.injectionScanMode ?? 'warn';
+    if (scanMode !== 'off') {
+      const groupFolderPath = resolveGroupFolderPath(group.folder);
+      const globalFolderPath = isMain
+        ? undefined
+        : path.join(GROUPS_DIR, 'global');
+
+      const scanResult = scanContextFiles(groupFolderPath, globalFolderPath);
+
+      if (!scanResult.clean) {
+        // Log all findings
+        for (const f of scanResult.findings) {
+          logger.warn(
+            {
+              group: group.name,
+              file: f.file,
+              severity: f.severity,
+              pattern: f.pattern,
+              line: f.line,
+            },
+            `[INJECTION SCAN] ${f.severity}: ${f.file} — ${f.description} (line ${f.line})`,
+          );
+        }
+
+        // Send alert to NANOCLAW_ALERT_JID if configured
+        const alertJid = process.env.NANOCLAW_ALERT_JID;
+        if (alertJid) {
+          const alertChannel = findChannel(channels, alertJid);
+          if (alertChannel?.isConnected()) {
+            for (const f of scanResult.findings) {
+              const alertMsg = `🛡️ [INJECTION SCAN] ${f.severity} in ${group.name}/${f.file}: ${f.description} (line ${f.line})`;
+              try {
+                await routeOutbound(channels, alertJid, alertMsg);
+              } catch (alertErr) {
+                logger.warn(
+                  { err: alertErr, jid: alertJid },
+                  'Failed to send injection scan alert',
+                );
+              }
+            }
+          } else {
+            logger.warn(
+              { jid: alertJid },
+              'NANOCLAW_ALERT_JID configured but no channel owns this JID — alert not sent',
+            );
+          }
+        }
+
+        // Block mode: abort on critical findings
+        if (scanMode === 'block' && scanResult.hasCritical) {
+          const criticals = scanResult.findings.filter(
+            (f) => f.severity === 'critical',
+          );
+          const summary = criticals
+            .map((f) => `${f.file}: ${f.description} (line ${f.line})`)
+            .join('; ');
+
+          log.error(
+            { group: group.name, findings: criticals.length },
+            `Injection scan blocked container launch: ${summary}`,
+          );
+
+          // Notify the group's chat channel
+          const groupChannel = findChannel(channels, chatJid);
+          if (groupChannel?.isConnected()) {
+            const blockMsg = `⚠️ Blocked: context files contain potential prompt injection. ${criticals.map((f) => `${f.file} — ${f.description}`).join('; ')}. Review the files manually.`;
+            try {
+              await groupChannel.sendMessage(chatJid, blockMsg);
+            } catch {
+              // Best-effort notification
+            }
+          }
+
+          return 'error';
+        }
+      }
+    }
+
     // Debug: log allowedTools being passed to container
     if (group.containerConfig?.allowedTools) {
       logger.info(
@@ -476,7 +556,10 @@ async function runAgent(
       queue.closeStdin(chatJid);
       delete sessions[group.folder];
       deleteSession(group.folder);
-      logger.info({ group: group.name }, 'Session cleared after memory flush (post-output)');
+      logger.info(
+        { group: group.name },
+        'Session cleared after memory flush (post-output)',
+      );
     }
 
     if (output.status === 'error') {
@@ -899,16 +982,75 @@ async function main(): Promise<void> {
     },
   });
   startNightlyCron({
-    runFlush: async (group, chatJid) => {
-      const result = await runAgent(group, getNightlyFlushPrompt(), chatJid);
-      return result === 'success';
+    runFlush: (group, chatJid) => {
+      // Route nightly flush through the queue so the container gets proper
+      // lifecycle management (active=true, closeStdin works, concurrency
+      // limiting, drainGroup cleanup). Same pattern as scheduled tasks.
+      return new Promise<boolean>((resolve) => {
+        const taskId = `nightly-flush-${group.folder}-${Date.now()}`;
+        queue.enqueueTask(chatJid, taskId, async () => {
+          const FLUSH_CLOSE_DELAY_MS = 10000;
+          let closeScheduled = false;
+          let flushSucceeded = false;
+
+          try {
+            const output = await runContainerAgent(
+              group,
+              {
+                prompt: getNightlyFlushPrompt(),
+                sessionId: sessions[group.folder],
+                groupFolder: group.folder,
+                chatJid,
+                isMain: group.isMain === true,
+                assistantName: ASSISTANT_NAME,
+                allowedTools: group.containerConfig?.allowedTools,
+                model: group.containerConfig?.model,
+                systemPrompt: group.containerConfig?.systemPrompt,
+                mcpServers: group.containerConfig?.mcpServers,
+                endpoint: group.containerConfig?.endpoint,
+                webSearchVendor: group.containerConfig?.webSearchVendor,
+                contextWindowSize: group.containerConfig?.contextWindowSize,
+              },
+              (proc, containerName) =>
+                queue.registerProcess(chatJid, proc, containerName, group.folder),
+              async (streamedOutput: ContainerOutput) => {
+                // Track session ID from streamed results
+                if (streamedOutput.newSessionId) {
+                  sessions[group.folder] = streamedOutput.newSessionId;
+                  setSession(group.folder, streamedOutput.newSessionId);
+                }
+                // Schedule container close on any result or success
+                if (!closeScheduled && (streamedOutput.result !== null || streamedOutput.status === 'success')) {
+                  closeScheduled = true;
+                  setTimeout(() => queue.closeStdin(chatJid), FLUSH_CLOSE_DELAY_MS);
+                }
+                if (streamedOutput.flushCompleted) {
+                  flushSucceeded = true;
+                }
+              },
+            );
+
+            if (output.flushCompleted) flushSucceeded = true;
+            // Nightly flush: the entire container's purpose is the flush prompt.
+            // A successful exit means the flush worked — no sentinel needed.
+            if (output.status === 'success') flushSucceeded = true;
+            if (output.status === 'error') {
+              logger.error({ group: group.name, error: output.error }, 'Nightly flush container error');
+            }
+          } catch (err) {
+            logger.error({ group: group.name, err }, 'Nightly flush failed');
+          }
+
+          resolve(flushSucceeded);
+        });
+      });
     },
     clearSession: (groupFolder) => {
       deleteSession(groupFolder);
       delete sessions[groupFolder];
       logger.info({ groupFolder }, 'Nightly cron cleared session');
     },
-  });
+  }, '0 0 * * *');
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
