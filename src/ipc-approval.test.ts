@@ -57,10 +57,15 @@ let sendMessageMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   groups = { 'tg:main': MAIN_GROUP };
-  sendMessageMock = vi.fn(async (_jid: string, _text: string): Promise<void> => {});
+  sendMessageMock = vi.fn(
+    async (_jid: string, _text: string): Promise<void> => {},
+  );
 
   deps = {
-    sendMessage: sendMessageMock as (jid: string, text: string) => Promise<void>,
+    sendMessage: sendMessageMock as (
+      jid: string,
+      text: string,
+    ) => Promise<void>,
     registeredGroups: () => groups,
     registerGroup: vi.fn(),
     syncGroups: async () => {},

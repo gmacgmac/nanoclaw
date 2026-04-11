@@ -331,7 +331,11 @@ export async function processIpcMessageData(
   const targetGroup = registeredGroups[data.chatJid];
 
   const isDashboardSource = data.source === 'dashboard';
-  if (!isDashboardSource && !isMain && !(targetGroup && targetGroup.folder === sourceGroup)) {
+  if (
+    !isDashboardSource &&
+    !isMain &&
+    !(targetGroup && targetGroup.folder === sourceGroup)
+  ) {
     logger.warn(
       { chatJid: data.chatJid, sourceGroup },
       'Unauthorized IPC message attempt blocked',
