@@ -330,7 +330,8 @@ export async function processIpcMessageData(
   const registeredGroups = deps.registeredGroups();
   const targetGroup = registeredGroups[data.chatJid];
 
-  if (!isMain && !(targetGroup && targetGroup.folder === sourceGroup)) {
+  const isDashboardSource = data.source === 'dashboard';
+  if (!isDashboardSource && !isMain && !(targetGroup && targetGroup.folder === sourceGroup)) {
     logger.warn(
       { chatJid: data.chatJid, sourceGroup },
       'Unauthorized IPC message attempt blocked',
@@ -352,7 +353,7 @@ export async function processIpcMessageData(
   // Dashboard messages are user messages, not bot messages.
   // They must be stored with is_from_me: false so the message loop
   // processes them and the agent responds.
-  const isDashboardMessage = data.source === 'dashboard';
+  const isDashboardMessage = isDashboardSource;
 
   storeMessageDirect({
     id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
