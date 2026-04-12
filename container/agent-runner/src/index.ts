@@ -492,14 +492,10 @@ async function runQuery(
   }
   log(`Using model: ${sdkEnv.ANTHROPIC_MODEL || 'default'}`);
 
-  // Build system prompt: global CLAUDE.md + per-group systemPrompt from config
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  // Build system prompt: per-group systemPrompt from config
   let appendPrompt = '';
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    appendPrompt += fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
   if (containerInput.systemPrompt) {
-    appendPrompt += (appendPrompt ? '\n\n' : '') + containerInput.systemPrompt;
+    appendPrompt = containerInput.systemPrompt;
   }
 
   // Discover additional directories mounted at /workspace/extra/*

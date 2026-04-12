@@ -55,7 +55,6 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │  Working directory: /workspace/group (mounted from host)       │    │
 │  │  Volume mounts:                                                │    │
 │  │    • groups/{name}/ → /workspace/group                         │    │
-│  │    • groups/global/ → /workspace/global/ (non-main only)       │    │
 │  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
@@ -380,7 +379,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 ```json
 {
   "skills": ["status", "browser"],
-  "globalAccess": { "categories": { "readonly": false } },
   "allowedTools": ["Read", "Grep", "WebSearch"],
   "mcpServers": {
     "brave-search": {
@@ -402,7 +400,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection |
-| `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
 | `model` | `string` | `undefined` = inherit | Per-group model override |
@@ -423,17 +420,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 **`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined for backward compat). Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
 
 > **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
-
-#### `globalAccess` — Global Directory Mount Control
-
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Full global mount read-only (backward compatible) |
-| `{}` | No global access — complete isolation |
-| `{ "*": { "readonly": true } }` | All of global with specified permission |
-| `{ "categories": { "readonly": false } }` | Only named subdirectory with specified permission |
-
-When `"*"` is present, all other keys are ignored.
 
 #### `allowedTools` — Per-Group Tool Restrictions
 
@@ -667,11 +653,10 @@ The session transcript is the primary memory mechanism. Auto-memory is a safety 
 When a container starts, context is loaded in this order:
 
 1. Claude Code built-in system prompt (`claude_code` preset)
-2. `global/CLAUDE.md` content (non-main groups only, if file exists)
-3. `containerConfig.systemPrompt` (if set — appended after global CLAUDE.md)
-4. Group `CLAUDE.md` (auto-loaded by SDK from `cwd` = `/workspace/group`)
-5. Auto-memory files (`memory/*.md`)
-6. Session transcript (if resuming an existing session)
+2. `containerConfig.systemPrompt` (if set)
+3. Group `CLAUDE.md` (auto-loaded by SDK from `cwd` = `/workspace/group`)
+4. Auto-memory files (`memory/*.md`)
+5. Session transcript (if resuming an existing session)
 
 ---
 
