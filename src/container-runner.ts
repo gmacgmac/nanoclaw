@@ -73,102 +73,18 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
-  group: RegisteredGroup,
-  isMain: boolean,
-): VolumeMount[] {
+function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
 
-  if (isMain) {
-    // Main gets the project root read-only. Writable paths the agent needs
-    // (group folder, IPC, .claude/) are mounted separately below.
-    // Read-only prevents the agent from modifying host application code
-    // (src/, dist/, package.json, etc.) which would bypass the sandbox
-    // entirely on next restart.
-    mounts.push({
-      hostPath: projectRoot,
-      containerPath: '/workspace/project',
-      readonly: true,
-    });
-
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
-
-    // Main also gets its group folder as the working directory
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-  } else {
-    // Other groups only get their own folder
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-
-    // Global memory directory access for non-main groups.
-    // Configurable via containerConfig.globalAccess:
-    // - undefined: mount all of global read-only (backward compat)
-    // - {}: no global mount at all (isolation)
-    // - { "*": { readonly: true/false } }: mount entire global dir with specified permission
-    // - { "subdir": { readonly: true/false } }: mount only named subdirs, each with own permission
-    //
-    // Security note: readonly: false here intentionally allows write access to specific
-    // global subdirs. This bypasses the nonMainReadOnly philosophy in mount-security.ts,
-    // which only governs additionalMounts (user-configured mounts validated against an
-    // external allowlist). Global mounts are hardcoded trusted mounts, not user-configurable.
-    const globalDir = path.join(GROUPS_DIR, 'global');
-
-    if (group.containerConfig?.globalAccess) {
-      const access = group.containerConfig.globalAccess;
-
-      if (access['*']) {
-        // Wildcard: mount entire global directory with configured permission.
-        // When "*" is present, all other keys are ignored — it's all-or-nothing.
-        if (fs.existsSync(globalDir)) {
-          mounts.push({
-            hostPath: globalDir,
-            containerPath: '/workspace/global',
-            readonly: access['*'].readonly,
-          });
-        }
-      } else {
-        // Per-subdirectory: mount only specified subdirectories.
-        // Empty object {} results in no mounts (complete isolation).
-        for (const [subdir, config] of Object.entries(access)) {
-          const subdirPath = path.join(globalDir, subdir);
-          if (fs.existsSync(subdirPath)) {
-            mounts.push({
-              hostPath: subdirPath,
-              containerPath: `/workspace/global/${subdir}`,
-              readonly: config.readonly,
-            });
-          }
-        }
-      }
-    } else {
-      // Default: mount entire global read-only (backward compatible)
-      if (fs.existsSync(globalDir)) {
-        mounts.push({
-          hostPath: globalDir,
-          containerPath: '/workspace/global',
-          readonly: true,
-        });
-      }
-    }
-  }
+  // All groups get their own folder as the working directory.
+  // Project root or any other filesystem access is configured via additionalMounts.
+  mounts.push({
+    hostPath: groupDir,
+    containerPath: '/workspace/group',
+    readonly: false,
+  });
 
   // Per-group Claude sessions directory (isolated from other groups)
   // Each group gets their own .claude/ to prevent cross-group session access
@@ -336,7 +252,7 @@ function buildVolumeMounts(
     const validatedMounts = validateAdditionalMounts(
       group.containerConfig.additionalMounts,
       group.name,
-      isMain,
+      group.isMain ?? false,
     );
     mounts.push(...validatedMounts);
   }
@@ -462,7 +378,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(group);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, group);
