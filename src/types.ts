@@ -39,19 +39,6 @@ export interface ContainerConfig {
    */
   skills?: string[];
 
-  /**
-   * Per-group global subdirectory access.
-   * undefined = full global mount read-only (backward compat),
-   * {} = no global access,
-   * { "*": { readonly: true } } = all of global with specified permission,
-   * { "subdir": { readonly: true } } = only named subdirs mounted.
-   */
-  globalAccess?: {
-    [subdirectory: string]: {
-      readonly: boolean;
-    };
-  };
-
   // --- SDK-level agent customisation ---
 
   /**

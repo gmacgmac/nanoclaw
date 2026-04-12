@@ -8,9 +8,8 @@ import os from 'os';
 
 // We need to test:
 // 1. Skill filtering (skills: undefined vs [] vs ["x"] vs ["nonexistent"])
-// 2. Global access mounts (globalAccess permutations)
-// 3. Backward compatibility (no containerConfig, only timeout)
-// 4. Agent customisation (allowedTools, model, systemPrompt)
+// 2. Backward compatibility (no containerConfig, only timeout)
+// 3. Agent customisation (allowedTools, model, systemPrompt)
 
 // The buildVolumeMounts function is private, so we'll test it by creating
 // temporary directories and checking what gets copied/mounted.
@@ -182,179 +181,6 @@ describe('Per-Group Skill Isolation', () => {
     });
   });
 
-  describe('Global Access Mounts', () => {
-    it('should mount entire global read-only when globalAccess is undefined', () => {
-      // Tests lines 148-157 in container-runner.ts
-      interface GlobalAccess {
-        [subdir: string]: { readonly: boolean };
-      }
-
-      const globalAccess: GlobalAccess | undefined = undefined;
-      const mounts: Array<{
-        hostPath: string;
-        containerPath: string;
-        readonly: boolean;
-      }> = [];
-      const globalDir = path.join(groupsDir, 'global');
-
-      if (globalAccess) {
-        // Not undefined - would do specific mounts
-      } else {
-        // undefined = mount entire global read-only (backward compat)
-        if (fs.existsSync(globalDir)) {
-          mounts.push({
-            hostPath: globalDir,
-            containerPath: '/workspace/global',
-            readonly: true,
-          });
-        }
-      }
-
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].containerPath).toBe('/workspace/global');
-      expect(mounts[0].readonly).toBe(true);
-    });
-
-    it('should not mount global when globalAccess is empty object', () => {
-      interface GlobalAccess {
-        [subdir: string]: { readonly: boolean };
-      }
-
-      const globalAccess: GlobalAccess = {};
-      const mounts: Array<{
-        hostPath: string;
-        containerPath: string;
-        readonly: boolean;
-      }> = [];
-      const globalDir = path.join(groupsDir, 'global');
-
-      if (globalAccess['*']) {
-        // Wildcard case
-      } else {
-        // Per-subdirectory: empty object = no mounts
-        for (const [subdir, config] of Object.entries(globalAccess)) {
-          const subdirPath = path.join(globalDir, subdir);
-          if (fs.existsSync(subdirPath)) {
-            mounts.push({
-              hostPath: subdirPath,
-              containerPath: `/workspace/global/${subdir}`,
-              readonly: config.readonly,
-            });
-          }
-        }
-      }
-
-      expect(mounts).toHaveLength(0);
-    });
-
-    it('should mount entire global with specified permission when wildcard used', () => {
-      interface GlobalAccess {
-        [subdir: string]: { readonly: boolean };
-      }
-
-      // readonly: true
-      let globalAccess: GlobalAccess = { '*': { readonly: true } };
-      let mounts: Array<{
-        hostPath: string;
-        containerPath: string;
-        readonly: boolean;
-      }> = [];
-      let globalDir = path.join(groupsDir, 'global');
-
-      if (globalAccess['*']) {
-        if (fs.existsSync(globalDir)) {
-          mounts.push({
-            hostPath: globalDir,
-            containerPath: '/workspace/global',
-            readonly: globalAccess['*'].readonly,
-          });
-        }
-      }
-
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].containerPath).toBe('/workspace/global');
-      expect(mounts[0].readonly).toBe(true);
-
-      // readonly: false
-      globalAccess = { '*': { readonly: false } };
-      mounts = [];
-
-      if (globalAccess['*']) {
-        if (fs.existsSync(globalDir)) {
-          mounts.push({
-            hostPath: globalDir,
-            containerPath: '/workspace/global',
-            readonly: globalAccess['*'].readonly,
-          });
-        }
-      }
-
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].readonly).toBe(false);
-    });
-
-    it('should mount only specified subdirectories when named', () => {
-      interface GlobalAccess {
-        [subdir: string]: { readonly: boolean };
-      }
-
-      const globalAccess: GlobalAccess = { categories: { readonly: true } };
-      const mounts: Array<{
-        hostPath: string;
-        containerPath: string;
-        readonly: boolean;
-      }> = [];
-      const globalDir = path.join(groupsDir, 'global');
-
-      if (globalAccess['*']) {
-        // Wildcard case - not applicable
-      } else {
-        for (const [subdir, config] of Object.entries(globalAccess)) {
-          const subdirPath = path.join(globalDir, subdir);
-          if (fs.existsSync(subdirPath)) {
-            mounts.push({
-              hostPath: subdirPath,
-              containerPath: `/workspace/global/${subdir}`,
-              readonly: config.readonly,
-            });
-          }
-        }
-      }
-
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].containerPath).toBe('/workspace/global/categories');
-      expect(mounts[0].readonly).toBe(true);
-      // projects subdir should NOT be mounted
-    });
-
-    it('should support read-write mounts for subdirectories', () => {
-      interface GlobalAccess {
-        [subdir: string]: { readonly: boolean };
-      }
-
-      const globalAccess: GlobalAccess = { categories: { readonly: false } };
-      const mounts: Array<{
-        hostPath: string;
-        containerPath: string;
-        readonly: boolean;
-      }> = [];
-      const globalDir = path.join(groupsDir, 'global');
-
-      for (const [subdir, config] of Object.entries(globalAccess)) {
-        const subdirPath = path.join(globalDir, subdir);
-        if (fs.existsSync(subdirPath)) {
-          mounts.push({
-            hostPath: subdirPath,
-            containerPath: `/workspace/global/${subdir}`,
-            readonly: config.readonly,
-          });
-        }
-      }
-
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].readonly).toBe(false);
-    });
-  });
 });
 
 describe('Agent Customisation (BE_04)', () => {
@@ -491,63 +317,27 @@ describe('Agent Customisation (BE_04)', () => {
     expect(sdkEnv.ANTHROPIC_MODEL).toBeUndefined();
   });
 
-  it('should build system prompt from global CLAUDE.md when systemPrompt provided', () => {
-    const globalContent = '# Global memory\n\nShared context.';
+  it('should set appendPrompt to systemPrompt when provided', () => {
     const systemPrompt = 'You are a research assistant. Be concise.';
 
-    // Simulating lines 396-404 in agent-runner/src/index.ts
+    // Simulating agent-runner/src/index.ts post-BE_03: only systemPrompt is used
     let appendPrompt = '';
-
-    // Global CLAUDE.md (for non-main groups)
-    const hasGlobal = true; // fs.existsSync check
-    if (hasGlobal) {
-      appendPrompt += globalContent;
-    }
-
-    // Per-group systemPrompt
     if (systemPrompt) {
-      appendPrompt += (appendPrompt ? '\n\n' : '') + systemPrompt;
-    }
-
-    // Both global content and systemPrompt should be present, separated by \n\n
-    expect(appendPrompt).toBe(
-      '# Global memory\n\nShared context.\n\nYou are a research assistant. Be concise.',
-    );
-  });
-
-  it('should use only systemPrompt when no global CLAUDE.md', () => {
-    const systemPrompt = 'You are a research assistant. Be concise.';
-
-    let appendPrompt = '';
-
-    const hasGlobal = false; // fs.existsSync returns false
-    if (hasGlobal) {
-      // Would add global content
-    }
-
-    if (systemPrompt) {
-      appendPrompt += (appendPrompt ? '\n\n' : '') + systemPrompt;
+      appendPrompt = systemPrompt;
     }
 
     expect(appendPrompt).toBe('You are a research assistant. Be concise.');
   });
 
-  it('should use only global CLAUDE.md when no systemPrompt', () => {
-    const globalContent = '# Global memory\n\nShared context.';
+  it('should leave appendPrompt empty when systemPrompt is undefined', () => {
+    const systemPrompt: string | undefined = undefined;
 
     let appendPrompt = '';
-
-    const hasGlobal = true;
-    if (hasGlobal) {
-      appendPrompt += globalContent;
-    }
-
-    const systemPrompt: string | undefined = undefined;
     if (systemPrompt) {
-      // Would add systemPrompt
+      appendPrompt = systemPrompt;
     }
 
-    expect(appendPrompt).toBe(globalContent);
+    expect(appendPrompt).toBe('');
   });
 });
 
@@ -588,7 +378,7 @@ describe('ContainerInput threading', () => {
 describe('ContainerConfig type extension', () => {
   // Verify ContainerConfig has all the new fields
 
-  it('should include skills, globalAccess, allowedTools, model, systemPrompt', () => {
+  it('should include skills, allowedTools, model, systemPrompt', () => {
     interface ContainerConfig {
       additionalMounts?: Array<{
         hostPath: string;
@@ -597,7 +387,6 @@ describe('ContainerConfig type extension', () => {
       }>;
       timeout?: number;
       skills?: string[];
-      globalAccess?: { [subdir: string]: { readonly: boolean } };
       allowedTools?: string[];
       model?: string;
       systemPrompt?: string;
@@ -605,7 +394,6 @@ describe('ContainerConfig type extension', () => {
 
     const config: ContainerConfig = {
       skills: ['status'],
-      globalAccess: { categories: { readonly: true } },
       allowedTools: ['Read', 'Grep'],
       model: 'haiku',
       systemPrompt: 'Be helpful.',
@@ -613,7 +401,6 @@ describe('ContainerConfig type extension', () => {
     };
 
     expect(config.skills).toEqual(['status']);
-    expect(config.globalAccess).toEqual({ categories: { readonly: true } });
     expect(config.allowedTools).toEqual(['Read', 'Grep']);
     expect(config.model).toBe('haiku');
     expect(config.systemPrompt).toBe('Be helpful.');
@@ -629,7 +416,6 @@ describe('ContainerConfig type extension', () => {
       }>;
       timeout?: number;
       skills?: string[];
-      globalAccess?: { [subdir: string]: { readonly: boolean } };
       allowedTools?: string[];
       model?: string;
       systemPrompt?: string;
@@ -643,7 +429,6 @@ describe('ContainerConfig type extension', () => {
     const config2: ContainerConfig = { timeout: 60000 };
     expect(config2.timeout).toBe(60000);
     expect(config2.skills).toBeUndefined();
-    expect(config2.globalAccess).toBeUndefined();
     expect(config2.allowedTools).toBeUndefined();
     expect(config2.model).toBeUndefined();
     expect(config2.systemPrompt).toBeUndefined();

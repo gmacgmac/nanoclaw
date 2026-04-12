@@ -71,7 +71,6 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 |-------|------|---------|---------|
 | `endpoint` | `string` | `"anthropic"` | Named vendor from `secrets.env` (e.g. `"ollama"`, `"zai"`). Routes API traffic to that upstream |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
-| `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control. `{}` = no access, `{ "*": { readonly: true } }` = all |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
 | `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`). Prefer `settings.json` for easier editing |
@@ -150,9 +149,7 @@ Three memory layers:
 | Group type | What's loaded |
 |------------|---------------|
 | Main (`is_main=1`) | preset + `groups/{folder}/CLAUDE.md` |
-| Non-main | preset + `global/CLAUDE.md` + `groups/{folder}/CLAUDE.md` |
-
-Note: `main/CLAUDE.md` is a template (not auto-loaded). `global/CLAUDE.md` is appended for non-main groups only.
+| Non-main | preset + `groups/{folder}/CLAUDE.md` |
 
 After group CLAUDE.md:
 1. `containerConfig.systemPrompt` (if set)
