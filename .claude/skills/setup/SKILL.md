@@ -11,44 +11,77 @@ Run setup steps automatically. Only pause when user action is required (channel 
 
 **UX Note:** Use `AskUserQuestion` for all user-facing questions.
 
-## 0. Git & Fork Setup
+## 0. Prerequisites
 
-Check the git remote configuration to ensure the user has a fork and upstream is configured.
+Check that required tools are installed before any setup work begins. Fail fast here rather than halfway through.
 
-Run:
-- `git remote -v`
+### 0-i. Node.js 20+
 
-**Case A — `origin` points to `qwibitai/nanoclaw` (user cloned directly):**
+Run `node --version`.
 
-The user cloned instead of forking. AskUserQuestion: "You cloned NanoClaw directly. We recommend forking so you can push your customizations. Would you like to set up a fork?"
-- Fork now (recommended) — walk them through it
-- Continue without fork — they'll only have local changes
+- If missing or version < 20: AskUserQuestion: "Node.js 20+ is required. Would you like me to install it?"
+  - macOS: `brew install node@22` (if brew available), otherwise install nvm then `nvm install 22`
+  - Linux: `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs`, or nvm
+- Verify: `node --version` returns v20+ or v22+
 
-If fork: instruct the user to fork `qwibitai/nanoclaw` on GitHub (they need to do this in their browser), then ask them for their GitHub username. Run:
+### 0-ii. Docker
+
+Run `docker --version` and `docker info`.
+
+- If `docker` not found: AskUserQuestion: "Docker is required for running agent containers. Would you like me to help install it?"
+  - macOS: `brew install --cask docker` (if brew available), then `open -a Docker`. If no brew, direct to https://docker.com/products/docker-desktop
+  - Linux: `curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER`
+- If installed but not running: `open -a Docker` (macOS) or `sudo systemctl start docker` (Linux). Wait 15s, re-check.
+- Verify: `docker info` returns without error
+
+**Note:** Step 3 handles runtime selection (Docker vs Apple Container) and building. This check just ensures Docker is available on the system before we invest time in bootstrap and environment checks.
+
+## 0a. Git & Fork Setup
+
+Check the git remote configuration. The `gmacgmac/nanoclaw` fork is the actively maintained version and should be the primary `origin`.
+
+Run `git remote -v`.
+
+**Case A — No git repo (fresh clone needed):**
+
+AskUserQuestion: "How did you get this code? If you haven't cloned yet, I can set that up."
+
+If they haven't cloned:
+```bash
+git clone https://github.com/gmacgmac/nanoclaw.git ~/.nanoclaw
+```
+
+After clone, optionally add upstream for tracking the original repo:
+```bash
+git remote add upstream https://github.com/qwibitai/nanoclaw.git
+```
+
+**Case B — `origin` points to `qwibitai/nanoclaw`:**
+
+AskUserQuestion: "Your origin points to the original qwibitai repo. The gmacgmac fork is the actively maintained version. Would you like to switch?"
+
+If yes:
 ```bash
 git remote rename origin upstream
-git remote add origin https://github.com/<their-username>/nanoclaw.git
-git push --force origin main
-```
-Verify with `git remote -v`.
-
-If continue without fork: add upstream so they can still pull updates:
-```bash
-git remote add upstream https://github.com/qwibitai/nanoclaw.git
+git remote add origin https://github.com/gmacgmac/nanoclaw.git
 ```
 
-**Case B — `origin` points to user's fork, no `upstream` remote:**
+If no: continue — they may have their own reasons.
 
-Add upstream:
-```bash
-git remote add upstream https://github.com/qwibitai/nanoclaw.git
-```
+**Case C — `origin` points to `gmacgmac/nanoclaw` (or user's own fork of it):**
 
-**Case C — both `origin` (user's fork) and `upstream` (qwibitai) exist:**
+Check for `upstream`:
+- If no upstream: `git remote add upstream https://github.com/qwibitai/nanoclaw.git`
+- If upstream exists: already configured, continue
 
-Already configured. Continue.
+**Case D — `origin` points to user's own fork (not gmacgmac, not qwibitai):**
 
-**Verify:** `git remote -v` should show `origin` → user's repo, `upstream` → `qwibitai/nanoclaw.git`.
+AskUserQuestion: "Your origin points to your own fork. Is this forked from gmacgmac/nanoclaw?"
+
+- If yes: ensure upstream is set to `https://github.com/qwibitai/nanoclaw.git`
+- If no: warn that the setup is designed for the gmacgmac fork and may not work correctly
+
+**Verify:** `git remote -v` should show `origin` → gmacgmac (or user's fork of it), optionally `upstream` → `qwibitai/nanoclaw.git`.
 
 ## 1. Bootstrap (Node.js + Dependencies)
 
@@ -89,7 +122,7 @@ Check the preflight results for `APPLE_CONTAINER` and `DOCKER`, and the PLATFORM
 
 ### 3a-docker. Install Docker
 
-- DOCKER=running → continue to 4b
+- DOCKER=running → continue to 3c
 - DOCKER=installed_not_running → start Docker: `open -a Docker` (macOS) or `sudo systemctl start docker` (Linux). Wait 15s, re-check with `docker info`.
 - DOCKER=not_found → Use `AskUserQuestion: Docker is required for running agents. Would you like me to install it?` If confirmed:
   - macOS: install via `brew install --cask docker`, then `open -a Docker` and wait for it to start. If brew not available, direct to Docker Desktop download at https://docker.com/products/docker-desktop
@@ -121,47 +154,97 @@ Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse th
 
 ## 4. Claude Authentication (No Script)
 
-If HAS_ENV=true from step 2, check for credentials in `~/.config/nanoclaw/secrets.env` (preferred) or `.env` (fallback). Look for multi-vendor format (`OLLAMA_API_KEY`, `ZAI_API_KEY`, etc.) or legacy format (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`). If present, confirm with user: keep or reconfigure?
+**All secrets go in `~/.config/nanoclaw/secrets.env`, NOT in `.env`.** The `.env` file is for non-sensitive config only (like `TZ=Europe/London`). This keeps secrets out of the git repo.
 
-**Important:** All secrets go in `~/.config/nanoclaw/secrets.env`, NOT in `.env`. The `.env` file is for non-sensitive config only (like `TZ=Europe/London`). This keeps secrets out of the git repo.
+### 4a. Check for existing secrets.env
 
-AskUserQuestion: Which provider will you use for the agent?
-
-**Ollama (recommended):**
-- Tell user to ensure Ollama is running: `ollama list`
-- Add to `~/.config/nanoclaw/secrets.env`:
-  ```bash
-  OLLAMA_BASE_URL=http://localhost:11434/v1
-  OLLAMA_API_KEY=ollama
-  ```
-
-**Z.ai:**
-- Ask user for their Z.ai API key
-- Add to `~/.config/nanoclaw/secrets.env`:
-  ```bash
-  ZAI_BASE_URL=https://api.z.ai/api/anthropic
-  ZAI_API_KEY=<their-key>
-  ```
-
-**Anthropic direct:**
-- Ask user for their Anthropic API key
-- Add to `~/.config/nanoclaw/secrets.env`:
-  ```bash
-  ANTHROPIC_BASE_URL=https://api.anthropic.com
-  ANTHROPIC_API_KEY=<their-key>
-  ```
-
-**Subscription (OAuth):**
-- Tell user to run `claude setup-token` in another terminal, copy the token
-- Add to `~/.config/nanoclaw/secrets.env`:
-  ```bash
-  CLAUDE_CODE_OAUTH_TOKEN=<token>
-  ```
-
-After adding credentials:
 ```bash
+test -f ~/.config/nanoclaw/secrets.env && echo "EXISTS" || echo "NOT_FOUND"
+```
+
+**If EXISTS:** Tell the user the file already exists at `~/.config/nanoclaw/secrets.env`. Ask: "Your secrets.env already exists. Would you like to review or edit it, or keep it as-is?" Do NOT read or display the file contents. If they want to edit, tell them to open it in their editor. Then skip to 4c.
+
+**If NOT_FOUND:** Proceed to 4b.
+
+### 4b. Write secrets.env template
+
+Create the directory and write the template:
+
+```bash
+mkdir -p ~/.config/nanoclaw && chmod 700 ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/secrets.env << 'EOF'
+# NanoClaw secrets — powers the credential proxy for agent containers
+# Priority: this file > .env > process.env
+# NOTE: This file does NOT affect the Claude Code instance running /setup.
+#       It only controls how agent containers authenticate with model providers.
+
+# === Auth Mode Anchor (REQUIRED) ===
+# Must be present even if not using Anthropic as a provider.
+# Without this, containers default to OAuth mode and hang on non-Anthropic endpoints.
+# Use your real Anthropic key if you have one, otherwise leave as "placeholder".
+ANTHROPIC_API_KEY=placeholder
+
+# === Model Provider: Anthropic (uncomment if using Anthropic directly) ===
+#ANTHROPIC_BASE_URL=https://api.anthropic.com
+# If using Anthropic, replace "placeholder" above with your real API key.
+
+# === Model Provider: Ollama ===
+# Ollama v0.14.0+ exposes an Anthropic-compatible API
+# Supports local models + Ollama Cloud (GLM, Kimi, Minimax)
+# IMPORTANT: No /v1 suffix — the SDK adds it automatically
+#OLLAMA_BASE_URL=http://localhost:11434
+#OLLAMA_API_KEY=ollama
+
+# === Model Provider: Z.ai ===
+# Z.ai serves GLM-5.1, GLM-5, GLM-4.7, GLM-4.7-flash, GLM-4.5-air
+#ZAI_BASE_URL=https://api.z.ai/api/anthropic
+#ZAI_API_KEY=
+
+# === Web Search (for non-Anthropic endpoints) ===
+# Required if using nanoclaw-web-search MCP server
+# Include the API path prefix — MCP server appends /web_search or /web_fetch
+#OLLAMA_WEB_SEARCH_BASE_URL=https://ollama.com/api
+#OLLAMA_WEB_SEARCH_API_KEY=
+
+# === Channel Tokens ===
+#TELEGRAM_BOT_TOKEN=
+#SLACK_BOT_TOKEN=
+#SLACK_APP_TOKEN=
+#DISCORD_BOT_TOKEN=
+EOF
 chmod 600 ~/.config/nanoclaw/secrets.env
 ```
+
+Tell the user: "Created `~/.config/nanoclaw/secrets.env` with a template. The `ANTHROPIC_API_KEY=placeholder` line is intentional — it prevents containers from defaulting to OAuth mode. Do not remove it unless you are replacing it with a real key or an OAuth token."
+
+### 4c. Provider selection
+
+AskUserQuestion: "Which provider will you use for the agent?"
+- Ollama (local or Ollama Cloud)
+- Z.ai
+- Anthropic (direct API key)
+- Anthropic Subscription (OAuth token)
+
+Tell the user to open `~/.config/nanoclaw/secrets.env` in their editor and make the changes below. Do NOT read or write the file yourself at this point.
+
+**Ollama:**
+- Ensure Ollama is running: `ollama list`
+- Uncomment `OLLAMA_BASE_URL` and `OLLAMA_API_KEY` in secrets.env.
+- **Important:** The URL must NOT have a `/v1` suffix — the SDK adds it automatically. Use `http://localhost:11434` only.
+- The `ANTHROPIC_API_KEY=placeholder` line must remain as-is.
+
+**Z.ai:**
+- Uncomment `ZAI_BASE_URL` and `ZAI_API_KEY`. Fill in their API key.
+- The `ANTHROPIC_API_KEY=placeholder` line must remain as-is.
+
+**Anthropic direct:**
+- Uncomment `ANTHROPIC_BASE_URL`.
+- Replace `placeholder` in `ANTHROPIC_API_KEY` with their real Anthropic API key.
+
+**Subscription (OAuth):**
+- Tell user to run `claude setup-token` in another terminal and copy the token.
+- Replace the entire `ANTHROPIC_API_KEY=placeholder` line with: `CLAUDE_CODE_OAUTH_TOKEN=<token>`
+- Note: this disables api-key mode — the placeholder line must be removed, not kept alongside the token.
 
 ## 5. Set Up Channels
 
@@ -182,7 +265,7 @@ For each selected channel, invoke its skill:
 
 Each skill will:
 1. Install the channel code (via `git merge` of the skill branch)
-2. Collect credentials/tokens and write to `.env`
+2. Collect credentials/tokens and write to `~/.config/nanoclaw/secrets.env`
 3. Authenticate (WhatsApp QR/pairing, or verify token-based connection)
 4. Register the chat with the correct JID format
 5. Build and verify
@@ -288,13 +371,13 @@ Tell user to test: send a message in their registered chat. Show: `tail -f logs/
 
 ## Troubleshooting
 
-**Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), missing `.env` (step 4), missing channel credentials (re-invoke channel skill).
+**Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), missing `secrets.env` (step 4), missing channel credentials (re-invoke channel skill).
 
 **Container agent fails ("Claude Code process exited with code 1"):** Ensure the container runtime is running — `open -a Docker` (macOS Docker), `container system start` (Apple Container), or `sudo systemctl start docker` (Linux). Check container logs in `groups/main/logs/container-*.log`.
 
 **No response to messages:** Check trigger pattern. Main channel doesn't need prefix. Check DB: `npx tsx setup/index.ts --step verify`. Check `logs/nanoclaw.log`.
 
-**Channel not connecting:** Verify the channel's credentials are set in `.env`. Channels auto-enable when their credentials are present. For WhatsApp: check `store/auth/creds.json` exists. For token-based channels: check token values in `.env`. Restart the service after any `.env` change.
+**Channel not connecting:** Verify the channel's credentials are set in `~/.config/nanoclaw/secrets.env`. Channels auto-enable when their credentials are present. For WhatsApp: check `store/auth/creds.json` exists. For token-based channels: check token values in `secrets.env`. Restart the service after any `secrets.env` change.
 
 **Unload service:** macOS: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist` | Linux: `systemctl --user stop nanoclaw`
 

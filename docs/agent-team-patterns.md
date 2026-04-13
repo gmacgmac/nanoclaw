@@ -20,7 +20,7 @@ How to coordinate multiple agents in NanoClaw — both within a single container
 | Level | Scope | Mechanism | Status |
 |-------|-------|-----------|--------|
 | **Container** | Within one container | Agent SDK subagent spawning | Partial (solo works, team broken) |
-| **Cross-Group** | Between containers | IPC tools (`send_message`, `schedule_task`) | ✅ One-way works, two-way not implemented |
+| **Cross-Group** | Between containers | IPC tools (`send_message`, `delegate_to_group`, `respond_to_group`, `schedule_task`) | ✅ One-way + delegation with response routing |
 
 ---
 
@@ -152,8 +152,10 @@ its own session, memory, and personality.
 
 | Tool | Description | Main-only? |
 |------|-------------|------------|
-| `send_message` | Send a one-way notification to a group | Cross-group: main-only |
-| `schedule_task` | Schedule a task to run in any group | Cross-group: main-only |
+| `send_message` | Send a message to the user or group immediately | Cross-group: main-only |
+| `delegate_to_group` | Delegate a task to another group's agent with UUID correlation | Yes |
+| `respond_to_group` | Respond to a pending delegation (validates UUID, caller identity) | No |
+| `schedule_task` | Schedule a recurring or one-time task in any group | Cross-group: main-only |
 | `list_tasks` | List scheduled tasks | No (scoped to own group unless main) |
 | `get_registered_groups` | List all registered groups and their JIDs | No |
 | `register_group` | Register a new chat/group | Yes |
@@ -161,6 +163,8 @@ its own session, memory, and personality.
 | `resume_task` | Resume a paused task | No (scoped to own group unless main) |
 | `cancel_task` | Cancel and delete a task | No (scoped to own group unless main) |
 | `update_task` | Modify an existing task | No (scoped to own group unless main) |
+| `manual_flush` | Trigger memory compaction mid-session | No |
+| `execute_command` | Execute a shell command (with approval mode for write-mounted paths) | No |
 | `ping` | Test tool, returns pong | No |
 
 ### What Works
@@ -176,16 +180,18 @@ its own session, memory, and personality.
 - The task runs as a full agent in the target group's container
 - Fire-and-forget: results go to the target group, not back to the caller
 
-### What Does NOT Work
+### Delegation with Response Routing
 
-**Agent-to-agent delegation with response routing:**
-- No tool exists to send a prompt to another group and have that group's agent
-  process it as a real message
-- `send_message` stores with `is_bot_message: true`, which `getNewMessages()`
-  filters out — the target agent never sees it
-- `schedule_task` triggers the target agent but has no mechanism to route the
-  response back to the caller
-- There is no `delegate_to_group` or `respond_to_group` tool (yet)
+**`delegate_to_group` + `respond_to_group`** enable full request/response delegation:
+- Main group calls `delegate_to_group(target_jid, prompt, ttl_seconds)` → creates a UUID record in the `delegations` table
+- Host injects the prompt as a user message in the target group's DB (`is_bot_message: false`) and wakes the target agent
+- Target agent processes the task and calls `respond_to_group(uuid, response_text)`
+- Host validates the UUID (exists, not expired, not already fulfilled, caller is the correct target), marks it fulfilled, and stores the response in the caller's message queue
+- Caller agent wakes up and sees the response as a `[Delegation Response — UUID: ...]` message
+
+See the [Group Delegation](#group-delegation) section below for Flow 1 (auto-routed) and Flow 2 (orchestrated) patterns.
+
+**Note:** `send_message` is one-way only — it stores with `is_bot_message: true`, which `getNewMessages()` filters out. The target agent never sees it. Use `delegate_to_group` when you need the target agent to process a task and respond.
 
 ### IPC Authorization Model
 
@@ -194,7 +200,7 @@ its own session, memory, and personality.
 | `true` | Any registered group | Any group | Any group |
 | `false` | Only own chat | Only own group | Only own group |
 
-See `docs/IPC.md` for the full IPC architecture.
+See `docs/ipc.md` for the full IPC architecture.
 
 ---
 
@@ -217,7 +223,7 @@ JID.** Each JID maps to exactly one group/agent.
 | Team Agent (with `team_name`) | Within container | ❌ Broken | SDK mode bug, do not use |
 | `send_message` cross-group | Between containers | ✅ One-way | Notification only, target agent does not wake |
 | `schedule_task` cross-group | Between containers | ✅ Fire-and-forget | Target agent runs, no response routing |
-| Agent delegation with response | Between containers | ❌ Not implemented | Planned: `delegate_to_group` + `respond_to_group` |
+| `delegate_to_group` + `respond_to_group` | Between containers | ✅ Works | Full request/response delegation with UUID correlation |
 
 
 
@@ -226,7 +232,7 @@ JID.** Each JID maps to exactly one group/agent.
 
 # Group Delegation
 
-> **Setup instructions**: See [DELEGATION_SETUP.md](DELEGATION_SETUP.md) for SQL commands,
+> **Setup instructions**: See [delegation-setup.md](delegation-setup.md) for SQL commands,
 > CLAUDE.md templates, and troubleshooting.
 
 **Flow 1: Auto-Routed Dispatch (host intercepts, hub never sees it)**

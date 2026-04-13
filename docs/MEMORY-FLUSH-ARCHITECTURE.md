@@ -124,19 +124,20 @@ The `runFlush` callback in `src/index.ts` routes through the GroupQueue:
    - `sessionId: sessions[group.folder]` — the existing session so the agent has full conversation context
    - `onOutput` callback that tracks session ID, schedules `closeStdin` after 10s delay, and checks `flushCompleted`
 
-### Why No `flushCompleted` Signal
+### `flushCompleted` Handling
 
 The nightly flush sends the flush prompt as the container's initial (and only) query. The agent-runner processes it as a normal query — no `_flush` sentinel is involved. When the agent finishes:
 
 1. SDK emits `result` event
-2. `writeOutput({ status: 'success', result: textResult, newSessionId })` — no `flushCompleted` field
-3. Host's `onOutput` callback sees `status: 'success'`, schedules `closeStdin` after 10s
-4. Container enters `waitForIpcMessage()` loop
-5. After 10s, `closeStdin` writes `_close` sentinel
-6. Agent-runner detects `_close`, breaks loop, container exits with code 0
-7. `runContainerAgent` resolves with `{ status: 'success' }`
+2. `writeOutput({ status: 'success', result: textResult, newSessionId })` emitted to stdout
+3. Host's streaming `onOutput` callback fires — if `flushCompleted` is present, `flushSucceeded` is set immediately
+4. Host schedules `closeStdin` after 10s on any result or success status
+5. Container enters `waitForIpcMessage()` loop
+6. After 10s, `closeStdin` writes `_close` sentinel
+7. Agent-runner detects `_close`, breaks loop, container exits with code 0
+8. `runContainerAgent` resolves with the final `ContainerOutput`
 
-The host treats `output.status === 'success'` as a successful flush because the entire container's purpose was the flush prompt. This is safe because:
+The host uses a layered success check: `flushCompleted` (if present) OR `status === 'success'` — either sets `flushSucceeded = true`. The `status === 'success'` fallback is safe because the entire container's purpose was the flush prompt:
 
 - The container only runs the flush prompt (no user messages)
 - A successful exit means the SDK completed the agent's turn (all tool calls, thinking, and text generation finished)
@@ -164,11 +165,11 @@ Midnight cron fires
   → agent responds <internal>done</internal>
   → SDK result event fires
   → writeOutput({ status: 'success' }) emitted to stdout
-  → host onOutput callback fires → schedules closeStdin in 10s
+  → host streaming callback fires → checks flushCompleted (if present) + schedules closeStdin in 10s
   → 10s later: _close sentinel written
   → agent-runner detects _close → breaks loop → container exits code 0
   → runContainerAgent resolves { status: 'success' }
-  → flushSucceeded = true
+  → flushSucceeded = true (from flushCompleted or status === 'success')
   → runNightlyMaintenance calls clearSession()
   → session deleted from DB + memory
 ```
@@ -179,11 +180,9 @@ Midnight cron fires
 
 Manual flush happens inside a running container mid-conversation. The sentinel mechanism exists because the agent needs to signal "I want to flush now" to the agent-runner, which orchestrates the flush in a controlled way (no IPC, single-turn). The host reacts to `flushCompleted` because it needs to distinguish a flush completion from a normal query completion within an ongoing chat session.
 
-Nightly flush spawns a dedicated container whose sole purpose is the flush. There's no ongoing conversation, no sentinel to detect, no need for the agent-runner to orchestrate anything special. The host owns the entire lifecycle and knows the container is a flush container because it spawned it as one.
+Nightly flush spawns a dedicated container whose sole purpose is the flush. There's no ongoing conversation, no sentinel to detect, no need for the agent-runner to orchestrate anything special. The host owns the entire lifecycle and knows the container is a flush container because it spawned it as one. The host still checks `flushCompleted` if present (the agent-runner may emit it), but falls back to `status === 'success'` since the container's sole purpose is the flush.
 
-Aligning them would require either:
-- Making the nightly flush write a `_flush` sentinel to a container it just spawned (artificial)
-- Making the manual flush use `status: 'success'` instead of `flushCompleted` (dangerous — can't distinguish normal query from flush in a chat session)
+The key architectural difference: manual/threshold flushes emit `flushCompleted: true` explicitly (the agent-runner knows it ran a flush prompt). Nightly flushes may or may not receive `flushCompleted` depending on whether the agent-runner's threshold check fires during the flush query itself — but the host doesn't depend on it.
 
 ---
 

@@ -3,7 +3,7 @@
 Configuration guide for multi-agent routing and delegation in NanoClaw.
 
 For conceptual overview of the two delegation patterns (auto-routed dispatch vs
-orchestrated delegation), see [AGENT_TEAM_PATTERNS.md](AGENT_TEAM_PATTERNS.md)
+orchestrated delegation), see [agent-team-patterns.md](agent-team-patterns.md)
 "Group Delegation" section.
 
 ---
@@ -13,7 +13,7 @@ orchestrated delegation), see [AGENT_TEAM_PATTERNS.md](AGENT_TEAM_PATTERNS.md)
 1. Hub group must have `isMain: true` (elevated IPC privileges)
 2. Hub group must have `multiAgentRouter: true` to enable auto-routing
 3. Sub-agent groups must be registered with their own JIDs and trigger patterns
-4. Sub-agents using `send_message(target_jid)` must have `isMain: true` and `requiresTrigger: true`
+4. Sub-agents using `send_message(target_jid)` must have `isMain: true`
 5. `delegations` table must exist in the DB (created automatically on schema init)
 
 ### Security constraints
@@ -41,7 +41,7 @@ Verify:
 SELECT jid, name, folder, is_main, multi_agent_router FROM registered_groups;
 ```
 
-No restart needed after flipping the flag — it's read from the DB on each message loop iteration.
+No restart needed if you use the `register_group` MCP tool (it updates both DB and in-memory state). If you use raw SQL instead, restart NanoClaw for the change to take effect.
 
 **First time only**: restart NanoClaw after deploying the code so the DB migration creates the `multi_agent_router` column and the `delegations` table.
 
@@ -125,8 +125,8 @@ asked to complete a task by another agent. When you finish:
    - `uuid`: the UUID from the delegation message
    - `response_text`: your result
 
-2. If you also want to notify the user directly, use
-   `mcp__nanoclaw__send_message` with `target_jid` set to the hub group's JID.
+Note: Flow 2 sub-agents have `is_main=0`, so `send_message` always sends to
+your own chat. Use `respond_to_group` to route results back to the caller.
 
 ## Purpose
 
@@ -169,11 +169,11 @@ mcp__nanoclaw__delegate_to_group({
 })
 ```
 
-Returns the UUID for correlation.
+Returns the UUID for correlation. `ttl_seconds` is clamped to 30–3600 (default 300).
 
 ### respond_to_group
 
-Respond to a delegation. Any group can call this.
+Respond to a delegation. Only the designated target group can call this (validated by UUID + caller identity).
 
 ```
 mcp__nanoclaw__respond_to_group({
