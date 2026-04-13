@@ -83,21 +83,15 @@ Wait for the user to provide the token.
 
 ### Configure environment
 
-Add to `.env`:
+Add to `~/.config/nanoclaw/secrets.env` (uncomment the placeholder line and set the token):
 
 ```bash
 TELEGRAM_BOT_TOKEN=<their-token>
 ```
 
+If `~/.config/nanoclaw/secrets.env` doesn't exist, tell the user to run `/setup` first (which creates the template).
+
 Channels auto-enable when their credentials are present — no extra configuration needed.
-
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
-The container reads environment from `data/env/env`, not `.env` directly.
 
 ### Disable Group Privacy (for group chats)
 
@@ -147,7 +141,75 @@ For additional chats (trigger-only):
 npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
 ```
 
-## Phase 5: Verify
+## Phase 5: Group Setup
+
+After registration, set up the group's CLAUDE.md, memory directory, and formatting skill. This ensures the agent has instructions and memory from its very first message.
+
+### A. Create CLAUDE.md from template
+
+Check if `groups/<folder>/CLAUDE.md` already exists:
+
+```bash
+test -f groups/<folder>/CLAUDE.md && echo "EXISTS" || echo "MISSING"
+```
+
+If it exists, tell the user: "CLAUDE.md already exists for this group — skipping template copy."
+
+If missing, copy the appropriate template:
+
+- For main groups (registered with `--is-main`):
+  ```bash
+  cp groups/main/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+- For non-main groups:
+  ```bash
+  cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. You should edit this file to customise the agent's identity and add any group-specific instructions."
+
+### B. Create memory directory and seed files
+
+```bash
+mkdir -p groups/<folder>/memory
+```
+
+Check and create each seed file only if missing:
+
+```bash
+test -f groups/<folder>/memory/MEMORY.md || echo "# Memory" > groups/<folder>/memory/MEMORY.md
+test -f groups/<folder>/memory/COMPACT.md || echo "# Compact" > groups/<folder>/memory/COMPACT.md
+```
+
+If files already exist, tell the user: "Memory seed files already exist — skipping."
+
+### C. Set formatting skill in containerConfig
+
+Telegram uses Markdown v1 which differs from standard Markdown. Add the `telegram-formatting` skill to the group's containerConfig:
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"telegram-formatting\"]')) WHERE folder = '<folder>'"
+```
+
+Then clear the skills cache so the new skill is loaded on next container spawn:
+
+```bash
+rm -rf data/sessions/<folder>/.claude/skills
+```
+
+Do not duplicate formatting rules in CLAUDE.md — the skill is the single source of truth.
+
+Also add response delivery guidance to the group's `CLAUDE.md`:
+
+```markdown
+For normal replies, respond with text. Your text output is delivered directly to Telegram.
+Only use mcp__nanoclaw__send_message for mid-run progress updates or cross-group delegation.
+If you call send_message, wrap any follow-up text in <internal> tags so it is not delivered:
+<internal>Done.</internal>
+```
+
+## Phase 6: Verify
 
 ### Test the connection
 
@@ -165,65 +227,12 @@ Tell the user:
 tail -f logs/nanoclaw.log
 ```
 
-## Phase 6: Configure Formatting
-
-Telegram uses Markdown v1 syntax which differs from standard Markdown. Add the `telegram-formatting` skill to ensure proper rendering.
-
-### Update containerConfig
-
-After registration, update the group's `containerConfig` to include the formatting skill:
-
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"telegram-formatting\"]') ) WHERE folder = '<folder_name>'"
-```
-
-Or for a minimal config (only formatting, no extra skills):
-
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"telegram-formatting\"]') ) WHERE folder = '<folder_name>'"
-```
-
-Then clear the skills cache and restart:
-
-```bash
-rm -rf data/sessions/<folder_name>/.claude/skills
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
-```
-
-### Formatting differences
-
-The `telegram-formatting` skill is a formatting reference loaded into the agent's context. It covers Telegram Markdown v1 syntax. Do not duplicate formatting rules in CLAUDE.md — the skill is the single source of truth.
-
-Key differences from standard Markdown:
-
-| Standard Markdown | Telegram Markdown v1 |
-|------------------|----------------------|
-| `**bold**` | `*bold*` |
-| `*italic*` | `_italic_` |
-| `` `code` `` | `` `code` `` (same) |
-| `# Heading` | Not supported |
-| `> Blockquote` | Not supported |
-
-### Response delivery behaviour
-
-After adding the formatting skill, also update the group's `CLAUDE.md` to clarify how responses are delivered. The agent's text output AND `send_message` calls both go to Telegram as separate messages — agents default to using `send_message` for everything if not told otherwise, causing duplicate messages.
-
-Add to the group's `CLAUDE.md`:
-
-```markdown
-For normal replies, respond with text. Your text output is delivered directly to Telegram.
-Only use mcp__nanoclaw__send_message for mid-run progress updates or cross-group delegation.
-If you call send_message, wrap any follow-up text in <internal> tags so it is not delivered:
-<internal>Done.</internal>
-```
-
 ## Troubleshooting
 
 ### Bot not responding
 
 Check:
-1. `TELEGRAM_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
+1. `TELEGRAM_BOT_TOKEN` is set in `~/.config/nanoclaw/secrets.env`
 2. Chat is registered in SQLite (check with: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'tg:%'"`)
 3. For non-main chats: message includes trigger pattern
 4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
@@ -269,7 +278,7 @@ To remove Telegram integration:
 
 1. Delete `src/channels/telegram.ts` and `src/channels/telegram.test.ts`
 2. Remove `import './telegram.js'` from `src/channels/index.ts`
-3. Remove `TELEGRAM_BOT_TOKEN` from `.env`
+3. Remove or comment out `TELEGRAM_BOT_TOKEN` in `~/.config/nanoclaw/secrets.env`
 4. Remove Telegram registrations from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE 'tg:%'"`
 5. Uninstall: `npm uninstall grammy`
 6. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)

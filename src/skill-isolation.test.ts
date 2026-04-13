@@ -180,7 +180,6 @@ describe('Per-Group Skill Isolation', () => {
       expect(copied).toEqual([]);
     });
   });
-
 });
 
 describe('Agent Customisation (BE_04)', () => {
