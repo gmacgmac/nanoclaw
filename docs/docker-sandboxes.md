@@ -194,8 +194,9 @@ bash container/build.sh
 ### Telegram
 
 ```bash
-# Apply the Telegram skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-telegram
+# Apply the Telegram skill (merge the skill branch)
+git fetch origin skill/telegram
+git merge origin/skill/telegram
 
 # Rebuild after applying the skill
 npm run build
@@ -206,7 +207,6 @@ TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
 ASSISTANT_NAME=nanoclaw
 ANTHROPIC_API_KEY=proxy-managed
 EOF
-mkdir -p data/env && cp .env data/env/env
 
 # Register your chat
 npx tsx setup/index.ts --step register \
@@ -234,8 +234,9 @@ curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | 
 Make sure you configured proxy bypass in [Step 1](#step-1-create-the-sandbox) first.
 
 ```bash
-# Apply the WhatsApp skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp
+# Apply the WhatsApp skill (merge the skill branch)
+git fetch origin skill/whatsapp
+git merge origin/skill/whatsapp
 
 # Rebuild
 npm run build
@@ -245,7 +246,6 @@ cat > .env << EOF
 ASSISTANT_NAME=nanoclaw
 ANTHROPIC_API_KEY=proxy-managed
 EOF
-mkdir -p data/env && cp .env data/env/env
 
 # Authenticate (choose one):
 

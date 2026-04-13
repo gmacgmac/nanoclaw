@@ -89,21 +89,15 @@ Wait for the user to provide the token.
 
 ### Configure environment
 
-Add to `.env`:
+Add to `~/.config/nanoclaw/secrets.env` (uncomment the placeholder line and set the token):
 
 ```bash
 DISCORD_BOT_TOKEN=<their-token>
 ```
 
+If `~/.config/nanoclaw/secrets.env` doesn't exist, tell the user to run `/setup` first (which creates the template).
+
 Channels auto-enable when their credentials are present — no extra configuration needed.
-
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
-The container reads environment from `data/env/env`, not `.env` directly.
 
 ### Build and restart
 
@@ -144,7 +138,52 @@ For additional channels (trigger-only):
 npx tsx setup/index.ts --step register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel discord
 ```
 
-## Phase 5: Verify
+## Phase 5: Group Setup
+
+After registration, set up the group's CLAUDE.md and memory directory. This ensures the agent has instructions and memory from its very first message.
+
+### A. Create CLAUDE.md from template
+
+Check if `groups/<folder>/CLAUDE.md` already exists:
+
+```bash
+test -f groups/<folder>/CLAUDE.md && echo "EXISTS" || echo "MISSING"
+```
+
+If it exists, tell the user: "CLAUDE.md already exists for this group — skipping template copy."
+
+If missing, copy the appropriate template:
+
+- For main channels (registered with `--is-main`):
+  ```bash
+  cp groups/main/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+- For non-main channels:
+  ```bash
+  cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. You should edit this file to customise the agent's identity and add any group-specific instructions."
+
+### B. Create memory directory and seed files
+
+```bash
+mkdir -p groups/<folder>/memory
+```
+
+Check and create each seed file only if missing:
+
+```bash
+test -f groups/<folder>/memory/MEMORY.md || echo "# Memory" > groups/<folder>/memory/MEMORY.md
+test -f groups/<folder>/memory/COMPACT.md || echo "# Compact" > groups/<folder>/memory/COMPACT.md
+```
+
+If files already exist, tell the user: "Memory seed files already exist — skipping."
+
+Discord supports standard Markdown natively — no formatting skill is needed.
+
+## Phase 6: Verify
 
 ### Test the connection
 
@@ -166,7 +205,7 @@ tail -f logs/nanoclaw.log
 
 ### Bot not responding
 
-1. Check `DISCORD_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
+1. Check `DISCORD_BOT_TOKEN` is set in `~/.config/nanoclaw/secrets.env`
 2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'dc:%'"`
 3. For non-main channels: message must include trigger pattern (@mention the bot)
 4. Service is running: `launchctl list | grep nanoclaw`
