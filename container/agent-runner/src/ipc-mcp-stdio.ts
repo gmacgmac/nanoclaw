@@ -464,8 +464,12 @@ server.tool(
     timeout: z.number().optional().describe('Timeout in milliseconds (default: 120000)'),
   },
   async (args) => {
-    const timeoutMs = args.timeout ?? 120_000;
     const approvalMode = process.env.NANOCLAW_APPROVAL_MODE === 'true';
+
+    // Approval timeout from config (validated on host, default 120s)
+    const envTimeout = parseInt(process.env.NANOCLAW_APPROVAL_TIMEOUT || '', 10);
+    const approvalTimeoutSec = envTimeout >= 10 && envTimeout <= 600 ? envTimeout : 120;
+    const timeoutMs = args.timeout ?? approvalTimeoutSec * 1000;
 
     let writeMounts: string[] = [];
     if (process.env.NANOCLAW_WRITE_MOUNTS) {
@@ -476,54 +480,75 @@ server.tool(
       }
     }
 
+    // Command allowlist — patterns that skip approval even when approvalMode is on
+    let commandAllowlist: RegExp[] = [];
+    if (process.env.NANOCLAW_COMMAND_ALLOWLIST) {
+      try {
+        const patterns: string[] = JSON.parse(process.env.NANOCLAW_COMMAND_ALLOWLIST);
+        commandAllowlist = patterns
+          .filter((p) => typeof p === 'string' && p.length > 0)
+          .map((p) => {
+            try { return new RegExp(p); } catch { return null; }
+          })
+          .filter((r): r is RegExp => r !== null);
+      } catch {
+        // Malformed env var — treat as empty allowlist (fail-safe)
+      }
+    }
+
     // Check if approval is needed
     if (approvalMode && writeMounts.length > 0) {
-      const decision = requiresApproval(args.command, writeMounts);
+      // Skip approval if command matches any allowlisted pattern
+      const isAllowlisted = commandAllowlist.some((re) => re.test(args.command));
 
-      if (decision.needed) {
-        // Write approval request to IPC
-        const requestFilename = writeIpcFile(MESSAGES_DIR, {
-          type: 'approval_request',
-          chatJid,
-          groupFolder,
-          command: args.command,
-          patterns: decision.patterns,
-          targetPaths: decision.targetPaths,
-          timestamp: Date.now(),
-          ttl: Math.floor(timeoutMs / 1000),
-        });
+      if (!isAllowlisted) {
+        const decision = requiresApproval(args.command, writeMounts);
 
-        // Poll for approval response (fail-closed on timeout)
-        const inputDir = path.join(IPC_DIR, 'input');
-        const pollInterval = 1000;
-        const deadline = Date.now() + timeoutMs;
-        let approved = false;
-        let responded = false;
+        if (decision.needed) {
+          // Write approval request to IPC
+          const requestFilename = writeIpcFile(MESSAGES_DIR, {
+            type: 'approval_request',
+            chatJid,
+            groupFolder,
+            command: args.command,
+            patterns: decision.patterns,
+            targetPaths: decision.targetPaths,
+            timestamp: Date.now(),
+            ttl: Math.floor(timeoutMs / 1000),
+          });
 
-        while (Date.now() < deadline) {
-          try {
-            const files = fs.existsSync(inputDir) ? fs.readdirSync(inputDir) : [];
-            const responseFile = files.find((f) => f.includes('_approval_response'));
-            if (responseFile) {
-              const responsePath = path.join(inputDir, responseFile);
-              const data = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
-              fs.unlinkSync(responsePath);
-              approved = data.approved === true;
-              responded = true;
-              break;
+          // Poll for approval response (fail-closed on timeout)
+          const inputDir = path.join(IPC_DIR, 'input');
+          const pollInterval = 1000;
+          const deadline = Date.now() + timeoutMs;
+          let approved = false;
+          let responded = false;
+
+          while (Date.now() < deadline) {
+            try {
+              const files = fs.existsSync(inputDir) ? fs.readdirSync(inputDir) : [];
+              const responseFile = files.find((f) => f.includes('_approval_response'));
+              if (responseFile) {
+                const responsePath = path.join(inputDir, responseFile);
+                const data = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+                fs.unlinkSync(responsePath);
+                approved = data.approved === true;
+                responded = true;
+                break;
+              }
+            } catch {
+              // Ignore read errors during polling
             }
-          } catch {
-            // Ignore read errors during polling
+            await new Promise((r) => setTimeout(r, pollInterval));
           }
-          await new Promise((r) => setTimeout(r, pollInterval));
-        }
 
-        if (!responded || !approved) {
-          const reason = responded ? 'denied by user' : 'timed out (auto-denied)';
-          return {
-            content: [{ type: 'text' as const, text: `Command denied by user approval policy (${reason})` }],
-            isError: true,
-          };
+          if (!responded || !approved) {
+            const reason = responded ? 'denied by user' : 'timed out (auto-denied)';
+            return {
+              content: [{ type: 'text' as const, text: `Command denied by user approval policy (${reason})` }],
+              isError: true,
+            };
+          }
         }
       }
     }

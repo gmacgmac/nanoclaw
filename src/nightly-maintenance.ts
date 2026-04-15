@@ -3,6 +3,7 @@ import path from 'path';
 
 import { deleteSession, getAllRegisteredGroups, getAllSessions } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { buildFlushPrompt } from './lib/flush-prompt.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -10,34 +11,8 @@ const DEFAULT_CONTEXT_WINDOW = 128000;
 const FLUSH_THRESHOLD = 0.5;
 
 /** Generate the flush prompt for nightly maintenance. */
-export function getNightlyFlushPrompt(): string {
-  const today = new Date().toISOString().split('T')[0];
-  return [
-    '<internal>',
-    'NIGHTLY MAINTENANCE FLUSH — proactive context preservation.',
-    '',
-    '1. DURABLE FACTS → memory/MEMORY.md',
-    '   - Read the current memory/MEMORY.md',
-    '   - Append any NEW facts learned in this conversation (names, preferences, decisions, relationships, project context)',
-    '   - Remove any facts that have been superseded by newer information',
-    '   - Keep it concise — one bullet point per fact, no prose',
-    '   - Do NOT duplicate facts already present',
-    '',
-    '2. SESSION SUMMARY → memory/COMPACT.md',
-    '   - Write a compact summary of what was discussed and worked on in this session',
-    '   - Include any in-progress tasks, pending questions, or agreed next steps',
-    '   - Include enough context that the next session feels like a seamless continuation',
-    '   - Cap at ~2000 words — this is a bridge, not a transcript',
-    '   - Write as a fresh file (overwrite if it exists)',
-    '',
-    `3. DAILY NOTE → memory/${today}.md`,
-    '   - Append any notable observations or task progress from today to the daily note',
-    '   - Create the file if it does not exist',
-    '',
-    'When finished (or if there is nothing to store), reply with exactly:',
-    '<internal>done</internal>',
-    '</internal>',
-  ].join('\n');
+export function getNightlyFlushPrompt(learningLoop?: boolean | 'extract-only'): string {
+  return buildFlushPrompt({ reason: 'nightly', learningLoop });
 }
 
 /**

@@ -267,7 +267,15 @@ nanoclaw/
 │   ├── mount-security.ts          # Mount allowlist validation for containers
 │   ├── whatsapp-auth.ts           # Standalone WhatsApp authentication
 │   ├── task-scheduler.ts          # Runs scheduled tasks when due
-│   └── container-runner.ts        # Spawns agents in containers
+│   ├── container-runner.ts        # Spawns agents in containers
+│   └── lib/                       # Security and utility modules
+│       ├── ssrf-validator.ts      # SSRF URL validation (async, fail-closed)
+│       ├── injection-scanner.ts   # Prompt injection pattern detection
+│       ├── context-scanner.ts     # Context file discovery and scanning
+│       ├── command-approval.ts    # Dangerous command detection
+│       ├── config-validator.ts    # containerConfig runtime validation
+│       ├── flush-prompt.ts        # Shared flush prompt builder (single source of truth)
+│       └── skill-manager.ts       # Extracted skill file reader
 │
 ├── container/
 │   ├── Dockerfile                 # Container image (runs as 'node' user, includes Claude Code CLI)
@@ -277,7 +285,11 @@ nanoclaw/
 │   │   ├── tsconfig.json
 │   │   └── src/
 │   │       ├── index.ts           # Entry point (query loop, IPC polling, session resume)
-│   │       └── ipc-mcp-stdio.ts   # Stdio-based MCP server for host communication
+│   │       ├── ipc-mcp-stdio.ts   # Stdio-based MCP server for host communication
+│   │       └── lib/               # Copies of host-side modules (container boundary)
+│   │           ├── ssrf-validator.ts      # SSRF validation (copied from src/lib/)
+│   │           ├── command-approval.ts    # Command detection (copied from src/lib/)
+│   │           └── flush-prompt.ts        # Flush prompt builder (copied from src/lib/)
 │   ├── binaries/                  # Host-stored binaries (NOT in Docker image)
 │   │   └── agent-browser/         # MUST be committed to git — runtime source for browser skill
 │   ├── mcp-servers/               # Self-built MCP servers (built into Docker image)
@@ -285,6 +297,7 @@ nanoclaw/
 │   │   └── nanoclaw-web-search/   # Web search via credential proxy (any vendor)
 │   └── skills/
 │       ├── agent-browser.md       # Browser automation skill
+│       ├── learning-loop/SKILL.md # Skill extraction format guide (when learningLoop enabled)
 │       └── web-search/SKILL.md    # Web search MCP tool guidance
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
@@ -947,7 +960,7 @@ All agents run inside containers (lightweight Linux VMs), providing:
 
 ### Prompt Injection Risk
 
-WhatsApp messages could contain malicious instructions attempting to manipulate Claude's behavior.
+Channel messages could contain malicious instructions attempting to manipulate Claude's behavior.
 
 **Mitigations:**
 - Container isolation limits blast radius
@@ -956,12 +969,21 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 - Agents can only access their group's mounted directories
 - Main can configure additional directories per group
 - Claude's built-in safety training
+- **Prompt injection scanner** scans context files (CLAUDE.md, memory/*.md) before container launch — detects instruction overrides, credential exfiltration, obfuscated payloads. Configurable via `containerConfig.injectionScanMode` (`off`/`warn`/`block`).
 
 **Recommendations:**
 - Only register trusted groups
 - Review additional directory mounts carefully
 - Review scheduled tasks periodically
 - Monitor logs for unusual activity
+
+### SSRF Protection
+
+Outbound web requests from agents are validated against a blocklist of internal networks, cloud metadata endpoints, and dangerous schemes. Enabled by default via `containerConfig.ssrfProtection`. Fail-closed on DNS failure. See [docs/SECURITY.md](SECURITY.md) for details.
+
+### Command Approval
+
+Groups with `containerConfig.approvalMode: true` and write-access `additionalMounts` use a monitored `execute_command` MCP tool instead of `Bash`. Dangerous commands targeting write-mounted paths require user approval via the messaging channel. Fail-closed on timeout. See [docs/SECURITY.md](SECURITY.md) for details.
 
 ### Credential Storage
 

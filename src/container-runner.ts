@@ -29,6 +29,7 @@ import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 import { readEnvFile } from './env.js';
+import { getExtractedSkills } from './lib/skill-manager.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -50,6 +51,9 @@ export interface ContainerInput {
   endpoint?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
+  learningLoop?: boolean | 'extract-only';
+  approvalTimeout?: number;
+  commandAllowlist?: string[];
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -238,6 +242,30 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Copy extracted skills (from learning loop) into skills/extracted/
+  // Only when learningLoop is exactly true — 'extract-only' means skills
+  // are extracted during flush but NOT loaded (human reviews first).
+  if (group.containerConfig?.learningLoop === true) {
+    const groupDir = resolveGroupFolderPath(group.folder);
+    const extractedSkills = getExtractedSkills(groupDir);
+    if (extractedSkills.length > 0) {
+      const extractedDst = path.join(skillsDst, 'extracted');
+      fs.mkdirSync(extractedDst, { recursive: true });
+      for (const skill of extractedSkills) {
+        const dstFile = path.join(
+          extractedDst,
+          path.basename(skill.filePath),
+        );
+        fs.copyFileSync(skill.filePath, dstFile);
+      }
+      logger.info(
+        { group: group.name, count: extractedSkills.length },
+        'Copied extracted skills into container',
+      );
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -418,6 +446,20 @@ function buildContainerArgs(
   // Command approval mode — pass config + write mount paths to container
   if (group.containerConfig?.approvalMode === true) {
     args.push('-e', 'NANOCLAW_APPROVAL_MODE=true');
+
+    // Pass approval timeout (validated, default 120s)
+    const rawTimeout = group.containerConfig?.approvalTimeout;
+    const approvalTimeout =
+      typeof rawTimeout === 'number' && rawTimeout >= 10 && rawTimeout <= 600
+        ? rawTimeout
+        : 120;
+    args.push('-e', `NANOCLAW_APPROVAL_TIMEOUT=${approvalTimeout}`);
+
+    // Pass command allowlist (pre-approved patterns that skip approval)
+    const allowlist = group.containerConfig?.commandAllowlist;
+    if (Array.isArray(allowlist) && allowlist.length > 0) {
+      args.push('-e', `NANOCLAW_COMMAND_ALLOWLIST=${JSON.stringify(allowlist)}`);
+    }
 
     // Collect container paths where readonly !== true and path is under /workspace/extra/
     const writeMountPaths = mounts

@@ -4,6 +4,12 @@ export interface AdditionalMount {
   readonly?: boolean; // Default: true for safety
 }
 
+export interface SsrfConfig {
+  allowPrivateNetworks?: boolean;
+  additionalBlockedHosts?: string[];
+  additionalAllowedHosts?: string[];
+}
+
 /**
  * Mount Allowlist - Security configuration for additional mounts
  * This file should be stored at ~/.config/nanoclaw/mount-allowlist.json
@@ -126,9 +132,10 @@ export interface ContainerConfig {
    * SSRF protection for outbound web_fetch requests.
    * - undefined / absent → enabled (secure by default)
    * - false → disabled (for groups that intentionally need internal network access)
-   * - { allowPrivateNetworks: true } → allow private networks but still block metadata
+   * - true → enabled with default settings
+   * - SsrfConfig object → enabled with custom host lists
    */
-  ssrfProtection?: boolean | { allowPrivateNetworks: boolean };
+  ssrfProtection?: boolean | SsrfConfig;
 
   /**
    * Command approval mode for dangerous commands on write-mounted paths.
@@ -139,6 +146,34 @@ export interface ContainerConfig {
    * - true → Bash replaced with execute_command, dangerous commands require approval
    */
   approvalMode?: boolean;
+
+  /**
+   * Timeout in seconds for command approval requests.
+   * When a dangerous command is detected and approval is requested,
+   * the request auto-denies after this many seconds.
+   * - undefined / absent → 120 (2 minutes)
+   * - Valid range: 10–600
+   */
+  approvalTimeout?: number;
+
+  /**
+   * Permanently approved command patterns (regex strings).
+   * Commands matching any pattern in this list skip the approval flow
+   * even when approvalMode is enabled. Use sparingly.
+   * - undefined / absent → [] (no pre-approved patterns)
+   */
+  commandAllowlist?: string[];
+
+  /**
+   * Self-improving learning loop — skill extraction during memory flush.
+   * When enabled, the flush prompt includes a skill extraction step before
+   * memory/compact/daily-note steps.
+   * - undefined / absent → false (no skill extraction)
+   * - false → no skill extraction
+   * - true → extract skills during flush
+   * - 'extract-only' → extract skills during flush (same behavior, explicit intent)
+   */
+  learningLoop?: boolean | 'extract-only';
 }
 
 export interface RegisteredGroup {

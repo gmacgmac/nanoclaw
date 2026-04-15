@@ -6,7 +6,7 @@ Deep reference for the two flush paths: manual (agent-initiated) and nightly (cr
 
 ## Overview
 
-Memory flush compacts the agent's conversation context into durable files (MEMORY.md, COMPACT.md, daily notes) and resets the session so the next interaction starts fresh with a smaller context window. There are three triggers:
+Memory flush compacts the agent's conversation context into durable files (MEMORY.md, COMPACT.md, daily notes) and resets the session so the next interaction starts fresh with a smaller context window. Optionally, the flush also extracts reusable skills when the learning loop is enabled. There are three triggers:
 
 | Trigger | Where | Condition |
 |---------|-------|-----------|
@@ -15,6 +15,24 @@ Memory flush compacts the agent's conversation context into durable files (MEMOR
 | **Nightly cron** | Host cron (midnight daily) | `lastInputTokens / contextWindowSize > 0.5` |
 
 Manual and token-threshold flushes share the same container-side path. Nightly flush uses a separate host-side path.
+
+---
+
+## Flush Prompt — Single Source of Truth
+
+Both flush paths use `buildFlushPrompt()` from `src/lib/flush-prompt.ts` as the single source of truth for flush instructions. A copy exists at `container/agent-runner/src/lib/flush-prompt.ts` (container boundary — cannot import from host `src/` at runtime).
+
+- `getFlushPrompt()` (agent-runner, context-window/manual trigger) → delegates to `buildFlushPrompt({ reason: 'context-window', learningLoop })`
+- `getNightlyFlushPrompt()` (host-side, nightly cron) → delegates to `buildFlushPrompt({ reason: 'nightly', learningLoop })`
+
+### Flush Step Ordering
+
+The flush prompt instructs the agent to perform these steps in order:
+
+1. **Skill extraction** (conditional) → `extracted-skills/[skill-name].md` — only when `containerConfig.learningLoop` is truthy. Cap of 2 skills per flush. Runs first because it needs the full uncompacted conversation context.
+2. **Durable facts** → `memory/MEMORY.md` — append new facts, remove superseded entries, no duplicates
+3. **Session summary** → `memory/COMPACT.md` — overwrite, ~2000 word cap, key decisions and open items
+4. **Daily note** → `memory/YYYY-MM-DD.md` — append observations and task progress
 
 ---
 
@@ -37,7 +55,7 @@ The sentinel is detected in one of three places in the agent-runner (`container/
 Once detected, the agent-runner:
 
 1. Sends status message: "Creating long term memories..." (via `sendStatusMessage()` — atomic write to IPC messages dir)
-2. Runs `getFlushPrompt()` as a single-turn query with `{ acceptIpc: false }`:
+2. Runs `getFlushPrompt()` (which delegates to `buildFlushPrompt()`) as a single-turn query with `{ acceptIpc: false }`:
    - `stream.end()` is called immediately after pushing the prompt (single-turn mode)
    - `pollIpcDuringQuery` skips `drainIpcInput()` — user messages stay on disk for the next normal query
    - `_close` sentinel is still honoured during flush (safety exit)
@@ -243,10 +261,69 @@ The nightly threshold check reads the first line of `token-usage.log` (newest en
 
 ---
 
+## Learning Loop — Skill Extraction
+
+When `containerConfig.learningLoop` is truthy, the flush prompt includes a skill extraction step as step 1 (before memory/compact/daily-note). This enables agents to extract reusable patterns from successful sessions and persist them for future use.
+
+### How It Works
+
+1. `buildFlushPrompt()` checks `options.learningLoop` — if truthy, prepends the skill extraction step
+2. The agent reviews the session for reusable patterns: workflows, command sequences, decision frameworks, tool usage patterns
+3. Agent writes up to 2 skill files to `extracted-skills/[skill-name].md` in the group folder
+4. Each skill file has YAML frontmatter and structured sections (see format below)
+5. After flush completes, the host sends a notification to the group channel listing any skills extracted today (via `routeOutbound()`)
+
+### Skill File Format
+
+```markdown
+---
+name: [skill-name]
+extracted: YYYY-MM-DD
+source_group: [group-folder]
+confidence: high|medium|low
+---
+
+# [Skill Name]
+
+## When to Use
+[Conditions under which this skill applies]
+
+## Pattern
+[The reusable pattern — steps, commands, decision logic]
+
+## Example
+[Concrete example from the session]
+
+## Notes
+[Caveats, limitations, edge cases]
+```
+
+Quality criteria and confidence levels are defined in `container/skills/learning-loop/SKILL.md`.
+
+### Skill Loading at Next Session
+
+- `registerGroup()` creates `extracted-skills/` in the group folder
+- `buildVolumeMounts()` reads skills via `getExtractedSkills()` (`src/lib/skill-manager.ts`) and copies valid files into `skills/extracted/` (inside the session's `.claude/skills/` directory)
+- Loading only activates when `learningLoop === true` (strict equality)
+- `false`, `undefined`, and `'extract-only'` all skip loading
+- `'extract-only'` extracts skills during flush but does not load them into future sessions — useful for review before enabling full loop
+
+### `learningLoop` Values
+
+| Value | Extract during flush? | Load into next session? |
+|-------|----------------------|------------------------|
+| `undefined` / `false` | No | No |
+| `true` | Yes | Yes |
+| `'extract-only'` | Yes | No |
+
+---
+
 ## File Reference
 
 | File | Role |
 |------|------|
+| `src/lib/flush-prompt.ts` | Shared flush prompt builder (`buildFlushPrompt()`) — single source of truth |
+| `container/agent-runner/src/lib/flush-prompt.ts` | Container-side copy of flush prompt builder (container boundary) |
 | `container/agent-runner/src/index.ts` | Container-side: query loop, sentinel detection, flush execution, `writeOutput` |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | `manual_flush` MCP tool definition |
 | `src/index.ts` | Host-side: `runAgent` (wrappedOnOutput, session management), `runFlush` callback |
@@ -254,7 +331,10 @@ The nightly threshold check reads the first line of `token-usage.log` (newest en
 | `src/group-queue.ts` | Queue lifecycle: `enqueueTask`, `runTask`, `closeStdin`, `drainGroup` |
 | `src/nightly-maintenance.ts` | `runNightlyMaintenance`, `getNightlyFlushPrompt`, `parseLastInputTokens` |
 | `src/task-scheduler.ts` | `startNightlyCron`, cron scheduling |
+| `src/lib/skill-manager.ts` | Host-side skill reader (`getExtractedSkills()`) — reads extracted skill files |
+| `container/skills/learning-loop/SKILL.md` | Skill extraction format guide and quality criteria |
 | `groups/{folder}/token-usage.log` | Per-group token tracking (read by nightly threshold check) |
 | `groups/{folder}/memory/MEMORY.md` | Durable facts (appended by flush prompt) |
 | `groups/{folder}/memory/COMPACT.md` | Session summary (overwritten by flush prompt) |
 | `groups/{folder}/memory/YYYY-MM-DD.md` | Daily notes (appended by flush prompt) |
+| `groups/{folder}/extracted-skills/*.md` | Extracted skill files (written by flush prompt when learningLoop enabled) |
