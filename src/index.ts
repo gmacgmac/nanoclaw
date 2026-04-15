@@ -598,7 +598,10 @@ async function runAgent(
 
     // Post-flush skill notification: if learningLoop is enabled and a flush
     // happened (streaming or post-output), check for newly extracted skills.
-    if ((sessionFlushed || output.flushCompleted) && containerConfig.learningLoop) {
+    if (
+      (sessionFlushed || output.flushCompleted) &&
+      containerConfig.learningLoop
+    ) {
       try {
         const groupFolderPath = resolveGroupFolderPath(group.folder);
         const today = new Date().toISOString().split('T')[0];
@@ -1071,7 +1074,9 @@ async function main(): Promise<void> {
               const output = await runContainerAgent(
                 group,
                 {
-                  prompt: getNightlyFlushPrompt(group.containerConfig?.learningLoop),
+                  prompt: getNightlyFlushPrompt(
+                    group.containerConfig?.learningLoop,
+                  ),
                   sessionId: sessions[group.folder],
                   groupFolder: group.folder,
                   chatJid,

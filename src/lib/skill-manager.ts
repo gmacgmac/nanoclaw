@@ -18,9 +18,7 @@ export interface ExtractedSkill {
  * Parse YAML frontmatter from a Markdown file's content.
  * Returns null if no valid frontmatter found.
  */
-function parseFrontmatter(
-  content: string,
-): Record<string, string> | null {
+function parseFrontmatter(content: string): Record<string, string> | null {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
 

@@ -253,10 +253,7 @@ function buildVolumeMounts(
       const extractedDst = path.join(skillsDst, 'extracted');
       fs.mkdirSync(extractedDst, { recursive: true });
       for (const skill of extractedSkills) {
-        const dstFile = path.join(
-          extractedDst,
-          path.basename(skill.filePath),
-        );
+        const dstFile = path.join(extractedDst, path.basename(skill.filePath));
         fs.copyFileSync(skill.filePath, dstFile);
       }
       logger.info(
@@ -458,7 +455,10 @@ function buildContainerArgs(
     // Pass command allowlist (pre-approved patterns that skip approval)
     const allowlist = group.containerConfig?.commandAllowlist;
     if (Array.isArray(allowlist) && allowlist.length > 0) {
-      args.push('-e', `NANOCLAW_COMMAND_ALLOWLIST=${JSON.stringify(allowlist)}`);
+      args.push(
+        '-e',
+        `NANOCLAW_COMMAND_ALLOWLIST=${JSON.stringify(allowlist)}`,
+      );
     }
 
     // Collect container paths where readonly !== true and path is under /workspace/extra/

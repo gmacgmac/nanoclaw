@@ -37,7 +37,9 @@ export function validateContainerConfig(
   // --- injectionScanMode ---
   if (
     config.injectionScanMode !== undefined &&
-    !VALID_INJECTION_MODES.includes(config.injectionScanMode as typeof VALID_INJECTION_MODES[number])
+    !VALID_INJECTION_MODES.includes(
+      config.injectionScanMode as (typeof VALID_INJECTION_MODES)[number],
+    )
   ) {
     warnings.push({
       field: 'injectionScanMode',

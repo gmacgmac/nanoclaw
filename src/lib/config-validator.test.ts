@@ -275,7 +275,6 @@ describe('validateContainerConfig', () => {
   });
 });
 
-
 // --- Env var pipeline tests ---
 // Replicates the logic from buildContainerArgs and execute_command
 // to verify the full config → env var → consumer chain.
@@ -285,7 +284,9 @@ describe('approval env var pipeline', () => {
    * Replicates buildContainerArgs approval env var logic.
    * Returns the env vars that would be set.
    */
-  function buildApprovalEnvVars(config: ContainerConfig): Record<string, string> {
+  function buildApprovalEnvVars(
+    config: ContainerConfig,
+  ): Record<string, string> {
     const envVars: Record<string, string> = {};
     if (config.approvalMode !== true) return envVars;
 
@@ -324,7 +325,11 @@ describe('approval env var pipeline', () => {
       return patterns
         .filter((p) => typeof p === 'string' && p.length > 0)
         .map((p) => {
-          try { return new RegExp(p); } catch { return null; }
+          try {
+            return new RegExp(p);
+          } catch {
+            return null;
+          }
         })
         .filter((r): r is RegExp => r !== null);
     } catch {
@@ -426,10 +431,14 @@ describe('approval env var pipeline', () => {
     );
 
     // Step 4: Check if command is allowlisted
-    const isAllowlisted = allowlist.some((re) => re.test('git push origin main'));
+    const isAllowlisted = allowlist.some((re) =>
+      re.test('git push origin main'),
+    );
     expect(isAllowlisted).toBe(true);
 
-    const isDangerous = allowlist.some((re) => re.test('rm -rf /workspace/extra/data'));
+    const isDangerous = allowlist.some((re) =>
+      re.test('rm -rf /workspace/extra/data'),
+    );
     expect(isDangerous).toBe(false);
   });
 });

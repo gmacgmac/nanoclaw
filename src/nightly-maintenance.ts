@@ -11,7 +11,9 @@ const DEFAULT_CONTEXT_WINDOW = 128000;
 const FLUSH_THRESHOLD = 0.5;
 
 /** Generate the flush prompt for nightly maintenance. */
-export function getNightlyFlushPrompt(learningLoop?: boolean | 'extract-only'): string {
+export function getNightlyFlushPrompt(
+  learningLoop?: boolean | 'extract-only',
+): string {
   return buildFlushPrompt({ reason: 'nightly', learningLoop });
 }
 
