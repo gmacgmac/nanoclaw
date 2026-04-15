@@ -1,6 +1,6 @@
 # NanoClaw
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/requirements.md](docs/requirements.md) for architecture decisions.
 
 ## Quick Context
 
@@ -35,6 +35,20 @@ When working in Claude Code CLI on the host (this context), write memories to th
 
 Query the database with: `sqlite3 store/messages.db`
 
+## Credential Rules
+
+All secrets go in `~/.config/nanoclaw/secrets.env`. This includes:
+- Model provider API keys (ANTHROPIC, OLLAMA, ZAI)
+- Channel tokens (TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN, DISCORD_BOT_TOKEN, etc.)
+- Web search keys (*_WEB_SEARCH_API_KEY)
+- Any other sensitive credentials
+
+The `.env` file in the project root is for non-sensitive config only (e.g., `TZ=Europe/London`).
+
+`readEnvFile()` in `src/env.ts` reads secrets.env first → .env second → process.env last.
+
+**Never write secrets to `.env`.** Never reference `data/env/env` — it's dead code.
+
 ## Secrets / Credentials / Proxy
 
 Containers never see real API keys or tokens. The credential proxy (`src/credential-proxy.ts`) runs on the host:
@@ -52,7 +66,7 @@ The proxy supports multiple upstream endpoints. Configure named vendors in `secr
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 ANTHROPIC_API_KEY=sk-ant-...
 
-OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=placeholder
 
 ZAI_BASE_URL=https://api.z.ai
@@ -71,13 +85,14 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 |-------|------|---------|---------|
 | `endpoint` | `string` | `"anthropic"` | Named vendor from `secrets.env` (e.g. `"ollama"`, `"zai"`). Routes API traffic to that upstream |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
-| `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control. `{}` = no access, `{ "*": { readonly: true } }` = all |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
 | `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`). Prefer `settings.json` for easier editing |
-| `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
+| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
+| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
+| `webSearchVendor` | `string` | `undefined` | Routes web search through named vendor's proxy endpoint |
 
 **`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 
@@ -137,27 +152,21 @@ Sessions persist across container restarts — agents are NOT stateless between 
 3. Next message → stored `sessionId` passed to SDK → resumes from `.jsonl` transcript
 4. Containers are NOT one-per-message: they stay alive (IPC polling), idle-timeout after 30 min, then next message spawns a new container that resumes the same session
 
-Three memory layers:
+Four memory layers:
 
 | Layer | Survives Session Reset? | Purpose |
 |-------|------------------------|---------|
-| Session transcript (`.jsonl`) | No | Full conversation continuity |
-| Auto-memory (`memory/*.md`) | Yes | Learned preferences, corrections |
-| CLAUDE.md (group folder) | Yes | Instructions, personality, skills |
+| Session transcript (`.jsonl`) | No — tied to session ID | Full conversation continuity |
+| `MEMORY.md` | Yes — persists across sessions | Durable facts, user preferences |
+| `COMPACT.md` | Yes — overwritten on each flush | Session summary after compaction |
+| CLAUDE.md (group folder) | Yes — it's a file you control | Instructions, personality, skills |
 
 ## Context Loading Order
 
-| Group type | What's loaded |
-|------------|---------------|
-| Main (`is_main=1`) | preset + `groups/{folder}/CLAUDE.md` |
-| Non-main | preset + `global/CLAUDE.md` + `groups/{folder}/CLAUDE.md` |
-
-Note: `main/CLAUDE.md` is a template (not auto-loaded). `global/CLAUDE.md` is appended for non-main groups only.
-
-After group CLAUDE.md:
-1. `containerConfig.systemPrompt` (if set)
-2. Auto-memory files (`memory/*.md`)
-3. Session transcript (if resuming)
+1. Claude Code built-in system prompt (`claude_code` preset)
+2. `containerConfig.systemPrompt` (appended to preset prompt)
+3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md` and `COMPACT.md`
+4. Session transcript (if resuming an existing session)
 
 ## Skills
 
@@ -180,8 +189,8 @@ Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) f
 ## Multi-Agent Routing
 
 For configuring sub-agents and delegation, see:
-- [AGENT_TEAM_PATTERNS.md](docs/AGENT_TEAM_PATTERNS.md) — Conceptual patterns (Flow 1 vs Flow 2)
-- [DELEGATION_SETUP.md](docs/DELEGATION_SETUP.md) — Setup, SQL commands, troubleshooting
+- [agent-team-patterns.md](docs/agent-team-patterns.md) — Conceptual patterns (Flow 1 vs Flow 2)
+- [delegation-setup.md](docs/delegation-setup.md) — Setup, SQL commands, troubleshooting
 
 ## Contributing
 
@@ -311,8 +320,8 @@ Store persistent context here (not in `~/.claude/projects/` auto-memory). This f
 
 - **Provider**: Ollama at `http://localhost:11434` (Anthropic-compatible API)
 - **Model**: `glm-5:cloud` (set via `ANTHROPIC_MODEL` in `.env` and `data/sessions/{group}/.claude/settings.json`)
-- **Credentials**: Native credential proxy — reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from `.env`
-- **Channel**: Telegram bot `@dandysandy_bot` (token in `.env`)
+- **Credentials**: Native credential proxy — reads vendor keys from `~/.config/nanoclaw/secrets.env`
+- **Channel**: Telegram bot `@dandysandy_bot` (token in `secrets.env`)
 - **Registered chat**: `tg:6013943815` (GM's DM), folder `telegram_main`, no trigger required (main group)
 - **Group containerConfig**: `allowedTools` excludes `WebSearch` and `WebFetch`
 - **Sender allowlist**: `~/.config/nanoclaw/sender-allowlist.json` — only user ID `6013943815` allowed

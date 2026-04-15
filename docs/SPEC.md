@@ -55,7 +55,6 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │  Working directory: /workspace/group (mounted from host)       │    │
 │  │  Volume mounts:                                                │    │
 │  │    • groups/{name}/ → /workspace/group                         │    │
-│  │    • groups/global/ → /workspace/global/ (non-main only)       │    │
 │  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
@@ -243,9 +242,9 @@ See existing skills (`/add-whatsapp`, `/add-telegram`, `/add-slack`, `/add-disco
 nanoclaw/
 ├── CLAUDE.md                      # Project context for Claude Code
 ├── docs/
-│   ├── SPEC.md                    # This specification document
-│   ├── REQUIREMENTS.md            # Architecture decisions
-│   └── SECURITY.md                # Security model
+│   ├── spec.md                    # This specification document
+│   ├── requirements.md            # Architecture decisions
+│   └── security.md                # Security model
 ├── README.md                      # User documentation
 ├── package.json                   # Node.js dependencies
 ├── tsconfig.json                  # TypeScript configuration
@@ -326,11 +325,10 @@ nanoclaw/
 │
 ├── store/                         # Local data (gitignored)
 │   ├── auth/                      # WhatsApp authentication state
-│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, router_state)
+│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, delegations, router_state, error_log)
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
-│   ├── env/env                    # Copy of .env for container mounting
 │   └── ipc/                       # Container IPC (messages/, tasks/)
 │
 ├── logs/                          # Runtime logs (gitignored)
@@ -380,7 +378,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 ```json
 {
   "skills": ["status", "browser"],
-  "globalAccess": { "categories": { "readonly": false } },
   "allowedTools": ["Read", "Grep", "WebSearch"],
   "mcpServers": {
     "brave-search": {
@@ -402,7 +399,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection |
-| `globalAccess` | `object` | `undefined` = full read-only | Global dir mount control |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
 | `model` | `string` | `undefined` = inherit | Per-group model override |
@@ -423,17 +419,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 **`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined for backward compat). Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
 
 > **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
-
-#### `globalAccess` — Global Directory Mount Control
-
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Full global mount read-only (backward compatible) |
-| `{}` | No global access — complete isolation |
-| `{ "*": { "readonly": true } }` | All of global with specified permission |
-| `{ "categories": { "readonly": false } }` | Only named subdirectory with specified permission |
-
-When `"*"` is present, all other keys are ignored.
 
 #### `allowedTools` — Per-Group Tool Restrictions
 
@@ -564,7 +549,7 @@ The token can be extracted from `~/.claude/.credentials.json` if you're logged i
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted and written to `data/env/env`, then mounted into the container at `/workspace/env-dir/env` and sourced by the entrypoint script. This ensures other environment variables are not exposed to the agent.
+Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are used by the credential proxy to inject real credentials at request time. Containers receive placeholder values only — real secrets never enter the container environment or filesystem.
 
 ### Changing the Assistant Name
 
@@ -589,31 +574,40 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
+NanoClaw uses a per-group memory system with CLAUDE.md files and `@import` directives for persistent memory.
 
-### Memory Hierarchy
+### Memory and Context
 
-| Level | Location | Read By | Written By | Purpose |
-|-------|----------|---------|------------|---------|
-| **Global** | `groups/CLAUDE.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
-| **Group** | `groups/{name}/CLAUDE.md` | That group | That group | Group-specific context, conversation memory |
-| **Files** | `groups/{name}/*.md` | That group | That group | Notes, research, documents created during conversation |
+Each group has a `CLAUDE.md` file at `groups/<group>/CLAUDE.md`. The Claude Agent SDK auto-loads this from the working directory (`/workspace/group`) at session start.
+
+CLAUDE.md templates include `@import` directives for `@memory/MEMORY.md` and `@memory/COMPACT.md`, which the SDK expands at container spawn time.
+
+### Memory Protocol
+
+Agents manage three memory files inside `groups/{folder}/memory/`:
+
+| File | Behaviour | Purpose |
+|------|-----------|---------|
+| `MEMORY.md` | Read, append, remove superseded entries. No duplicates. | Durable facts — user preferences, corrections, long-term knowledge |
+| `COMPACT.md` | Overwrite on flush (~2000 word cap). | Session summary — key decisions and open items after compaction |
+| `YYYY-MM-DD.md` | Append daily. | Session-specific observations and daily notes |
+
+The `memory/` directory is created automatically during group registration, along with a seed `MEMORY.md` if one doesn't exist.
 
 ### How Memory Works
 
 1. **Agent Context Loading**
-   - Agent runs with `cwd` set to `groups/{group-name}/`
-   - Claude Agent SDK with `settingSources: ['project']` automatically loads:
-     - `../CLAUDE.md` (parent directory = global memory)
-     - `./CLAUDE.md` (current directory = group memory)
+   - Agent runs with `cwd` set to `/workspace/group` (mounted from `groups/{group-name}/`)
+   - Claude Agent SDK with `settingSources: ['project', 'user']` loads CLAUDE.md from `cwd`
+   - `@import` directives in CLAUDE.md expand `MEMORY.md` and `COMPACT.md` at spawn time
 
 2. **Writing Memory**
-   - When user says "remember this", agent writes to `./CLAUDE.md`
-   - When user says "remember this globally" (main channel only), agent writes to `../CLAUDE.md`
+   - "Remember this: ..." → agent may write to `MEMORY.md` or `CLAUDE.md`
    - Agent can create files like `notes.md`, `research.md` in the group folder
+   - You can edit CLAUDE.md directly — it's plain markdown
 
 3. **Main Channel Privileges**
-   - Only the "main" group (self-chat) can write to global memory
+   - Only the "main" group (self-chat) has `is_main` flag
    - Main can manage registered groups and schedule tasks for any group
    - Main can configure additional directory mounts for any group
    - All groups have Bash access (safe because it runs inside container)
@@ -642,22 +636,25 @@ Containers are NOT one-per-message:
 
 The `--rm` flag on `docker run` ensures containers are cleaned up after exit.
 
-### Three Layers of Memory
+### Four Layers of Memory
 
 | Layer | Mechanism | Survives Session Reset? | Primary Use |
 |-------|-----------|------------------------|-------------|
 | Session transcript (`.jsonl`) | SDK session resumption | No — tied to session ID | Full conversation continuity |
-| Auto-memory (`memory/*.md`) | Claude Code auto-memory feature | Yes — persists across sessions | Learned preferences, corrections |
+| `MEMORY.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — persists across sessions | Durable facts, user preferences |
+| `COMPACT.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — overwritten on each flush | Session summary after compaction |
 | CLAUDE.md (group folder) | SDK loads from `cwd` on startup | Yes — it's a file you control | Instructions, personality, skills |
 
-The session transcript is the primary memory mechanism. Auto-memory is a safety net for when sessions are lost or reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
+The session transcript is the primary memory mechanism — the agent gets full conversation replay on every message. `MEMORY.md` and `COMPACT.md` are loaded via `@import` directives in CLAUDE.md, so they're always available even after a session reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
+
+When a flush triggers (auto, manual, or nightly), the agent writes durable facts to `MEMORY.md` and a compact summary to `COMPACT.md`. The host then deletes the session so the next message starts fresh — but the `@import`ed files preserve essential context.
 
 ### Where Session Data Lives
 
 | What | Host Path | Purpose |
 |------|-----------|---------|
-| Session transcript | `data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl` | Full conversation history |
-| Auto-memory | `data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md` | Persistent notes Claude writes itself |
+| Session transcript | `data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl` | Full conversation history (Claude Code internal format) |
+| Auto-memory | `data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md` | Persistent notes Claude writes itself (survives session reset) |
 | Session ID mapping | `store/messages.db` → `sessions` table | Maps group folder → current session UUID |
 | Settings | `data/sessions/<folder>/.claude/settings.json` | Claude Code env vars (model, features) |
 | Skills | `data/sessions/<folder>/.claude/skills/` | Copied from `container/skills/` per-group |
@@ -667,11 +664,9 @@ The session transcript is the primary memory mechanism. Auto-memory is a safety 
 When a container starts, context is loaded in this order:
 
 1. Claude Code built-in system prompt (`claude_code` preset)
-2. `global/CLAUDE.md` content (non-main groups only, if file exists)
-3. `containerConfig.systemPrompt` (if set — appended after global CLAUDE.md)
-4. Group `CLAUDE.md` (auto-loaded by SDK from `cwd` = `/workspace/group`)
-5. Auto-memory files (`memory/*.md`)
-6. Session transcript (if resuming an existing session)
+2. `containerConfig.systemPrompt` (appended to preset prompt)
+3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md` and `COMPACT.md`
+4. Session transcript (if resuming an existing session)
 
 ---
 
@@ -867,6 +862,12 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 | `resume_task` | Resume a paused task |
 | `cancel_task` | Delete a task |
 | `send_message` | Send a message to the group via its channel |
+| `delegate_to_group` | Send a task to a target group (main only), get a UUID for correlation |
+| `respond_to_group` | Respond to a pending delegation (validates UUID, caller identity) |
+| `manual_flush` | Trigger a memory flush mid-session |
+| `execute_command` | Execute a shell command on the host |
+| `register_group` | Register a new group |
+| `get_registered_groups` | List all registered groups |
 
 ---
 

@@ -39,6 +39,24 @@ Each directory maps to a registered group. Authorization depends on the `is_main
 
 ### Send Message
 
+**Via MCP tool** (from inside a container):
+
+```
+mcp__nanoclaw__send_message(
+  text="Hello from the agent!",
+  sender="Researcher",
+  target_jid="dashboard@internal"
+)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | yes | Message content to send |
+| `sender` | string | no | Role/identity name (e.g., `"Researcher"`). When set, messages appear from a dedicated bot in Telegram. |
+| `target_jid` | string | no | (Main group only) JID of the target group. Defaults to the current group. |
+
+**Via raw IPC file** (from external tools like dashboards or scripts):
+
 Write to: `DATA_DIR/ipc/{group_folder}/messages/{uuid}.json`
 
 ```json
@@ -46,6 +64,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/messages/{uuid}.json`
   "type": "message",
   "chatJid": "120363xxxxxxxxx@g.us",
   "text": "Hello from the dashboard!",
+  "sender": "Researcher",
   "sender_name": "Dashboard",
   "source": "dashboard"
 }
@@ -68,26 +87,9 @@ Write to: `DATA_DIR/ipc/{group_folder}/messages/{uuid}.json`
 - `is_from_me`: `1` (sent by the bot)
 - `is_bot_message`: `1` (bot response — filtered out by the message loop so the agent does not respond to its own output)
 
+> **Dashboard exception**: Messages with `source: "dashboard"` are stored as user messages (`is_from_me: 0`, `is_bot_message: 0`) so the message loop picks them up and triggers an agent response. The dashboard channel has no external platform — IPC is how dashboard user input enters the system.
+
 > **Important**: `is_bot_message` MUST be `1` for any bot-originated message stored in the `messages` table. If set to `0`, the message loop treats it as a new user message and fires the agent again, causing the agent to respond to its own output. Fixed in `src/ipc.ts` 2026-03-31 (was incorrectly `false` since the column was introduced).
-
-**Cross-Group Messaging**: The `send_message` MCP tool supports a `target_jid` parameter (main group only) to send messages to other registered groups. For example, to send from the main group to the dashboard:
-
-```
-mcp__nanoclaw__send_message(text="Hello", target_jid="dashboard@internal")
-```
-
-**Subagent Messages**: When using the `send_message` MCP tool from within an agent, you can specify a `sender` parameter to attribute the message to a specific subagent identity. This is useful for agent teams where different subagents should appear as distinct speakers in the conversation:
-
-```json
-{
-  "type": "message",
-  "chatJid": "dashboard@internal",
-  "text": "Found 3 relevant papers on the topic.",
-  "sender": "Researcher"
-}
-```
-
-The `sender_name` field in the database will show `"Researcher"`, allowing dashboard UIs to display which subagent sent each message.
 
 ---
 
@@ -108,6 +110,8 @@ Agents inside containers access IPC through MCP tools (`mcp__nanoclaw__*`):
 | `register_group` | Register a new chat/group | Main only |
 | `delegate_to_group` | Delegate task to another group's agent | Main only |
 | `respond_to_group` | Respond to a delegation request | All groups |
+| `manual_flush` | Trigger memory compaction (writes MEMORY.md, COMPACT.md, daily note, then resets session) | All groups |
+| `execute_command` | Execute a shell command (dangerous commands targeting write-mounted paths require user approval) | All groups |
 | `ping` | Test tool, returns pong | All groups |
 
 ### delegate_to_group
@@ -132,6 +136,32 @@ mcp__nanoclaw__respond_to_group(
   response_text="Here's the summary..."
 )
 ```
+
+### manual_flush
+
+Triggers memory compaction mid-session. Writes durable facts to `MEMORY.md`, a session summary to `COMPACT.md`, and a daily note, then starts a fresh session. Internally writes a `_flush` sentinel to `/workspace/ipc/input/` which the host detects.
+
+```
+mcp__nanoclaw__manual_flush()
+```
+
+No parameters. The flush prompt runs after the current response completes.
+
+### execute_command
+
+Executes a shell command inside the container. When approval mode is enabled (`NANOCLAW_APPROVAL_MODE=true`) and the command targets write-mounted paths, the host sends an approval request to the user via the chat channel. The user must reply "yes" to approve; otherwise the command is denied (fail-closed on timeout).
+
+```
+mcp__nanoclaw__execute_command(
+  command="ls -la /workspace/group/memory/",
+  timeout=120000
+)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `command` | string | yes | Shell command to execute |
+| `timeout` | number | no | Timeout in milliseconds (default: 120000) |
 
 ---
 
@@ -317,7 +347,8 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `prompt` | TEXT | Agent prompt |
 | `schedule_type` | TEXT | `cron`, `interval`, `once` |
 | `schedule_value` | TEXT | Schedule definition |
-| `context_mode` | TEXT | `isolated` or `group` |
+| `context_mode` | TEXT | `isolated` or `group` (default: `isolated`) |
+| `script` | TEXT | Optional script content |
 | `next_run` | TEXT | Next execution time |
 | `last_run` | TEXT | Last execution time |
 | `last_result` | TEXT | Result summary |
@@ -340,12 +371,13 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 |--------|------|-------------|
 | `jid` | TEXT PK | Chat JID |
 | `name` | TEXT | Display name |
-| `folder` | TEXT | Group folder path |
+| `folder` | TEXT | Group folder path (unique) |
 | `trigger_pattern` | TEXT | Trigger regex |
 | `added_at` | TEXT | Registration timestamp |
 | `container_config` | TEXT | JSON config |
-| `requires_trigger` | INTEGER | Trigger required flag |
-| `is_main` | INTEGER | Main group flag |
+| `requires_trigger` | INTEGER | Trigger required flag (default: 1) |
+| `is_main` | INTEGER | Main group flag (default: 0) |
+| `multi_agent_router` | INTEGER | Hub routing flag (default: 0) |
 
 ### `error_log`
 | Column | Type | Description |
@@ -355,6 +387,22 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `message` | TEXT | Log message |
 | `context` | TEXT | JSON context object |
 | `timestamp` | TEXT | ISO timestamp |
+
+### `delegations`
+| Column | Type | Description |
+|--------|------|-------------|
+| `uuid` | TEXT PK | Delegation identifier |
+| `caller_jid` | TEXT | JID of the group that initiated the delegation |
+| `target_jid` | TEXT | JID of the target group |
+| `created_at` | TEXT | Creation timestamp |
+| `expires_at` | TEXT | Expiry timestamp |
+| `status` | TEXT | `pending`, `fulfilled` (default: `pending`) |
+
+### `router_state`
+| Column | Type | Description |
+|--------|------|-------------|
+| `key` | TEXT PK | State key |
+| `value` | TEXT | State value |
 
 ### `sessions`
 | Column | Type | Description |
@@ -413,7 +461,7 @@ All registered groups (for cross-group messaging). Available to all groups.
 }
 ```
 
-Use the `list_groups` MCP tool to discover JIDs for cross-group messaging with `send_message target_jid`.
+Use the `get_registered_groups` MCP tool to discover JIDs for cross-group messaging with `send_message target_jid`.
 
 ---
 

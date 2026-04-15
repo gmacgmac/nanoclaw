@@ -38,28 +38,30 @@ Wait for the API key.
 
 ### 2. Add API Key to Environment
 
-Add `PARALLEL_API_KEY` to `.env`:
+Add `PARALLEL_API_KEY` to `~/.config/nanoclaw/secrets.env`:
 
 ```bash
-# Check if .env exists, create if not
-if [ ! -f .env ]; then
-    touch .env
+# Ensure secrets.env exists (run /setup first if it doesn't)
+SECRETS_FILE="$HOME/.config/nanoclaw/secrets.env"
+if [ ! -f "$SECRETS_FILE" ]; then
+    echo "ERROR: secrets.env not found. Run /setup first."
+    exit 1
 fi
 
 # Add PARALLEL_API_KEY if not already present
-if ! grep -q "PARALLEL_API_KEY=" .env; then
-    echo "PARALLEL_API_KEY=${API_KEY_FROM_USER}" >> .env
-    echo "✓ Added PARALLEL_API_KEY to .env"
+if ! grep -q "PARALLEL_API_KEY=" "$SECRETS_FILE"; then
+    echo "PARALLEL_API_KEY=${API_KEY_FROM_USER}" >> "$SECRETS_FILE"
+    echo "✓ Added PARALLEL_API_KEY to secrets.env"
 else
     # Update existing key
-    sed -i.bak "s/^PARALLEL_API_KEY=.*/PARALLEL_API_KEY=${API_KEY_FROM_USER}/" .env
-    echo "✓ Updated PARALLEL_API_KEY in .env"
+    sed -i.bak "s/^PARALLEL_API_KEY=.*/PARALLEL_API_KEY=${API_KEY_FROM_USER}/" "$SECRETS_FILE"
+    echo "✓ Updated PARALLEL_API_KEY in secrets.env"
 fi
 ```
 
 Verify:
 ```bash
-grep "PARALLEL_API_KEY" .env | head -c 50
+grep "PARALLEL_API_KEY" ~/.config/nanoclaw/secrets.env | head -c 50
 ```
 
 ### 3. Update Container Runner
@@ -266,11 +268,11 @@ Look for: `Parallel AI MCP servers configured`
 
 **Container hangs or times out:**
 - Check that `type: 'http'` is specified in MCP server config
-- Verify API key is correct in .env
+- Verify API key is correct in `~/.config/nanoclaw/secrets.env`
 - Check container logs: `cat groups/main/logs/container-*.log | tail -50`
 
 **MCP servers not loading:**
-- Ensure PARALLEL_API_KEY is in .env
+- Ensure PARALLEL_API_KEY is in `~/.config/nanoclaw/secrets.env`
 - Verify container-runner.ts includes PARALLEL_API_KEY in allowedVars
 - Check agent-runner logs for "Parallel AI MCP servers configured" message
 
@@ -283,7 +285,7 @@ Look for: `Parallel AI MCP servers configured`
 
 To remove Parallel AI integration:
 
-1. Remove from .env: `sed -i.bak '/PARALLEL_API_KEY/d' .env`
+1. Remove from secrets.env: `sed -i.bak '/PARALLEL_API_KEY/d' ~/.config/nanoclaw/secrets.env`
 2. Revert changes to container-runner.ts and agent-runner/src/index.ts
 3. Remove Web Research Tools section from groups/main/CLAUDE.md
 4. Rebuild: `./container/build.sh && npm run build`

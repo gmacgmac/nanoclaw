@@ -108,7 +108,7 @@ Install Docker Desktop or Apple Container (macOS 15+), or pass `--runtime` expli
 
 ### "no secrets found in .env"
 
-The script auto-detects your NanoClaw directory and reads `.env` from it. Check that the file exists and contains at least one of: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`.
+The script auto-detects your NanoClaw directory and reads `~/.config/nanoclaw/secrets.env` for credentials. Check that the file exists and contains at least one of: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`. Run `/setup` if the file doesn't exist.
 
 ### Container times out
 
