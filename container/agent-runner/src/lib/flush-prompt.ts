@@ -38,6 +38,7 @@ export function buildFlushPrompt(options: FlushPromptOptions): string {
       '     ---',
       '     name: [skill-name]',
       `     extracted: ${today}`,
+      '     source_group: [use the value of $NANOCLAW_GROUP_FOLDER env var]',
       '     confidence: high|medium|low',
       '     ---',
       '   - Include sections: When to Use, Pattern, Example, Notes',

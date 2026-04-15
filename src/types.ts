@@ -157,8 +157,8 @@ export interface ContainerConfig {
    * memory/compact/daily-note steps.
    * - undefined / absent → false (no skill extraction)
    * - false → no skill extraction
-   * - true → extract skills during flush
-   * - 'extract-only' → extract skills during flush (same behavior, explicit intent)
+   * - true → extract skills during flush AND load them into the next session
+   * - 'extract-only' → extract skills during flush but do NOT load into next session (review before enabling full loop)
    */
   learningLoop?: boolean | 'extract-only';
 }
