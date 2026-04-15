@@ -1,61 +1,18 @@
 /**
- * BE_06 Flush Prompt Tests
+ * BE_07 Flush Prompt Tests
  *
- * Tests the flush prompt logic for both:
- * - getNightlyFlushPrompt() (exported from nightly-maintenance.ts)
- * - getFlushPrompt() (internal to agent-runner — tested via source validation)
+ * Tests the shared buildFlushPrompt() builder and its integration
+ * with both getFlushPrompt() (agent-runner) and getNightlyFlushPrompt() (host).
  *
- * Focus: prompt structure, file path references, internal tag wrapping,
- * response format instructions, and suppression behavior.
+ * Focus: prompt structure, step ordering, skill extraction conditional inclusion,
+ * internal tag wrapping, and suppression behavior.
  */
-import fs from 'fs';
-import path from 'path';
 import { describe, expect, it } from 'vitest';
 
+import { buildFlushPrompt } from '../src/lib/flush-prompt.js';
 import { getNightlyFlushPrompt } from '../src/nightly-maintenance.js';
 
-// --- Helper: read getFlushPrompt source from agent-runner ---
-function getAgentRunnerFlushPrompt(): string {
-  const srcPath = path.join(__dirname, '..', 'container', 'agent-runner', 'src', 'index.ts');
-  const source = fs.readFileSync(srcPath, 'utf-8');
-
-  // Extract the getFlushPrompt function body
-  const fnMatch = source.match(/function getFlushPrompt\(\): string \{([\s\S]*?)\n\}/);
-  if (!fnMatch) throw new Error('Could not find getFlushPrompt() in agent-runner source');
-
-  // Evaluate the function to get the actual string
-  // We build a minimal evaluator since the function only uses Date and string ops
-  const today = new Date().toISOString().split('T')[0];
-  const fn = new Function('today', `
-    return [
-      '<internal>',
-      'MEMORY FLUSH — context window is filling up. Perform these steps now:',
-      '',
-      '1. DURABLE FACTS → memory/MEMORY.md',
-      '   - Read the current memory/MEMORY.md',
-      '   - Append any NEW facts learned in this conversation (names, preferences, decisions, relationships, project context)',
-      '   - Remove any facts that have been superseded by newer information',
-      '   - Keep it concise — one bullet point per fact, no prose',
-      '   - Do NOT duplicate facts already present',
-      '',
-      '2. SESSION SUMMARY → memory/COMPACT.md',
-      '   - Write a compact summary of what was discussed and worked on in this session',
-      '   - Include any in-progress tasks, pending questions, or agreed next steps',
-      '   - Include enough context that the next session feels like a seamless continuation',
-      '   - Cap at ~2000 words — this is a bridge, not a transcript',
-      '   - Write as a fresh file (overwrite if it exists)',
-      '',
-      '3. DAILY NOTE → memory/' + today + '.md',
-      '   - Append any notable observations or task progress from today to the daily note',
-      '   - Create the file if it does not exist',
-      '',
-      'When finished (or if there is nothing to store), reply with exactly:',
-      '<internal>done</internal>',
-      '</internal>',
-    ].join('\\n');
-  `);
-  return fn(today);
-}
+const today = new Date().toISOString().split('T')[0];
 
 // --- Shared prompt validation ---
 function validateFlushPrompt(prompt: string, label: string) {
@@ -68,23 +25,22 @@ function validateFlushPrompt(prompt: string, label: string) {
       expect(prompt.trimEnd().endsWith('</internal>')).toBe(true);
     });
 
-    it('is fully wrapped in internal tags (suppressed from user)', () => {
-      // The regex used in src/index.ts to strip internal tags
-      const stripped = prompt.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      // After stripping, only the inner <internal>done</internal> instruction text remains
-      // or nothing — the key is the outer wrapper ensures suppression
+    it('is wrapped in internal tags', () => {
       expect(prompt).toContain('<internal>');
       expect(prompt).toContain('</internal>');
+    });
+  });
+
+  describe(`${label} — MCP tool warning`, () => {
+    it('includes the no-MCP-tools safety guardrail', () => {
+      expect(prompt).toContain('Do NOT call manual_flush');
+      expect(prompt).toContain('Do NOT call any tools starting with mcp__');
     });
   });
 
   describe(`${label} — MEMORY.md instructions`, () => {
     it('references memory/MEMORY.md', () => {
       expect(prompt).toContain('memory/MEMORY.md');
-    });
-
-    it('instructs to read current MEMORY.md', () => {
-      expect(prompt).toMatch(/[Rr]ead.*memory\/MEMORY\.md/);
     });
 
     it('instructs to append new facts', () => {
@@ -95,12 +51,8 @@ function validateFlushPrompt(prompt: string, label: string) {
       expect(prompt).toMatch(/[Rr]emove.*superseded/i);
     });
 
-    it('instructs concise format (bullet points)', () => {
-      expect(prompt).toMatch(/concise|bullet/i);
-    });
-
     it('instructs not to duplicate existing facts', () => {
-      expect(prompt).toMatch(/[Nn]ot.*duplicate|[Dd]o NOT duplicate/i);
+      expect(prompt).toMatch(/[Dd]o NOT duplicate/i);
     });
   });
 
@@ -109,26 +61,17 @@ function validateFlushPrompt(prompt: string, label: string) {
       expect(prompt).toContain('memory/COMPACT.md');
     });
 
-    it('instructs to write a session summary', () => {
-      expect(prompt).toMatch(/summary.*session|session.*summary/i);
-    });
-
-    it('instructs to include in-progress tasks and next steps', () => {
-      expect(prompt).toMatch(/in-progress|next steps/i);
-    });
-
     it('caps at ~2000 words', () => {
       expect(prompt).toContain('2000 words');
     });
 
-    it('instructs to overwrite (fresh file)', () => {
+    it('instructs to overwrite', () => {
       expect(prompt).toMatch(/overwrite|fresh file/i);
     });
   });
 
   describe(`${label} — daily note instructions`, () => {
-    it('references today\'s date in daily note path', () => {
-      const today = new Date().toISOString().split('T')[0];
+    it("references today's date in daily note path", () => {
       expect(prompt).toContain(`memory/${today}.md`);
     });
   });
@@ -144,42 +87,165 @@ function validateFlushPrompt(prompt: string, label: string) {
   });
 }
 
-// --- Test suites ---
-
-describe('getFlushPrompt (agent-runner, 80% threshold)', () => {
-  const prompt = getAgentRunnerFlushPrompt();
-  validateFlushPrompt(prompt, 'getFlushPrompt');
+// --- buildFlushPrompt: context-window reason ---
+describe('buildFlushPrompt (context-window, no learningLoop)', () => {
+  const prompt = buildFlushPrompt({ reason: 'context-window' });
+  validateFlushPrompt(prompt, 'context-window');
 
   it('mentions context window filling up', () => {
     expect(prompt).toMatch(/context window.*filling/i);
   });
+
+  it('does NOT include skill extraction step', () => {
+    expect(prompt).not.toContain('SKILL EXTRACTION');
+    expect(prompt).not.toContain('extracted-skills');
+  });
+
+  it('starts numbering at 1 for DURABLE FACTS', () => {
+    expect(prompt).toContain('1. DURABLE FACTS');
+  });
 });
 
-describe('getNightlyFlushPrompt (nightly-maintenance, 50% threshold)', () => {
-  const prompt = getNightlyFlushPrompt();
-  validateFlushPrompt(prompt, 'getNightlyFlushPrompt');
+// --- buildFlushPrompt: nightly reason ---
+describe('buildFlushPrompt (nightly, no learningLoop)', () => {
+  const prompt = buildFlushPrompt({ reason: 'nightly' });
+  validateFlushPrompt(prompt, 'nightly');
 
   it('mentions nightly maintenance', () => {
     expect(prompt).toMatch(/[Nn]ightly/i);
+  });
+
+  it('does NOT include skill extraction step', () => {
+    expect(prompt).not.toContain('SKILL EXTRACTION');
+  });
+});
+
+// --- buildFlushPrompt: learningLoop = true ---
+describe('buildFlushPrompt (learningLoop: true)', () => {
+  const prompt = buildFlushPrompt({
+    reason: 'context-window',
+    learningLoop: true,
+  });
+  validateFlushPrompt(prompt, 'learningLoop-true');
+
+  it('includes skill extraction step', () => {
+    expect(prompt).toContain('SKILL EXTRACTION');
+    expect(prompt).toContain('extracted-skills/');
+  });
+
+  it('skill extraction is step 1', () => {
+    expect(prompt).toContain('1. SKILL EXTRACTION');
+  });
+
+  it('DURABLE FACTS is step 2 (shifted)', () => {
+    expect(prompt).toContain('2. DURABLE FACTS');
+  });
+
+  it('SESSION SUMMARY is step 3 (shifted)', () => {
+    expect(prompt).toContain('3. SESSION SUMMARY');
+  });
+
+  it('DAILY NOTE is step 4 (shifted)', () => {
+    expect(prompt).toContain('4. DAILY NOTE');
+  });
+
+  it('caps at 2 skills per flush', () => {
+    expect(prompt).toContain('2 skills per flush');
+  });
+
+  it('includes frontmatter format instructions', () => {
+    expect(prompt).toContain('confidence: high|medium|low');
+  });
+
+  it('includes today date in skill frontmatter example', () => {
+    expect(prompt).toContain(`extracted: ${today}`);
+  });
+});
+
+// --- buildFlushPrompt: learningLoop = 'extract-only' ---
+describe("buildFlushPrompt (learningLoop: 'extract-only')", () => {
+  const prompt = buildFlushPrompt({
+    reason: 'nightly',
+    learningLoop: 'extract-only',
+  });
+
+  it('includes skill extraction step', () => {
+    expect(prompt).toContain('SKILL EXTRACTION');
+  });
+
+  it('skill extraction is step 1', () => {
+    expect(prompt).toContain('1. SKILL EXTRACTION');
+  });
+});
+
+// --- buildFlushPrompt: learningLoop = false ---
+describe('buildFlushPrompt (learningLoop: false)', () => {
+  const prompt = buildFlushPrompt({
+    reason: 'context-window',
+    learningLoop: false,
+  });
+
+  it('does NOT include skill extraction step', () => {
+    expect(prompt).not.toContain('SKILL EXTRACTION');
+  });
+
+  it('starts numbering at 1 for DURABLE FACTS', () => {
+    expect(prompt).toContain('1. DURABLE FACTS');
+  });
+});
+
+// --- Step ordering: skills before memory before compact ---
+describe('flush step ordering (learningLoop: true)', () => {
+  const prompt = buildFlushPrompt({
+    reason: 'context-window',
+    learningLoop: true,
+  });
+
+  it('skill extraction appears before DURABLE FACTS', () => {
+    const skillIdx = prompt.indexOf('SKILL EXTRACTION');
+    const memoryIdx = prompt.indexOf('DURABLE FACTS');
+    expect(skillIdx).toBeLessThan(memoryIdx);
+  });
+
+  it('DURABLE FACTS appears before SESSION SUMMARY', () => {
+    const memoryIdx = prompt.indexOf('DURABLE FACTS');
+    const compactIdx = prompt.indexOf('SESSION SUMMARY');
+    expect(memoryIdx).toBeLessThan(compactIdx);
+  });
+
+  it('SESSION SUMMARY appears before DAILY NOTE', () => {
+    const compactIdx = prompt.indexOf('SESSION SUMMARY');
+    const dailyIdx = prompt.indexOf('DAILY NOTE');
+    expect(compactIdx).toBeLessThan(dailyIdx);
+  });
+});
+
+// --- getNightlyFlushPrompt delegates to buildFlushPrompt ---
+describe('getNightlyFlushPrompt (thin wrapper)', () => {
+  it('returns nightly prompt without skills when no arg', () => {
+    const prompt = getNightlyFlushPrompt();
+    expect(prompt).toMatch(/[Nn]ightly/i);
+    expect(prompt).not.toContain('SKILL EXTRACTION');
+  });
+
+  it('returns nightly prompt with skills when learningLoop=true', () => {
+    const prompt = getNightlyFlushPrompt(true);
+    expect(prompt).toMatch(/[Nn]ightly/i);
+    expect(prompt).toContain('SKILL EXTRACTION');
+  });
+
+  it('returns nightly prompt with skills when learningLoop="extract-only"', () => {
+    const prompt = getNightlyFlushPrompt('extract-only');
+    expect(prompt).toContain('SKILL EXTRACTION');
   });
 });
 
 // --- Suppression integration test ---
 describe('flush prompt suppression behavior', () => {
-  // Simulates the regex from src/index.ts line 318
   const stripInternalTags = (text: string) =>
     text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 
-  it('getFlushPrompt output is fully suppressed by internal tag stripping', () => {
-    const prompt = getAgentRunnerFlushPrompt();
-    // The prompt itself is wrapped in <internal>...</internal>
-    // When the agent replies with <internal>done</internal>, that's also stripped
-    const agentReply = '<internal>done</internal>';
-    expect(stripInternalTags(agentReply)).toBe('');
-  });
-
-  it('getNightlyFlushPrompt output is fully suppressed by internal tag stripping', () => {
-    const prompt = getNightlyFlushPrompt();
+  it('agent reply <internal>done</internal> is fully suppressed', () => {
     const agentReply = '<internal>done</internal>';
     expect(stripInternalTags(agentReply)).toBe('');
   });

@@ -19,6 +19,8 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
+import { buildFlushPrompt } from './lib/flush-prompt.js';
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -35,6 +37,9 @@ interface ContainerInput {
   endpoint?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
+  learningLoop?: boolean | 'extract-only';
+  approvalTimeout?: number;
+  commandAllowlist?: string[];
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -79,37 +84,11 @@ const IPC_POLL_MS = 500;
 // Module-level token tracking — updated by runQuery(), read by main()
 let lastInputTokens = 0;
 
-// Placeholder flush prompt — replaced by BE_06 with the real prompt
+// Module-level ref to containerInput so getFlushPrompt() can read learningLoop
+let containerInputRef: ContainerInput | undefined;
+
 function getFlushPrompt(): string {
-  const today = new Date().toISOString().split('T')[0];
-  return [
-    '<internal>',
-    'MEMORY FLUSH — context window is filling up. Perform these steps now:',
-    '',
-    'IMPORTANT: Use ONLY file tools (Read, Write, Edit). Do NOT call manual_flush, send_message, schedule_task, or any MCP tools. Do NOT call any tools starting with mcp__.',
-    '',
-    '1. DURABLE FACTS → memory/MEMORY.md',
-    '   - Read the current memory/MEMORY.md',
-    '   - Append any NEW facts learned in this conversation (names, preferences, decisions, relationships, project context)',
-    '   - Remove any facts that have been superseded by newer information',
-    '   - Keep it concise — one bullet point per fact, no prose',
-    '   - Do NOT duplicate facts already present',
-    '',
-    '2. SESSION SUMMARY → memory/COMPACT.md',
-    '   - Write a compact summary of what was discussed and worked on in this session',
-    '   - Include any in-progress tasks, pending questions, or agreed next steps',
-    '   - Include enough context that the next session feels like a seamless continuation',
-    '   - Cap at ~2000 words — this is a bridge, not a transcript',
-    '   - Write as a fresh file (overwrite if it exists)',
-    '',
-    `3. DAILY NOTE → memory/${today}.md`,
-    '   - Append any notable observations or task progress from today to the daily note',
-    '   - Create the file if it does not exist',
-    '',
-    'When finished (or if there is nothing to store), reply with exactly:',
-    '<internal>done</internal>',
-    '</internal>',
-  ].join('\n');
+  return buildFlushPrompt({ reason: 'context-window', learningLoop: containerInputRef?.learningLoop });
 }
 
 // All known tools (SDK + claude_code preset built-ins).
@@ -646,6 +625,7 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
+    containerInputRef = containerInput;
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {

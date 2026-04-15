@@ -71,6 +71,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web (works with any endpoint via `nanoclaw-web-search` MCP)
 - **Container isolation** - Agents are sandboxed in Docker (macOS/Linux), [Docker Sandboxes](docs/docker-sandboxes.md) (micro VM isolation), or Apple Container (macOS)
+- **Defence-in-depth security** - SSRF protection on outbound web requests, prompt injection scanning on context files, command approval for dangerous operations on write-mounted paths. All configurable per-group via `containerConfig`.
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
 
@@ -147,6 +148,34 @@ Key files:
 - `src/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
 
+## Security Configuration
+
+Each group's `containerConfig` supports security flags that control runtime protections. All flags are optional — absent fields preserve backward-compatible behavior (existing groups are unaffected).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection for outbound web_fetch requests |
+| `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files before container launch |
+| `approvalMode` | `boolean` | `false` | Dangerous command approval via messaging channel |
+| `approvalTimeout` | `number` (10–600) | `120` | Seconds before an approval request auto-denies |
+| `commandAllowlist` | `string[]` | `[]` | Regex patterns for commands that skip approval |
+| `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory flush |
+
+Example with all security flags:
+
+```json
+{
+  "ssrfProtection": { "allowPrivateNetworks": false },
+  "injectionScanMode": "block",
+  "approvalMode": true,
+  "approvalTimeout": 60,
+  "commandAllowlist": ["^git\\b", "^npm run test$"],
+  "learningLoop": true
+}
+```
+
+Invalid values log a warning and fall back to the secure default. No database migration is needed — the `containerConfig` JSON column is schema-less.
+
 ## FAQ
 
 **Why Docker?**
@@ -159,7 +188,7 @@ Yes. Docker is the default runtime and works on both macOS and Linux. Just run `
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Beyond container isolation, NanoClaw includes SSRF protection on outbound web requests, prompt injection scanning on context files before container launch, and a command approval gate for dangerous operations on write-mounted paths. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
 
 **Why no configuration files?**
 

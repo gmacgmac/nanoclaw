@@ -52,6 +52,8 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyFlushPrompt } from './nightly-maintenance.js';
 import { scanContextFiles, ContextScanResult } from './lib/context-scanner.js';
+import { validateContainerConfig } from './lib/config-validator.js';
+import { getExtractedSkills } from './lib/skill-manager.js';
 import {
   findChannel,
   formatMessages,
@@ -158,6 +160,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
   fs.mkdirSync(path.join(groupDir, 'media'), { recursive: true });
   fs.mkdirSync(path.join(groupDir, 'memory'), { recursive: true });
+  fs.mkdirSync(path.join(groupDir, 'extracted-skills'), { recursive: true });
 
   // Copy CLAUDE.md template into the new group folder so agents have
   // identity and instructions from the first run.  (Fixes #1391)
@@ -375,6 +378,18 @@ async function runAgent(
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
+  // Validate containerConfig — log warnings for invalid values, use safe defaults
+  const { config: validatedConfig, warnings: configWarnings } =
+    validateContainerConfig(group.containerConfig);
+  for (const w of configWarnings) {
+    logger.warn(
+      { group: group.name, field: w.field, fallback: w.fallback },
+      `containerConfig validation: ${w.message}`,
+    );
+  }
+  // Use validated config for the rest of this function
+  const containerConfig = validatedConfig;
+
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
   writeTasksSnapshot(
@@ -438,7 +453,7 @@ async function runAgent(
 
   try {
     // --- Prompt injection scanning (BE_04) ---
-    const scanMode = group.containerConfig?.injectionScanMode ?? 'warn';
+    const scanMode = containerConfig.injectionScanMode ?? 'warn';
     if (scanMode !== 'off') {
       const groupFolderPath = resolveGroupFolderPath(group.folder);
       const globalFolderPath = isMain
@@ -517,17 +532,17 @@ async function runAgent(
     }
 
     // Debug: log allowedTools being passed to container
-    if (group.containerConfig?.allowedTools) {
+    if (containerConfig.allowedTools) {
       logger.info(
-        { group: group.name, allowedTools: group.containerConfig.allowedTools },
+        { group: group.name, allowedTools: containerConfig.allowedTools },
         'Passing allowedTools to container',
       );
     }
 
     // Tool swapping: when approvalMode is enabled, remove Bash so the agent
     // uses mcp__nanoclaw__execute_command instead (which has approval checks).
-    let effectiveAllowedTools = group.containerConfig?.allowedTools;
-    if (group.containerConfig?.approvalMode === true && effectiveAllowedTools) {
+    let effectiveAllowedTools = containerConfig.allowedTools;
+    if (containerConfig.approvalMode === true && effectiveAllowedTools) {
       effectiveAllowedTools = effectiveAllowedTools.filter((t) => t !== 'Bash');
       logger.info(
         { group: group.name },
@@ -546,12 +561,15 @@ async function runAgent(
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
         allowedTools: effectiveAllowedTools,
-        model: group.containerConfig?.model,
-        systemPrompt: group.containerConfig?.systemPrompt,
-        mcpServers: group.containerConfig?.mcpServers,
-        endpoint: group.containerConfig?.endpoint,
-        webSearchVendor: group.containerConfig?.webSearchVendor,
-        contextWindowSize: group.containerConfig?.contextWindowSize,
+        model: containerConfig.model,
+        systemPrompt: containerConfig.systemPrompt,
+        mcpServers: containerConfig.mcpServers,
+        endpoint: containerConfig.endpoint,
+        webSearchVendor: containerConfig.webSearchVendor,
+        contextWindowSize: containerConfig.contextWindowSize,
+        learningLoop: containerConfig.learningLoop,
+        approvalTimeout: containerConfig.approvalTimeout,
+        commandAllowlist: containerConfig.commandAllowlist,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -576,6 +594,34 @@ async function runAgent(
         { group: group.name },
         'Session cleared after memory flush (post-output)',
       );
+    }
+
+    // Post-flush skill notification: if learningLoop is enabled and a flush
+    // happened (streaming or post-output), check for newly extracted skills.
+    if ((sessionFlushed || output.flushCompleted) && containerConfig.learningLoop) {
+      try {
+        const groupFolderPath = resolveGroupFolderPath(group.folder);
+        const today = new Date().toISOString().split('T')[0];
+        const skills = getExtractedSkills(groupFolderPath);
+        const newSkills = skills.filter((s) => s.extracted === today);
+
+        for (const skill of newSkills) {
+          const msg = `🧠 Extracted skill: *${skill.name}* (${skill.confidence} confidence)`;
+          try {
+            await routeOutbound(channels, chatJid, msg);
+          } catch (notifyErr) {
+            logger.warn(
+              { err: notifyErr, group: group.name, skill: skill.name },
+              'Failed to send skill extraction notification',
+            );
+          }
+        }
+      } catch (skillErr) {
+        logger.warn(
+          { err: skillErr, group: group.name },
+          'Failed to check for extracted skills after flush',
+        );
+      }
     }
 
     if (output.status === 'error') {
@@ -1025,7 +1071,7 @@ async function main(): Promise<void> {
               const output = await runContainerAgent(
                 group,
                 {
-                  prompt: getNightlyFlushPrompt(),
+                  prompt: getNightlyFlushPrompt(group.containerConfig?.learningLoop),
                   sessionId: sessions[group.folder],
                   groupFolder: group.folder,
                   chatJid,
@@ -1038,6 +1084,7 @@ async function main(): Promise<void> {
                   endpoint: group.containerConfig?.endpoint,
                   webSearchVendor: group.containerConfig?.webSearchVendor,
                   contextWindowSize: group.containerConfig?.contextWindowSize,
+                  learningLoop: group.containerConfig?.learningLoop,
                 },
                 (proc, containerName) =>
                   queue.registerProcess(

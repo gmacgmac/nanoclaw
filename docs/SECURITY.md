@@ -8,6 +8,9 @@
 | Non-main groups | Untrusted | Other users may be malicious |
 | Container agents | Sandboxed | Isolated execution environment |
 | WhatsApp messages | User input | Potential prompt injection |
+| Context files (CLAUDE.md, memory) | Scanned | Injection scanner runs before container launch |
+| Outbound web requests | Validated | SSRF protection blocks internal/metadata targets |
+| Shell commands (write mounts) | Gated | Command approval required when `approvalMode` enabled |
 
 ## Security Boundaries
 
@@ -81,6 +84,60 @@ Real API credentials **never enter containers**. Instead, the host runs an HTTP 
 - Any credentials matching blocked patterns
 - `.env` is shadowed with `/dev/null` in the project root mount
 
+### 6. SSRF Protection
+
+Prevents agents from making outbound web requests to internal networks, cloud metadata endpoints, and dangerous schemes. Enabled by default.
+
+**What it blocks:**
+- RFC 1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- Loopback (127.0.0.0/8, ::1)
+- Link-local (169.254.0.0/16 — includes AWS/GCP metadata at 169.254.169.254)
+- CGNAT / shared address space (100.64.0.0/10 — Tailscale, WireGuard)
+- Cloud metadata hostnames (`metadata.google.internal`, `metadata.goog`)
+- Non-HTTP schemes (file://, ftp://, gopher://)
+- IPv6-mapped IPv4 bypass attempts (::ffff:127.0.0.1, hex notation)
+
+**Where validation happens:** `validateUrl()` runs inside `proxyWebFetch()` in the `nanoclaw-web-search` MCP server — the sole agent-controlled URL entry point. Brave Search and the credential proxy are operator-controlled and out of scope.
+
+**Fail-closed:** DNS resolution failure → request blocked.
+
+**Configuration:** `containerConfig.ssrfProtection` (default: `true`). Accepts `boolean` or `SsrfConfig` object with `allowPrivateNetworks`, `additionalBlockedHosts`, and `additionalAllowedHosts` fields.
+
+### 7. Prompt Injection Scanning
+
+Scans context files on the host **before** container launch. Detects patterns in CLAUDE.md, memory/*.md, and global/CLAUDE.md that could manipulate agent behaviour.
+
+**Critical patterns detected:** instruction override attempts, credential exfiltration via curl/wget, secret file reads, base64-encoded command execution, Claude Code settings.json override.
+
+**Warning patterns detected:** suspicious HTML comments, invisible Unicode characters, bidirectional text overrides, hidden HTML content, unusually long lines (>5000 chars).
+
+**Three modes** via `containerConfig.injectionScanMode`:
+- `'off'` — skip scanning
+- `'warn'` (default) — log findings, continue with launch
+- `'block'` — abort launch on critical findings
+
+**Alert notification:** Findings are sent to `NANOCLAW_ALERT_JID` via `routeOutbound()` when configured.
+
+**Where it runs:** `scanContextFiles()` in `runAgent()` (`src/index.ts`), before `runContainerAgent()`. Host-side only — never runs inside the container.
+
+### 8. Command Approval
+
+Human-in-the-loop gate for dangerous shell commands in groups with write-access to real host data.
+
+**When it applies:** Groups with `approvalMode: true` AND write-access `additionalMounts`.
+
+**How it works:**
+1. `Bash` is replaced with `mcp__nanoclaw__execute_command` MCP tool
+2. Dangerous commands targeting write-mounted paths (under `/workspace/extra/`) trigger an approval request via IPC → messaging channel
+3. User responds yes/no → command executes or is denied
+4. Timeout → auto-deny (fail-closed)
+
+**Container-internal paths are always allowed** — the container itself is the security boundary. Only commands referencing write-mounted paths (real host data) require approval.
+
+**Dangerous command categories:** file destruction (`rm -rf`, `find -delete`), permissions (`chmod 777`), data modification (`sed -i`, `mv`, redirects), SQL destructive (`DROP TABLE`, `DELETE FROM` without WHERE), remote code execution (`curl | bash`), shell eval (`bash -c`, `python -e`).
+
+**Configuration:** `containerConfig.approvalMode` (boolean), `approvalTimeout` (10–600s, default 120), `commandAllowlist` (regex patterns that skip approval).
+
 ## Privilege Comparison
 
 | Capability | Main Group | Non-Main Group |
@@ -97,7 +154,7 @@ Real API credentials **never enter containers**. Instead, the host runs an HTTP 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        UNTRUSTED ZONE                             │
-│  WhatsApp Messages (potentially malicious)                        │
+│  Channel Messages (potentially malicious)                         │
 └────────────────────────────────┬─────────────────────────────────┘
                                  │
                                  ▼ Trigger check, input escaping
@@ -108,14 +165,19 @@ Real API credentials **never enter containers**. Instead, the host runs an HTTP 
 │  • Mount validation (external allowlist)                          │
 │  • Container lifecycle                                            │
 │  • Credential proxy (injects auth headers)                       │
+│  • Prompt injection scanning (before container launch)           │
+│  • Command approval IPC handler (receives/routes approvals)      │
+│  • Config validation (containerConfig flags)                     │
 └────────────────────────────────┬─────────────────────────────────┘
                                  │
                                  ▼ Explicit mounts only, no secrets
 ┌──────────────────────────────────────────────────────────────────┐
 │                CONTAINER (ISOLATED/SANDBOXED)                     │
 │  • Agent execution                                                │
-│  • Bash commands (sandboxed)                                      │
+│  • Bash commands (sandboxed) or execute_command (when approval    │
+│    mode enabled — dangerous commands on write mounts gated)       │
 │  • File operations (limited to mounts)                            │
+│  • SSRF-validated outbound web requests (nanoclaw-web-search)    │
 │  • API calls routed through credential proxy                     │
 │  • No real credentials in environment or filesystem              │
 └──────────────────────────────────────────────────────────────────┘
