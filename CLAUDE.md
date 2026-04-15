@@ -239,36 +239,26 @@ systemctl --user restart nanoclaw
 
 ## Container Build Cache
 
-**Root cause**: Containers run from a *cached copy* of the agent-runner source at `data/sessions/*/agent-runner-src/`, not from `container/agent-runner/src/` directly. Changes to the source won't appear until this cache is cleared. This is the most common reason MCP tool changes or SDK updates don't take effect. (Tracked: issue #1236; PR #1515 may introduce `.mcp.json` per-group config as a cleaner path for MCP changes.)
+**How it works now:** Source files are copied dynamically on every container start:
+- `container/agent-runner/src/` → `data/sessions/{group}/agent-runner-src/` → mounted as `/app/src`
+- `container/skills/` → `data/sessions/{group}/.claude/skills/` → synced to container
 
-Multiple caching layers can prevent container code changes from appearing. The complete fix:
+Changes to TypeScript source or skills appear automatically on the next container run. No manual cache clearing needed for source changes.
+
+**When you need to rebuild the Docker image:**
+- Changes to `container/Dockerfile`
+- Changes to `container/agent-runner/package.json` (dependencies)
+- Changes to `container/agent-runner/dist/` (pre-compiled JS)
 
 ```bash
-# 1. CRITICAL: Delete cached agent-runner source (most common issue)
-rm -rf data/sessions/*/agent-runner-src
-
-# 2. Delete local dist/ (BuildKit caches this)
-rm -rf container/agent-runner/dist
-
-# 3. Prune BuildKit cache
-docker builder prune -f
-
-# 4. Rebuild from correct directory
-./container/build.sh
-
-# 5. Kill running containers
-docker ps --filter ancestor=nanoclaw-agent:latest -q | xargs -r docker kill
+# Rebuild container image
+rm -rf container/agent-runner/dist   # Clear local dist (BuildKit may cache it)
+docker builder prune -f              # Prune BuildKit cache
+./container/build.sh                 # Rebuild
+docker ps --filter ancestor=nanoclaw-agent:latest -q | xargs -r docker kill  # Stop old containers
 ```
 
-**When you need a clean rebuild**:
-- TypeScript changes in `container/agent-runner/src/` aren't appearing
-- New MCP tools or skills not loading
-- Agent reports outdated tool definitions
-- Image ID unchanged after rebuild
-
-**After MCP tool changes**, also update `container/skills/*/SKILL.md` to match actual tools (synced at container start).
-
-**If agent still reports old tools**, clear the session transcript:
+**If agent reports outdated tools after image rebuild**, the session transcript may have cached tool definitions. Clear it:
 ```bash
 rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
 sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<group>'"
