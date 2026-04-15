@@ -78,22 +78,16 @@ Wait for the user to provide both tokens.
 
 ### Configure environment
 
-Add to `.env`:
+Add to `~/.config/nanoclaw/secrets.env` (uncomment the placeholder lines and set the tokens):
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_APP_TOKEN=xapp-your-app-token
 ```
 
+If `~/.config/nanoclaw/secrets.env` doesn't exist, tell the user to run `/setup` first (which creates the template).
+
 Channels auto-enable when their credentials are present — no extra configuration needed.
-
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
-The container reads environment from `data/env/env`, not `.env` directly.
 
 ### Build and restart
 
@@ -132,7 +126,66 @@ For additional channels (trigger-only):
 npx tsx setup/index.ts --step register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel slack
 ```
 
-## Phase 5: Verify
+## Phase 5: Group Setup
+
+After registration, set up the group's CLAUDE.md, memory directory, and formatting skill. This ensures the agent has instructions and memory from its very first message.
+
+### A. Create CLAUDE.md from template
+
+Check if `groups/<folder>/CLAUDE.md` already exists:
+
+```bash
+test -f groups/<folder>/CLAUDE.md && echo "EXISTS" || echo "MISSING"
+```
+
+If it exists, tell the user: "CLAUDE.md already exists for this group — skipping template copy."
+
+If missing, copy the appropriate template:
+
+- For main channels (registered with `--is-main`):
+  ```bash
+  cp groups/main/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+- For non-main channels:
+  ```bash
+  cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. You should edit this file to customise the agent's identity and add any group-specific instructions."
+
+### B. Create memory directory and seed files
+
+```bash
+mkdir -p groups/<folder>/memory
+```
+
+Check and create each seed file only if missing:
+
+```bash
+test -f groups/<folder>/memory/MEMORY.md || echo "# Memory" > groups/<folder>/memory/MEMORY.md
+test -f groups/<folder>/memory/COMPACT.md || echo "# Compact" > groups/<folder>/memory/COMPACT.md
+```
+
+If files already exist, tell the user: "Memory seed files already exist — skipping."
+
+### C. Set formatting skill in containerConfig
+
+Slack uses mrkdwn syntax which differs from standard Markdown. Add the `slack-formatting` skill to the group's containerConfig:
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"slack-formatting\"]')) WHERE folder = '<folder>'"
+```
+
+Then clear the skills cache so the new skill is loaded on next container spawn:
+
+```bash
+rm -rf data/sessions/<folder>/.claude/skills
+```
+
+Do not duplicate formatting rules in CLAUDE.md — the skill is the single source of truth.
+
+## Phase 6: Verify
 
 ### Test the connection
 
@@ -154,7 +207,7 @@ tail -f logs/nanoclaw.log
 
 ### Bot not responding
 
-1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `.env` AND synced to `data/env/env`
+1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `~/.config/nanoclaw/secrets.env`
 2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
 3. For non-main channels: message must include trigger pattern
 4. Service is running: `launchctl list | grep nanoclaw`
@@ -178,8 +231,7 @@ If the bot logs `missing_scope` errors:
 1. Go to **OAuth & Permissions** in your Slack app settings
 2. Add the missing scope listed in the error message
 3. **Reinstall the app** to your workspace — scope changes require reinstallation
-4. Copy the new Bot Token (it changes on reinstall) and update `.env`
-5. Sync: `mkdir -p data/env && cp .env data/env/env`
+4. Copy the new Bot Token (it changes on reinstall) and update `~/.config/nanoclaw/secrets.env`
 6. Restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 
 ### Getting channel ID

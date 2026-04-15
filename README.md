@@ -135,7 +135,7 @@ Channels --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Respon
 
 Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute in isolated Linux containers with filesystem isolation. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via filesystem.
 
-For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
+For the full architecture details, see [docs/spec.md](docs/spec.md).
 
 Key files:
 - `src/index.ts` - Orchestrator: state, message loop, agent invocation
@@ -188,7 +188,7 @@ Yes. Docker is the default runtime and works on both macOS and Linux. Just run `
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Beyond container isolation, NanoClaw includes SSRF protection on outbound web requests, prompt injection scanning on context files before container launch, and a command approval gate for dangerous operations on write-mounted paths. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Beyond container isolation, NanoClaw includes SSRF protection on outbound web requests, prompt injection scanning on context files before container launch, and a command approval gate for dangerous operations on write-mounted paths. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/security.md](docs/security.md) for the full security model.
 
 **Why no configuration files?**
 
@@ -230,7 +230,7 @@ OLLAMA_WEB_SEARCH_API_KEY=your-key
 }
 ```
 
-See [docs/OLLAMA_WEB_SEARCH_INTEGRATION.md](docs/OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
+See [docs/ollama-web-search-integration.md](docs/ollama-web-search-integration.md) for the full design.
 
 **How do I debug issues?**
 

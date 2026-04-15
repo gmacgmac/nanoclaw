@@ -170,12 +170,6 @@ test -f store/auth/creds.json && echo "Authentication successful" || echo "Authe
 
 Channels auto-enable when their credentials are present — WhatsApp activates when `store/auth/creds.json` exists.
 
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
 ## Phase 4: Registration
 
 ### Configure trigger and channel type
@@ -252,7 +246,52 @@ npx tsx setup/index.ts --step register \
   --channel whatsapp
 ```
 
-## Phase 5: Verify
+## Phase 5: Group Setup
+
+After registration, set up the group's CLAUDE.md and memory directory. This ensures the agent has instructions and memory from its very first message.
+
+### A. Create CLAUDE.md from template
+
+Check if `groups/<folder>/CLAUDE.md` already exists:
+
+```bash
+test -f groups/<folder>/CLAUDE.md && echo "EXISTS" || echo "MISSING"
+```
+
+If it exists, tell the user: "CLAUDE.md already exists for this group — skipping template copy."
+
+If missing, copy the appropriate template:
+
+- For main groups (registered with `--is-main`):
+  ```bash
+  cp groups/main/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+- For non-main groups:
+  ```bash
+  cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
+  ```
+
+After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. You should edit this file to customise the agent's identity and add any group-specific instructions."
+
+### B. Create memory directory and seed files
+
+```bash
+mkdir -p groups/<folder>/memory
+```
+
+Check and create each seed file only if missing:
+
+```bash
+test -f groups/<folder>/memory/MEMORY.md || echo "# Memory" > groups/<folder>/memory/MEMORY.md
+test -f groups/<folder>/memory/COMPACT.md || echo "# Compact" > groups/<folder>/memory/COMPACT.md
+```
+
+If files already exist, tell the user: "Memory seed files already exist — skipping."
+
+WhatsApp uses standard text rendering — no formatting skill is needed.
+
+## Phase 6: Verify
 
 ### Build and restart
 
@@ -368,5 +407,4 @@ To remove WhatsApp integration:
 
 1. Delete auth credentials: `rm -rf store/auth/`
 2. Remove WhatsApp registrations: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net'"`
-3. Sync env: `mkdir -p data/env && cp .env data/env/env`
-4. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)
+3. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)

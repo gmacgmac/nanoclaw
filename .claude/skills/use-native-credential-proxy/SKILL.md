@@ -85,11 +85,14 @@ AskUserQuestion: Do you want to use your **Claude subscription** (Pro/Max) or an
 
 Tell the user to run `claude setup-token` in another terminal and copy the token it outputs. Do NOT collect the token in chat.
 
-Once they have the token, add it to `.env`:
+Once they have the token, add it to `~/.config/nanoclaw/secrets.env`:
 
 ```bash
-# Add to .env (create file if needed)
-echo 'CLAUDE_CODE_OAUTH_TOKEN=<token>' >> .env
+# Ensure secrets.env directory exists
+mkdir -p ~/.config/nanoclaw
+
+# Add to secrets.env (create file if needed)
+echo 'CLAUDE_CODE_OAUTH_TOKEN=<token>' >> ~/.config/nanoclaw/secrets.env
 ```
 
 Note: `ANTHROPIC_AUTH_TOKEN` is also supported as a fallback.
@@ -98,17 +101,17 @@ Note: `ANTHROPIC_AUTH_TOKEN` is also supported as a fallback.
 
 Tell the user to get an API key from https://console.anthropic.com/settings/keys if they don't have one.
 
-Add it to `.env`:
+Add it to `~/.config/nanoclaw/secrets.env`:
 
 ```bash
-echo 'ANTHROPIC_API_KEY=<key>' >> .env
+echo 'ANTHROPIC_API_KEY=<key>' >> ~/.config/nanoclaw/secrets.env
 ```
 
 ### After either path
 
-**If the user's response happens to contain a token or key** (starts with `sk-ant-` or looks like a token): write it to `.env` on their behalf using the appropriate variable name.
+**If the user's response happens to contain a token or key** (starts with `sk-ant-` or looks like a token): write it to `~/.config/nanoclaw/secrets.env` on their behalf using the appropriate variable name.
 
-**Optional:** If the user needs a custom API endpoint, they can add `ANTHROPIC_BASE_URL=<url>` to `.env` (defaults to `https://api.anthropic.com`).
+**Optional:** If the user needs a custom API endpoint, they can add `ANTHROPIC_BASE_URL=<url>` to `~/.config/nanoclaw/secrets.env` (defaults to `https://api.anthropic.com`).
 
 ## Phase 4: Verify
 
@@ -137,7 +140,7 @@ Expected: `Credential proxy started` with port and auth mode.
 
 ## Troubleshooting
 
-**"Credential proxy upstream error" in logs:** Check that `.env` has a valid `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. Verify the API is reachable: `curl -s https://api.anthropic.com/v1/messages -H "x-api-key: test" | head`.
+**"Credential proxy upstream error" in logs:** Check that `~/.config/nanoclaw/secrets.env` has a valid `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. Verify the API is reachable: `curl -s https://api.anthropic.com/v1/messages -H "x-api-key: test" | head`.
 
 **Port 3001 already in use:** Set `CREDENTIAL_PROXY_PORT=<other port>` in `.env` or as an environment variable.
 
@@ -154,4 +157,4 @@ To revert to OneCLI gateway:
 3. `npm install` (re-adds `@onecli-sh/sdk`)
 4. `npm run build`
 5. Follow `/setup` step 4 to configure OneCLI credentials
-6. Remove `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from `.env`
+6. Remove `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from `~/.config/nanoclaw/secrets.env`

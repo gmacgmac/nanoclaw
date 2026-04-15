@@ -17,7 +17,6 @@ src/container-runner.ts               container/agent-runner/
     │ spawns container                      │ runs Claude Agent SDK
     │ with volume mounts                   │ with MCP servers
     │                                      │
-    ├── data/env/env ──────────────> /workspace/env-dir/env
     ├── groups/{folder} ───────────> /workspace/group
     ├── data/ipc/{folder} ────────> /workspace/ipc
     ├── data/sessions/{folder}/.claude/ ──> /home/node/.claude/ (isolated per-group)
@@ -67,9 +66,9 @@ Common causes:
 ```
 Invalid API key · Please run /login
 ```
-**Fix:** Ensure `.env` file exists with either OAuth token or API key:
+**Fix:** Ensure `~/.config/nanoclaw/secrets.env` has either OAuth token or API key. Run `/setup` if the file doesn't exist.
 ```bash
-cat .env  # Should show one of:
+cat ~/.config/nanoclaw/secrets.env  # Should show one of:
 # CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...  (subscription)
 # ANTHROPIC_API_KEY=sk-ant-api03-...        (pay-per-use)
 ```
@@ -84,14 +83,11 @@ cat .env  # Should show one of:
 
 **Runtime note:** Environment variables passed via `-e` may be lost when using `-i` (interactive/piped stdin).
 
-**Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
+**Workaround:** The credential proxy injects authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `~/.config/nanoclaw/secrets.env` into container API requests at the proxy layer. Containers never see real secrets — they use placeholder values that the proxy replaces.
 
-To verify env vars are reaching the container:
+To verify the credential proxy is running:
 ```bash
-echo '{}' | docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  --entrypoint /bin/bash nanoclaw-agent:latest \
-  -c 'export $(cat /workspace/env-dir/env | xargs); echo "OAuth: ${#CLAUDE_CODE_OAUTH_TOKEN} chars, API: ${#ANTHROPIC_API_KEY} chars"'
+grep "Credential proxy" logs/nanoclaw.log | tail -3
 ```
 
 ### 3. Mount Issues
@@ -115,7 +111,6 @@ docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c 'ls -la /workspa
 Expected structure:
 ```
 /workspace/
-├── env-dir/env           # Environment file (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
 ├── group/                # Current group folder (cwd)
 ├── project/              # Project root (main channel only)
 ├── global/               # Global CLAUDE.md (non-main only)
@@ -177,7 +172,7 @@ mounts.push({
 
 **Cause A — Wrong `is_bot_message` value:** Any message stored in the `messages` table with `is_bot_message = 0` is treated as a new user message by the message loop. Check `src/ipc.ts` `processIpcMessageData()` — it must store with `is_bot_message: true`. This was a known bug fixed 2026-03-31.
 
-**Cause B — Agent outputting text after calling `send_message`:** Both the `send_message` MCP call and the agent's text output are delivered to the channel independently. The group's `CLAUDE.md` must explicitly tell the agent that text output is the primary delivery mechanism. See `docs/GROUP_DEBUG_CHECKLIST.md` for the full debug procedure.
+**Cause B — Agent outputting text after calling `send_message`:** Both the `send_message` MCP call and the agent's text output are delivered to the channel independently. The group's `CLAUDE.md` must explicitly tell the agent that text output is the primary delivery mechanism. See `docs/group-debug-checklist.md` for the full debug procedure.
 
 ### 7. MCP Server Failures
 
@@ -187,27 +182,15 @@ If an MCP server fails to start, the agent may exit. Check the container logs fo
 
 ### Test the full agent flow:
 ```bash
-# Set up env file
-mkdir -p data/env groups/test
-cp .env data/env/env
-
-# Run test query
+# Run test query (credential proxy must be running on the host)
+mkdir -p groups/test
 echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | \
   docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
   -v $(pwd)/groups/test:/workspace/group \
   -v $(pwd)/data/ipc:/workspace/ipc \
+  -e ANTHROPIC_BASE_URL=http://host.docker.internal:3001 \
+  -e ANTHROPIC_API_KEY=placeholder \
   nanoclaw-agent:latest
-```
-
-### Test Claude Code directly:
-```bash
-docker run --rm --entrypoint /bin/bash \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  nanoclaw-agent:latest -c '
-  export $(cat /workspace/env-dir/env | xargs)
-  claude -p "Say hello" --dangerously-skip-permissions --allowedTools ""
-'
 ```
 
 ### Interactive shell in container:
@@ -331,10 +314,10 @@ Run this to check common issues:
 echo "=== Checking NanoClaw Container Setup ==="
 
 echo -e "\n1. Authentication configured?"
-[ -f .env ] && (grep -q "CLAUDE_CODE_OAUTH_TOKEN=sk-" .env || grep -q "ANTHROPIC_API_KEY=sk-" .env) && echo "OK" || echo "MISSING - add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to .env"
+[ -f ~/.config/nanoclaw/secrets.env ] && (grep -q "CLAUDE_CODE_OAUTH_TOKEN=sk-" ~/.config/nanoclaw/secrets.env || grep -q "ANTHROPIC_API_KEY=" ~/.config/nanoclaw/secrets.env) && echo "OK" || echo "MISSING - run /setup to create secrets.env"
 
-echo -e "\n2. Env file copied for container?"
-[ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
+echo -e "\n2. Credential proxy running?"
+grep -q "Credential proxy started" logs/nanoclaw.log 2>/dev/null && echo "OK" || echo "CHECK - look for 'Credential proxy' in logs/nanoclaw.log"
 
 echo -e "\n3. Container runtime running?"
 docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker Desktop (macOS) or sudo systemctl start docker (Linux)"
