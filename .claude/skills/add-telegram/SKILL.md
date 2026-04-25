@@ -13,6 +13,21 @@ This skill adds Telegram support to NanoClaw, then walks through interactive set
 
 Check if `src/channels/telegram.ts` exists. If it does, skip to Phase 3 (Setup). The code changes are already in place.
 
+### Check for existing bot
+
+Check if `TELEGRAM_BOT_TOKEN` is already set in `~/.config/nanoclaw/secrets.env`:
+
+```bash
+grep -q "^TELEGRAM_BOT_TOKEN=" ~/.config/nanoclaw/secrets.env && echo "EXISTS" || echo "MISSING"
+```
+
+If it **already exists**, ask the user:
+
+AskUserQuestion: A Telegram bot is already configured. Is this a secondary bot, or do you want to replace the existing one?
+
+- If **replace**: proceed with the existing flow below (Phase 3 onwards). The new token will overwrite `TELEGRAM_BOT_TOKEN`.
+- If **secondary**: the user is adding a new bot alongside the existing one. Guide them through creating a new bot via BotFather (Phase 3). The secondary bot token will use a different env var name.
+
 ### Ask the user
 
 Use `AskUserQuestion` to collect configuration:
@@ -83,11 +98,19 @@ Wait for the user to provide the token.
 
 ### Configure environment
 
-Add to `~/.config/nanoclaw/secrets.env` (uncomment the placeholder line and set the token):
+For the **first bot**, add to `~/.config/nanoclaw/secrets.env`:
 
 ```bash
 TELEGRAM_BOT_TOKEN=<their-token>
 ```
+
+For **secondary bots**, use the naming convention `TELEGRAM_{BOT_NAME}_BOT_TOKEN`:
+
+```bash
+TELEGRAM_CHOC_BOT_TOKEN=7906558245:AAGrFa1yMiTpAcC7q2A5r_gF0d1bb5cN0kQ
+```
+
+For example, if the bot is named "chocbot", add `TELEGRAM_CHOC_BOT_TOKEN`. The bot name ("chocbot") will be passed during registration via `--bot-token-name chocbot`.
 
 If `~/.config/nanoclaw/secrets.env` doesn't exist, tell the user to run `/setup` first (which creates the template).
 
@@ -140,6 +163,14 @@ For additional chats (trigger-only):
 ```bash
 npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
 ```
+
+For secondary bots (using a bot other than the default `TELEGRAM_BOT_TOKEN`), add `--bot-token-name`:
+
+```bash
+npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram --bot-token-name chocbot
+```
+
+The `--bot-token-name` value must match the `{NAME}` part of the `TELEGRAM_{NAME}_BOT_TOKEN` env var in `secrets.env`. It is case-insensitive, so `chocbot` matches `TELEGRAM_CHOCBOT_BOT_TOKEN`.
 
 ## Phase 5: Group Setup
 
@@ -221,6 +252,10 @@ Tell the user:
 >
 > The bot should respond within a few seconds.
 
+### Verify the correct bot responded (secondary bots)
+
+If this is a secondary bot registration, confirm the response came from the expected bot username. The group is tied to a specific bot via `--bot-token-name` and the `TELEGRAM_{NAME}_BOT_TOKEN` env var. If the wrong bot replies, the group may be falling back to the default bot.
+
 ### Check logs if needed
 
 ```bash
@@ -236,6 +271,18 @@ Check:
 2. Chat is registered in SQLite (check with: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'tg:%'"`)
 3. For non-main chats: message includes trigger pattern
 4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
+
+### Secondary bot not responding
+
+If a secondary bot (registered with `--bot-token-name`) is not responding:
+
+1. Check the correct `TELEGRAM_{NAME}_BOT_TOKEN` is in `~/.config/nanoclaw/secrets.env`. For example, if `--bot-token-name chocbot` was used, `TELEGRAM_CHOCBOT_BOT_TOKEN` must be set.
+2. Check `--bot-token-name` matches the `{NAME}` part exactly. Matching is case-insensitive, so `chocbot` matches `TELEGRAM_CHOCBOT_BOT_TOKEN`.
+3. Check the group's `container_config` has the correct `telegramBot` value:
+   ```bash
+   sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = '<folder>'"
+   ```
+   The output should include `"telegramBot":"chocbot"` (or the equivalent name).
 
 ### Bot only responds to @mentions in groups
 

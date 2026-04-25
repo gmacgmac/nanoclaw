@@ -22,6 +22,7 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  botTokenName: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -34,6 +35,7 @@ function parseArgs(args: string[]): RegisterArgs {
     requiresTrigger: true,
     isMain: false,
     assistantName: 'Andy',
+    botTokenName: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -61,6 +63,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
+        break;
+      case '--bot-token-name':
+        result.botTokenName = (args[++i] || '').toLowerCase().trim();
         break;
     }
   }
@@ -100,6 +105,12 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
+  // Build containerConfig if bot-token-name is specified for Telegram
+  const containerConfig =
+    parsed.botTokenName && parsed.channel === 'telegram'
+      ? { telegramBot: parsed.botTokenName }
+      : undefined;
+
   setRegisteredGroup(parsed.jid, {
     name: parsed.name,
     folder: parsed.folder,
@@ -107,6 +118,7 @@ export async function run(args: string[]): Promise<void> {
     added_at: new Date().toISOString(),
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
+    ...(containerConfig && { containerConfig }),
   });
 
   // Create chats table row for internal groups (required for message processing)
@@ -115,6 +127,9 @@ export async function run(args: string[]): Promise<void> {
   }
 
   logger.info('Wrote registration to SQLite');
+  if (parsed.botTokenName) {
+    logger.info({ botTokenName: parsed.botTokenName }, 'Linked group to Telegram bot');
+  }
 
   // Create group folders
   fs.mkdirSync(path.join(projectRoot, 'groups', parsed.folder, 'logs'), {
@@ -176,6 +191,7 @@ export async function run(args: string[]): Promise<void> {
     REQUIRES_TRIGGER: parsed.requiresTrigger,
     ASSISTANT_NAME: parsed.assistantName,
     NAME_UPDATED: nameUpdated,
+    ...(parsed.botTokenName && { BOT_TOKEN_NAME: parsed.botTokenName }),
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });

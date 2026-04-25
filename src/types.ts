@@ -106,6 +106,13 @@ export interface ContainerConfig {
   webSearchVendor?: string;
 
   /**
+   * Name of the Telegram bot instance to use for this group's outbound replies.
+   * Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env (case-insensitive).
+   * If omitted, the group uses the default `TELEGRAM_BOT_TOKEN`.
+   */
+  telegramBot?: string;
+
+  /**
    * Prompt injection scanning mode for context files.
    * Scans CLAUDE.md, MEMORY.md, COMPACT.md, and daily notes before container launch.
    * - undefined / absent → 'warn' (secure default — log but don't block)
