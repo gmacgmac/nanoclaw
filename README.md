@@ -210,6 +210,31 @@ This allows you to use:
 
 Note: The model must support the Anthropic API format for best compatibility.
 
+**Can I run multiple Telegram bots?**
+
+Yes. You can run multiple Telegram bots simultaneously — for example, one bot for personal DMs and another for a group chat.
+
+Add additional bot tokens using the `TELEGRAM_{NAME}_BOT_TOKEN` naming convention in `~/.config/nanoclaw/secrets.env`:
+
+```bash
+TELEGRAM_BOT_TOKEN=...           # default bot (used when no bot is specified)
+TELEGRAM_CHOC_BOT_TOKEN=...   # secondary bot named "choc"
+```
+
+When registering a group, link it to a specific bot with `--bot-token-name`:
+
+```bash
+npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "My Group" --folder "telegram_group" --channel telegram --bot-token-name chocbot
+```
+
+The name is case-insensitive, so `chocbot` matches `TELEGRAM_CHOC_BOT_TOKEN`. Groups without `--bot-token-name` use the default `TELEGRAM_BOT_TOKEN`.
+
+To check which bot a group is configured to use:
+
+```bash
+sqlite3 store/messages.db "SELECT json_extract(container_config, '$.telegramBot') FROM registered_groups WHERE folder = 'telegram_group'"
+```
+
 **Web search on non-Anthropic endpoints:** Claude's built-in `WebSearch`/`WebFetch` are server-side tools that only work with Anthropic's API. For other endpoints, add the `nanoclaw-web-search` MCP server to your group's `containerConfig` and set the web search vendor in `secrets.env`:
 
 ```bash
