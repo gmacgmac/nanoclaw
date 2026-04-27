@@ -8,6 +8,19 @@ vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
+// Mock fs to prevent reading real secrets.env / .env files in tests
+vi.mock('fs', () => ({
+  default: {
+    readFileSync: vi.fn(() => {
+      throw new Error('ENOENT');
+    }),
+    promises: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+    },
+  },
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
@@ -69,7 +82,12 @@ vi.mock('grammy', () => ({
   },
 }));
 
-import { TelegramChannel, TelegramChannelOpts } from './telegram.js';
+import {
+  TelegramChannel,
+  TelegramChannelOpts,
+  parseTelegramJid,
+  makeJid,
+} from './telegram.js';
 
 // --- Test helpers ---
 
@@ -175,6 +193,52 @@ async function triggerMediaMessage(
   const handlers = currentBot().filterHandlers.get(filter) || [];
   for (const h of handlers) await h(ctx);
 }
+
+// --- JID helpers ---
+
+describe('parseTelegramJid', () => {
+  it('extracts chatId from plain JID', () => {
+    expect(parseTelegramJid('tg:123456')).toEqual({ chatId: '123456' });
+  });
+
+  it('extracts chatId and botName from virtual JID', () => {
+    expect(parseTelegramJid('tg:123456:choc')).toEqual({
+      chatId: '123456',
+      botName: 'choc',
+    });
+  });
+
+  it('handles negative chat IDs', () => {
+    expect(parseTelegramJid('tg:-1001234567890')).toEqual({
+      chatId: '-1001234567890',
+    });
+  });
+
+  it('handles virtual JID with negative chat ID', () => {
+    expect(parseTelegramJid('tg:-1001234567890:secondary')).toEqual({
+      chatId: '-1001234567890',
+      botName: 'secondary',
+    });
+  });
+});
+
+describe('makeJid', () => {
+  it('produces plain JID for default bot', () => {
+    expect(makeJid(123456, 'default')).toBe('tg:123456');
+  });
+
+  it('produces virtual JID for named bot', () => {
+    expect(makeJid(123456, 'choc')).toBe('tg:123456:choc');
+  });
+
+  it('accepts string chatId', () => {
+    expect(makeJid('123456', 'choc')).toBe('tg:123456:choc');
+  });
+
+  it('handles empty botName as default', () => {
+    expect(makeJid(123456, '')).toBe('tg:123456');
+  });
+});
 
 // --- Tests ---
 
@@ -806,6 +870,34 @@ describe('TelegramChannel', () => {
 
       // No error, no API call
     });
+
+    it('extracts numeric chat ID from virtual JID', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      await channel.sendMessage('tg:100200300:secondary', 'Hello');
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        'Hello',
+        { parse_mode: 'Markdown' },
+      );
+    });
+
+    it('extracts negative chat ID from virtual JID', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      await channel.sendMessage('tg:-1001234567890:choc', 'Group message');
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '-1001234567890',
+        'Group message',
+        { parse_mode: 'Markdown' },
+      );
+    });
   });
 
   // --- ownsJid ---
@@ -834,6 +926,16 @@ describe('TelegramChannel', () => {
     it('does not own unknown JID formats', () => {
       const channel = new TelegramChannel(createTestOpts());
       expect(channel.ownsJid('random-string')).toBe(false);
+    });
+
+    it('owns virtual JIDs', () => {
+      const channel = new TelegramChannel(createTestOpts());
+      expect(channel.ownsJid('tg:123:choc')).toBe(true);
+    });
+
+    it('owns virtual JIDs with negative IDs', () => {
+      const channel = new TelegramChannel(createTestOpts());
+      expect(channel.ownsJid('tg:-1001234567890:secondary')).toBe(true);
     });
   });
 
@@ -885,6 +987,19 @@ describe('TelegramChannel', () => {
       await expect(
         channel.setTyping('tg:100200300', true),
       ).resolves.toBeUndefined();
+    });
+
+    it('extracts numeric chat ID from virtual JID', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300:secondary', true);
+
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledWith(
+        '100200300',
+        'typing',
+      );
     });
   });
 
@@ -945,6 +1060,62 @@ describe('TelegramChannel', () => {
     });
   });
 
+  describe('/chatid virtual JID', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      process.env.TELEGRAM_BOT_TOKEN = 'default-token';
+      process.env.TELEGRAM_CHOC_BOT_TOKEN = 'choc-token';
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      delete process.env.TELEGRAM_BOT_TOKEN;
+      delete process.env.TELEGRAM_CHOC_BOT_TOKEN;
+    });
+
+    it('outputs virtual JID for named bot', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      // currentBot() is the 'choc' bot (last created)
+      const handler = currentBot().commandHandlers.get('chatid')!;
+      const ctx = {
+        chat: { id: 100200300, type: 'group' as const },
+        from: { first_name: 'Alice' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('tg:100200300:choc'),
+        expect.objectContaining({ parse_mode: 'Markdown' }),
+      );
+    });
+
+    it('outputs plain JID for default bot', async () => {
+      delete process.env.TELEGRAM_CHOC_BOT_TOKEN;
+      const opts = createTestOpts();
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      const handler = currentBot().commandHandlers.get('chatid')!;
+      const ctx = {
+        chat: { id: 100200300, type: 'group' as const },
+        from: { first_name: 'Alice' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('tg:100200300'),
+        expect.any(Object),
+      );
+    });
+  });
+
   // --- Channel properties ---
 
   describe('channel properties', () => {
@@ -952,5 +1123,129 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel(createTestOpts());
       expect(channel.name).toBe('telegram');
     });
+  });
+});
+
+// --- Multi-bot routing ---
+
+describe('TelegramChannel multi-bot', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.TELEGRAM_BOT_TOKEN = 'default-token';
+    process.env.TELEGRAM_CHOC_BOT_TOKEN = 'choc-token';
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_CHOC_BOT_TOKEN;
+  });
+
+  it('produces virtual JID for named bot messages', async () => {
+    const opts = createTestOpts({
+      registeredGroups: vi.fn(() => ({
+        'tg:100200300:choc': {
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+        },
+      })),
+    });
+    const channel = new TelegramChannel(opts);
+    await channel.connect();
+
+    // currentBot() is the 'choc' bot (last created)
+    const ctx = createTextCtx({ text: 'Hello from choc' });
+    await triggerTextMessage(ctx);
+
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'tg:100200300:choc',
+      expect.any(String),
+      'Test Group',
+      'telegram',
+      true,
+    );
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'tg:100200300:choc',
+      expect.objectContaining({
+        chat_jid: 'tg:100200300:choc',
+      }),
+    );
+  });
+
+  it('produces plain JID for default bot messages', async () => {
+    // Only default token — no secondary
+    delete process.env.TELEGRAM_CHOC_BOT_TOKEN;
+    const opts = createTestOpts({
+      registeredGroups: vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+        },
+      })),
+    });
+    const channel = new TelegramChannel(opts);
+    await channel.connect();
+
+    const ctx = createTextCtx({ text: 'Hello from default' });
+    await triggerTextMessage(ctx);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'tg:100200300',
+      expect.objectContaining({
+        chat_jid: 'tg:100200300',
+      }),
+    );
+  });
+
+  it('routes sendMessage via bot from JID suffix', async () => {
+    const opts = createTestOpts({
+      registeredGroups: vi.fn(() => ({
+        'tg:100200300:choc': {
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+        },
+      })),
+    });
+    const channel = new TelegramChannel(opts);
+    await channel.connect();
+
+    await channel.sendMessage('tg:100200300:choc', 'Hello');
+
+    expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+      '100200300',
+      'Hello',
+      { parse_mode: 'Markdown' },
+    );
+  });
+
+  it('falls back to containerConfig.telegramBot for plain JIDs', async () => {
+    const opts = createTestOpts({
+      registeredGroups: vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Test Group',
+          folder: 'test-group',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: { telegramBot: 'choc' },
+        },
+      })),
+    });
+    const channel = new TelegramChannel(opts);
+    await channel.connect();
+
+    // The 'choc' bot is currentBot() (last created), so this verifies routing
+    await channel.sendMessage('tg:100200300', 'Hello');
+
+    expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+      '100200300',
+      'Hello',
+      { parse_mode: 'Markdown' },
+    );
   });
 });

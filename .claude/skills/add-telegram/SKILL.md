@@ -146,7 +146,12 @@ Tell the user:
 > 2. Send `/chatid` — it will reply with the chat ID
 > 3. For groups: add the bot to the group first, then send `/chatid` in the group
 
-Wait for the user to provide the chat ID (format: `tg:123456789` or `tg:-1001234567890`).
+Wait for the user to provide the chat ID.
+
+- For the **default bot**, `/chatid` outputs a plain JID: `tg:123456789`
+- For a **named bot** (e.g. `@chocalotbot`), `/chatid` outputs a virtual JID: `tg:123456789:choc`
+
+Copy the `/chatid` output verbatim into the registration command — no manual transformation needed.
 
 ### Register the chat
 
@@ -155,22 +160,24 @@ The chat ID, name, and folder name are needed. Use `npx tsx setup/index.ts --ste
 For a main chat (responds to all messages):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --no-trigger-required --is-main
+npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --no-trigger-required --is-main
 ```
 
 For additional chats (trigger-only):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
+npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
 ```
 
-For secondary bots (using a bot other than the default `TELEGRAM_BOT_TOKEN`), add `--bot-token-name`:
+For secondary bots (using a bot other than the default `TELEGRAM_BOT_TOKEN`), add `--bot-token-name` and use the virtual JID from `/chatid`:
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram --bot-token-name chocbot
+npx tsx setup/index.ts --step register -- --jid "tg:6013943815:choc" --name "GM Choc" --folder "choc_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --bot-token-name choc
 ```
 
-The `--bot-token-name` value must match the `{NAME}` part of the `TELEGRAM_{NAME}_BOT_TOKEN` env var in `secrets.env`. It is case-insensitive, so `chocbot` matches `TELEGRAM_CHOCBOT_BOT_TOKEN`.
+The `--bot-token-name` value must match the `{NAME}` part of the `TELEGRAM_{NAME}_BOT_TOKEN` env var in `secrets.env`. It is case-insensitive, so `choc` matches `TELEGRAM_CHOC_BOT_TOKEN`.
+
+**Important:** Use the virtual JID exactly as `/chatid` outputs it. Do not manually add or remove the `:botName` suffix — `/chatid` is the source of truth.
 
 ## Phase 5: Group Setup
 
@@ -276,13 +283,21 @@ Check:
 
 If a secondary bot (registered with `--bot-token-name`) is not responding:
 
-1. Check the correct `TELEGRAM_{NAME}_BOT_TOKEN` is in `~/.config/nanoclaw/secrets.env`. For example, if `--bot-token-name chocbot` was used, `TELEGRAM_CHOCBOT_BOT_TOKEN` must be set.
-2. Check `--bot-token-name` matches the `{NAME}` part exactly. Matching is case-insensitive, so `chocbot` matches `TELEGRAM_CHOCBOT_BOT_TOKEN`.
-3. Check the group's `container_config` has the correct `telegramBot` value:
+1. Check the correct `TELEGRAM_{NAME}_BOT_TOKEN` is in `~/.config/nanoclaw/secrets.env`. For example, if `--bot-token-name choc` was used, `TELEGRAM_CHOC_BOT_TOKEN` must be set.
+2. Check `--bot-token-name` matches the `{NAME}` part exactly. Matching is case-insensitive, so `choc` matches `TELEGRAM_CHOC_BOT_TOKEN`.
+3. Check the group's JID includes the bot name suffix (e.g. `tg:123456:choc`). The JID itself is the primary routing key — if it has the wrong suffix or no suffix, the wrong bot (or default bot) may handle the message.
+4. Check the group's `container_config` has the correct `telegramBot` value:
    ```bash
    sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = '<folder>'"
    ```
-   The output should include `"telegramBot":"chocbot"` (or the equivalent name).
+   The output should include `"telegramBot":"choc"` (or the equivalent name). This is used as a fallback for plain JIDs without a suffix.
+
+### Wrong bot responding
+
+If the wrong bot replies to a message:
+
+1. Check the group's JID — it should match the bot that received the message. For a named bot, the JID must include `:botName` (e.g. `tg:123456:choc`).
+2. If the JID suffix and `containerConfig.telegramBot` disagree, NanoClaw logs a warning and uses the JID suffix. Re-register the group using the correct `/chatid` output to fix the JID.
 
 ### Bot only responds to @mentions in groups
 

@@ -14,6 +14,38 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
+/**
+ * Parse a Telegram JID string into its components.
+ *
+ *   tg:123456       → { chatId: '123456' }
+ *   tg:123456:choc  → { chatId: '123456', botName: 'choc' }
+ */
+export function parseTelegramJid(jid: string): { chatId: string; botName?: string } {
+  const withoutPrefix = jid.replace(/^tg:/, '');
+  const colonIdx = withoutPrefix.indexOf(':');
+  if (colonIdx === -1) {
+    return { chatId: withoutPrefix };
+  }
+  return {
+    chatId: withoutPrefix.slice(0, colonIdx),
+    botName: withoutPrefix.slice(colonIdx + 1),
+  };
+}
+
+/**
+ * Build a Telegram JID from a chat ID and bot name.
+ *
+ *   makeJid(123456, 'default') → 'tg:123456'
+ *   makeJid(123456, 'choc')    → 'tg:123456:choc'
+ */
+export function makeJid(chatId: number | string, botName: string): string {
+  const id = String(chatId);
+  if (!botName || botName === 'default') {
+    return `tg:${id}`;
+  }
+  return `tg:${id}:${botName}`;
+}
+
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -176,12 +208,34 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Resolve the correct bot for a given JID by looking up the group's
-   * containerConfig.telegramBot. Falls back to "default".
+   * Resolve the correct bot for a given JID.
+   *
+   * Priority:
+   *   1. JID suffix (self-describing, e.g. tg:123:choc)
+   *   2. containerConfig.telegramBot (fallback for plain JIDs)
+   *   3. 'default'
    */
-  private getBotForJid(jid: string): { bot: Bot; token: string; name: string } | null {
-    const group = this.opts.registeredGroups()[jid];
-    const botName = group?.containerConfig?.telegramBot?.toLowerCase() || 'default';
+  private getBotForJid(
+    jid: string,
+  ): { bot: Bot; token: string; name: string } | null {
+    const parsed = parseTelegramJid(jid);
+    const configBot =
+      this.opts.registeredGroups()[jid]?.containerConfig?.telegramBot?.toLowerCase();
+
+    // Prefer JID suffix, fall back to containerConfig
+    let botName: string;
+    if (parsed.botName) {
+      botName = parsed.botName.toLowerCase();
+      if (configBot && configBot !== botName) {
+        logger.warn(
+          { jid, jidBot: botName, configBot },
+          'JID suffix and containerConfig.telegramBot disagree; using JID suffix',
+        );
+      }
+    } else {
+      botName = configBot || 'default';
+    }
+
     const bot = this.bots.get(botName) || this.bots.get('default');
     const name = this.bots.has(botName) ? botName : 'default';
     if (!bot) return null;
@@ -197,7 +251,10 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    logger.info({ count: entries.length, names: entries.map(([n]) => n) }, 'Discovered Telegram bot tokens');
+    logger.info(
+      { count: entries.length, names: entries.map(([n]) => n) },
+      'Discovered Telegram bot tokens',
+    );
 
     const startPromises: Promise<void>[] = [];
 
@@ -220,9 +277,10 @@ export class TelegramChannel implements Channel {
           chatType === 'private'
             ? ctx.from?.first_name || 'Private'
             : (ctx.chat as any).title || 'Unknown';
+        const virtualJid = makeJid(chatId, botName);
 
         ctx.reply(
-          `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}\nBot: ${botName}`,
+          `Chat ID: \`${virtualJid}\`\nName: ${chatName}\nType: ${chatType}\nBot: ${botName}`,
           { parse_mode: 'Markdown' },
         );
       });
@@ -241,7 +299,7 @@ export class TelegramChannel implements Channel {
           if (TELEGRAM_BOT_COMMANDS.has(cmd)) return;
         }
 
-        const chatJid = `tg:${ctx.chat.id}`;
+        const chatJid = makeJid(ctx.chat.id, botName);
         let content = ctx.message.text;
         const timestamp = new Date(ctx.message.date * 1000).toISOString();
         const senderName =
@@ -312,7 +370,7 @@ export class TelegramChannel implements Channel {
 
       // Handle non-text messages with placeholders
       const storeNonText = (ctx: any, placeholder: string) => {
-        const chatJid = `tg:${ctx.chat.id}`;
+        const chatJid = makeJid(ctx.chat.id, botName);
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
 
@@ -351,7 +409,7 @@ export class TelegramChannel implements Channel {
         getFileId: (msg: any) => string | undefined,
         getFileName?: (msg: any) => string | undefined,
       ) => {
-        const chatJid = `tg:${ctx.chat.id}`;
+        const chatJid = makeJid(ctx.chat.id, botName);
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
 
@@ -481,7 +539,9 @@ export class TelegramChannel implements Channel {
                 { username: botInfo.username, id: botInfo.id, botName },
                 'Telegram bot connected',
               );
-              console.log(`\n  Telegram bot [${botName}]: @${botInfo.username}`);
+              console.log(
+                `\n  Telegram bot [${botName}]: @${botInfo.username}`,
+              );
               if (botName === 'default') {
                 console.log(
                   `  Send /chatid to the bot to get a chat's registration ID\n`,
@@ -508,7 +568,7 @@ export class TelegramChannel implements Channel {
     }
 
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = parseTelegramJid(jid).chatId;
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
@@ -523,7 +583,10 @@ export class TelegramChannel implements Channel {
           );
         }
       }
-      logger.info({ jid, length: text.length, bot: resolved.name }, 'Telegram message sent');
+      logger.info(
+        { jid, length: text.length, bot: resolved.name },
+        'Telegram message sent',
+      );
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
@@ -551,7 +614,7 @@ export class TelegramChannel implements Channel {
     const resolved = this.getBotForJid(jid);
     if (!resolved) return;
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = parseTelegramJid(jid).chatId;
       await resolved.bot.api.sendChatAction(numericId, 'typing');
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
