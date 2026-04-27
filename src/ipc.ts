@@ -346,7 +346,11 @@ export async function processIpcMessageData(
   // Skip sendMessage for dashboard-originated messages: the dashboard
   // channel has no external platform to forward to, and calling
   // sendMessage would store the user's text as a bot response (echo).
-  if (data.source !== 'dashboard') {
+  // Also skip for dashboard targets: DashboardChannel.sendMessage also
+  // writes to the DB, causing duplicate records with different sender names.
+  // Let storeMessageDirect below be the single source of truth for dashboard.
+  const isDashboardTarget = data.chatJid.endsWith('@internal');
+  if (data.source !== 'dashboard' && !isDashboardTarget) {
     await deps.sendMessage(data.chatJid, data.text);
   }
 

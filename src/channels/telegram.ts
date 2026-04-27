@@ -20,7 +20,10 @@ import {
  *   tg:123456       → { chatId: '123456' }
  *   tg:123456:choc  → { chatId: '123456', botName: 'choc' }
  */
-export function parseTelegramJid(jid: string): { chatId: string; botName?: string } {
+export function parseTelegramJid(jid: string): {
+  chatId: string;
+  botName?: string;
+} {
   const withoutPrefix = jid.replace(/^tg:/, '');
   const colonIdx = withoutPrefix.indexOf(':');
   if (colonIdx === -1) {
@@ -219,8 +222,9 @@ export class TelegramChannel implements Channel {
     jid: string,
   ): { bot: Bot; token: string; name: string } | null {
     const parsed = parseTelegramJid(jid);
-    const configBot =
-      this.opts.registeredGroups()[jid]?.containerConfig?.telegramBot?.toLowerCase();
+    const configBot = this.opts
+      .registeredGroups()
+      [jid]?.containerConfig?.telegramBot?.toLowerCase();
 
     // Prefer JID suffix, fall back to containerConfig
     let botName: string;
