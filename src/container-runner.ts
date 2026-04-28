@@ -356,6 +356,13 @@ function buildContainerArgs(
     args.push('-e', `NANOCLAW_SSRF_CONFIG=${ssrfConfigJson}`);
   }
 
+  // Inject proxy connection details for nanoclaw-transcription MCP.
+  // Transcription routes through the credential proxy to reach host-side whisper.cpp.
+  if (group.containerConfig?.mcpServers?.['nanoclaw-transcription']) {
+    args.push('-e', `NANOCLAW_PROXY_HOST=${CONTAINER_HOST_GATEWAY}`);
+    args.push('-e', `NANOCLAW_PROXY_PORT=${CREDENTIAL_PROXY_PORT}`);
+  }
+
   // Command approval mode — pass config + write mount paths to container
   if (group.containerConfig?.approvalMode === true) {
     args.push('-e', 'NANOCLAW_APPROVAL_MODE=true');

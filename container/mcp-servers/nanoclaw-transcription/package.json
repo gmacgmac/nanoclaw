@@ -1,0 +1,19 @@
+{
+  "name": "nanoclaw-transcription-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local audio transcription MCP server for NanoClaw. Routes through the host credential proxy to run whisper.cpp.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.28.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "typescript": "5.7.3"
+  }
+}

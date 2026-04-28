@@ -190,7 +190,29 @@ const server = new McpServer({
 
 server.tool(
   'web_search',
-  'Search the web using the configured web search provider (routed through credential proxy). Returns titles, URLs, and content snippets.',
+  `Search the web. Returns titles, URLs, content snippets, and published dates.
+
+WHEN TO USE:
+- When the user asks a question requiring current or factual information you don't have in context.
+- To verify claims, check news, or look up current events.
+- To find documentation, APIs, or resources referenced by the user.
+
+ALWAYS PREFER THIS TOOL OVER BUILT-IN WebSearch/WebFetch:
+- Built-in WebSearch/WebFetch are Anthropic server-side tools. They silently fail on non-Anthropic endpoints (e.g., Ollama, Z.ai).
+- This MCP tool routes through the host credential proxy, so it works with ANY inference provider.
+
+PARAMS:
+- query: the search query string
+- max_results: how many results to return (1-${MAX_RESULTS}, default ${DEFAULT_RESULTS})
+
+LIMITATIONS:
+- Max ${MAX_RESULTS} results per call.
+- Results come from the configured web search vendor (set per-group via container_config.webSearchVendor, default: ollama).
+- If the vendor is not configured, calls return a clear error.
+
+TROUBLESHOOTING:
+- "NANOCLAW_PROXY_HOST and NANOCLAW_PROXY_PORT must be set": the MCP server isn't receiving container env vars. The group's containerConfig.mcpServers must include nanoclaw-web-search. A fresh session (clear old JSONL transcript) may be needed after config changes.
+- "Web search vendor not configured": the credential proxy has no vendor matching the group's webSearchVendor setting.`,
   {
     query: z.string().describe('The search query'),
     max_results: z
@@ -221,9 +243,26 @@ server.tool(
 
 server.tool(
   'web_fetch',
-  'Fetch the content of a web page by URL (routed through credential proxy). Returns the page title, text content, and links.',
+  `Fetch the content of a web page by URL. Returns the page title, text content, and links.
+
+WHEN TO USE:
+- After a web_search call, fetch specific pages for full content instead of relying on snippets.
+- When the user shares a URL and asks "what does this say?", "summarise this", or "extract data from this page".
+- To read documentation, articles, or any web resource in full.
+
+ALWAYS PREFER THIS TOOL OVER BUILT-IN WebFetch:
+- Built-in WebFetch is an Anthropic server-side tool. It silently fails on non-Anthropic endpoints (e.g., Ollama, Z.ai).
+- This MCP tool routes through the host credential proxy, so it works with ANY inference provider.
+
+PARAMS:
+- url: the full URL to fetch (e.g. "https://example.com/article")
+
+TROUBLESHOOTING:
+- "URL blocked by SSRF protection": the URL resolves to a private/internal IP. This is intentional security filtering.
+- "Web search vendor not configured": the credential proxy has no vendor configured for web fetch.
+- "NANOCLAW_PROXY_HOST and NANOCLAW_PROXY_PORT must be set": same fix as web_search — check containerConfig.mcpServers and clear the session if recently added.`,
   {
-    url: z.string().url().describe('The URL to fetch'),
+    url: z.string().url().describe('The full URL to fetch (e.g. "https://example.com/article")'),
   },
   async (args) => {
     try {
