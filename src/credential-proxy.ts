@@ -19,6 +19,8 @@
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
+import fs from 'fs';
+import path from 'path';
 
 import {
   readEnvFile,
@@ -27,6 +29,36 @@ import {
   EndpointEntry,
 } from './env.js';
 import { logger } from './logger.js';
+import { transcribeAudio } from './transcription.js';
+
+/**
+ * Resolve an audio file path that may be a container path
+ * (e.g. /workspace/group/media/file.ogg) to a host path.
+ * Searches group directories when the container prefix is detected.
+ */
+function resolveAudioPath(audioPath: string): string {
+  // Already a valid host path
+  if (fs.existsSync(audioPath)) return audioPath;
+
+  // Container path: /workspace/group/... → groups/{folder}/...
+  const containerPrefix = '/workspace/group/';
+  if (audioPath.startsWith(containerPrefix)) {
+    const relative = audioPath.slice(containerPrefix.length);
+    const groupsDir = path.join(process.cwd(), 'groups');
+    try {
+      const entries = fs.readdirSync(groupsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const candidate = path.join(groupsDir, entry.name, relative);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    } catch {
+      // ignore read errors
+    }
+  }
+
+  return audioPath;
+}
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -117,8 +149,35 @@ export function startCredentialProxy(
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
+      req.on('end', async () => {
         const body = Buffer.concat(chunks);
+
+        // --- Transcription endpoint ---
+        if (req.url === '/transcribe' && req.method === 'POST') {
+          try {
+            const data = JSON.parse(body.toString()) as { audioPath?: string };
+            if (!data.audioPath) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: 'audioPath is required' }));
+              return;
+            }
+            const resolvedPath = resolveAudioPath(data.audioPath);
+            const result = await transcribeAudio(resolvedPath);
+            if (result.text) {
+              res.writeHead(200, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ text: result.text }));
+            } else {
+              res.writeHead(500, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: result.error || 'Transcription failed' }));
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error({ err: msg }, 'Transcription endpoint error');
+            res.writeHead(500, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: msg }));
+          }
+          return;
+        }
 
         // Check if this is a web search request (path-based routing)
         const isWebSearch = WEB_SEARCH_PATHS.some(

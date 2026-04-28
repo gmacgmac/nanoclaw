@@ -258,6 +258,10 @@ Tell the user:
 > - For non-main: `@Andy hello` or @mention the bot
 >
 > The bot should respond within a few seconds.
+>
+> **Voice messages:** If transcription is enabled (`/add-transcription` skill applied), send a voice note. The agent should receive it as `[Voice: <transcript>]` and respond to its content.
+>
+> **Audio files:** Regular audio files (MP3, etc.) are delivered as `[Audio]: <filepath>` — transcription is only applied to voice messages (OGG/Opus) by default. Agents can call `transcribe_audio` manually on any audio file if the transcription MCP is configured.
 
 ### Verify the correct bot responded (secondary bots)
 
@@ -326,7 +330,24 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 # systemctl --user start nanoclaw
 ```
 
-## Agent Swarms (Teams)
+## Voice Message Transcription
+
+After completing Telegram setup, voice messages are supported. NanoClaw can automatically transcribe them using local whisper.cpp so the agent receives `[Voice: <transcript>]` instead of just a file path.
+
+**Prerequisites:** `whisper-cpp` and `ffmpeg` installed via Homebrew, plus a GGML model file at `data/models/`.
+
+Use `AskUserQuestion`:
+
+AskUserQuestion: Would you like to enable local voice transcription for this Telegram group? This uses whisper.cpp running on your Mac — no cloud, no API keys, no cost.
+
+If they say yes, invoke the `/add-transcription` skill. After applying it:
+1. The transcription MCP server is built into the container image
+2. Voice messages arriving in Telegram are auto-transcribed before the agent sees them
+3. Agents can also proactively call `transcribe_audio` on any audio file they encounter
+
+The transcription feature is **contingent on the credential proxy endpoint** (`POST /transcribe`) being available. The host service must be restarted after applying the skill for the proxy to load the new endpoint.
+
+## Agent Swarm (Teams)
 
 After completing the Telegram setup, use `AskUserQuestion`:
 
