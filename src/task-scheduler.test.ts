@@ -170,9 +170,9 @@ describe('task scheduler', () => {
     });
 
     it('replaces multiple different placeholders', () => {
-      expect(
-        substitutePromptVars('{{DAY_OF_WEEK}} {{DATE}} {{TIME}}'),
-      ).toBe('Wednesday 2026-04-29 20:05:00');
+      expect(substitutePromptVars('{{DAY_OF_WEEK}} {{DATE}} {{TIME}}')).toBe(
+        'Wednesday 2026-04-29 20:05:00',
+      );
     });
 
     it('leaves unknown placeholders untouched', () => {

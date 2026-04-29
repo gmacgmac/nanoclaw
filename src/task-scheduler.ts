@@ -103,7 +103,10 @@ export function substitutePromptVars(prompt: string): string {
     DAY_OF_WEEK: get('weekday'),
   };
 
-  return prompt.replace(/\{\{(NOW|DATETIME|DATE|TIME|DAY_OF_WEEK)\}\}/g, (_, key) => values[key] ?? `{{${key}}}`);
+  return prompt.replace(
+    /\{\{(NOW|DATETIME|DATE|TIME|DAY_OF_WEEK)\}\}/g,
+    (_, key) => values[key] ?? `{{${key}}}`,
+  );
 }
 
 async function runTask(
