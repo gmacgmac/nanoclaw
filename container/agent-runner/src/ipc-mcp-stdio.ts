@@ -90,7 +90,14 @@ MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It ca
 SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
-\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
+\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.
+
+PROMPT PLACEHOLDERS - The following are substituted at runtime when the task executes:
+\u2022 {{NOW}} \u2192 e.g. "Tuesday, 2026-04-29 20:05:00"
+\u2022 {{DATETIME}} \u2192 e.g. "2026-04-29T20:05:00"
+\u2022 {{DATE}} \u2192 e.g. "2026-04-29"
+\u2022 {{TIME}} \u2192 e.g. "20:05:00"
+\u2022 {{DAY_OF_WEEK}} \u2192 e.g. "Tuesday"`,
   {
     prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),

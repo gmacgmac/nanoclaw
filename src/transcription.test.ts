@@ -19,7 +19,9 @@ describe('transcribeAudio', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'transcription-test-'));
+    tmpDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'transcription-test-'),
+    );
   });
 
   afterEach(async () => {

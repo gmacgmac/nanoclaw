@@ -97,31 +97,7 @@ Repeat for each group that should have transcription access.
 
 ### Agent instructions
 
-Add to the group's `CLAUDE.md` or `memory/MEMORY.md`:
-
-```markdown
-## Audio Transcription
-
-When you receive a voice message or audio file, it arrives as a file path:
-`[Voice]: /workspace/group/media/2026-04-28T11-56-00_attachment.oga`
-
-Transcribe it using the local whisper.cpp tool:
-
-**Tool:** `mcp__nanoclaw__transcription__transcribe_audio`
-
-**Argument:** `audioPath` — the full container path exactly as received
-
-**How it works:** The tool sends the path to the host-side proxy, which runs
-`whisper-cli` using the `ggml-small.bin` model. No API calls, no cloud.
-
-**Result:** Returns the transcribed text.
-
-**When to use:** Always transcribe voice messages before responding to their content.
-Can also transcribe any audio file the user references.
-
-**Do not** run `ffmpeg` or `whisper-cli` directly inside the container — those binaries
-are on the host. Always route through the MCP tool.
-```
+The `transcribe_audio` MCP tool description already contains full usage docs for the agent (when to use, path format, how it works, common errors). No manual addition to CLAUDE.md or MEMORY.md is needed. The agent discovers everything it needs from the tool schema at runtime.
 
 ## Phase 4: Build and Restart
 

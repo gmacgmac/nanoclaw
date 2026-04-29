@@ -5,6 +5,7 @@ import {
   _resetSchedulerLoopForTests,
   computeNextRun,
   startSchedulerLoop,
+  substitutePromptVars,
 } from './task-scheduler.js';
 
 describe('task scheduler', () => {
@@ -125,5 +126,65 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  describe('substitutePromptVars', () => {
+    beforeEach(() => {
+      vi.setSystemTime(new Date('2026-04-29T20:05:00'));
+    });
+
+    it('replaces {{NOW}} with human-readable date and time', () => {
+      expect(substitutePromptVars('Summary for {{NOW}}')).toBe(
+        'Summary for Wednesday, 2026-04-29 20:05:00',
+      );
+    });
+
+    it('replaces {{DATETIME}} with ISO-like string', () => {
+      expect(substitutePromptVars('Run at {{DATETIME}}')).toBe(
+        'Run at 2026-04-29T20:05:00',
+      );
+    });
+
+    it('replaces {{DATE}} with YYYY-MM-DD', () => {
+      expect(substitutePromptVars('Report for {{DATE}}')).toBe(
+        'Report for 2026-04-29',
+      );
+    });
+
+    it('replaces {{TIME}} with HH:MM:SS', () => {
+      expect(substitutePromptVars('Check at {{TIME}}')).toBe(
+        'Check at 20:05:00',
+      );
+    });
+
+    it('replaces {{DAY_OF_WEEK}} with full weekday name', () => {
+      expect(substitutePromptVars('Happy {{DAY_OF_WEEK}}!')).toBe(
+        'Happy Wednesday!',
+      );
+    });
+
+    it('replaces multiple occurrences of the same placeholder', () => {
+      expect(substitutePromptVars('{{DATE}} and again {{DATE}}')).toBe(
+        '2026-04-29 and again 2026-04-29',
+      );
+    });
+
+    it('replaces multiple different placeholders', () => {
+      expect(
+        substitutePromptVars('{{DAY_OF_WEEK}} {{DATE}} {{TIME}}'),
+      ).toBe('Wednesday 2026-04-29 20:05:00');
+    });
+
+    it('leaves unknown placeholders untouched', () => {
+      expect(substitutePromptVars('{{UNKNOWN}} stays')).toBe(
+        '{{UNKNOWN}} stays',
+      );
+    });
+
+    it('returns prompt unchanged when no placeholders exist', () => {
+      expect(substitutePromptVars('No placeholders here')).toBe(
+        'No placeholders here',
+      );
+    });
   });
 });
