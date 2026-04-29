@@ -168,7 +168,11 @@ export function startCredentialProxy(
               res.end(JSON.stringify({ text: result.text }));
             } else {
               res.writeHead(500, { 'content-type': 'application/json' });
-              res.end(JSON.stringify({ error: result.error || 'Transcription failed' }));
+              res.end(
+                JSON.stringify({
+                  error: result.error || 'Transcription failed',
+                }),
+              );
             }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);

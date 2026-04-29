@@ -28,7 +28,8 @@ function resolveWhisperBin(): string {
  */
 function resolveModelPath(): string {
   return (
-    process.env.WHISPER_MODEL || path.join(process.cwd(), 'data/models/ggml-small.bin')
+    process.env.WHISPER_MODEL ||
+    path.join(process.cwd(), 'data/models/ggml-small.bin')
   );
 }
 
@@ -36,7 +37,10 @@ function resolveModelPath(): string {
  * Convert an audio file to WAV format (16kHz mono) using ffmpeg.
  * Returns the path to the temporary WAV file.
  */
-async function convertToWav(inputPath: string, tmpDir: string): Promise<string> {
+async function convertToWav(
+  inputPath: string,
+  tmpDir: string,
+): Promise<string> {
   const baseName = path.basename(inputPath, path.extname(inputPath));
   const wavPath = path.join(tmpDir, `${baseName}_${Date.now()}.wav`);
 

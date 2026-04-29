@@ -73,7 +73,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 - **Container isolation** - Agents are sandboxed in Docker (macOS/Linux), [Docker Sandboxes](docs/docker-sandboxes.md) (micro VM isolation), or Apple Container (macOS)
 - **Defence-in-depth security** - SSRF protection on outbound web requests, prompt injection scanning on context files, command approval for dangerous operations on write-mounted paths. All configurable per-group via `containerConfig`.
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
+- **Optional integrations** - Add Gmail (`/add-gmail`), voice transcription (`/add-transcription`), and more via skills
 
 ## Usage
 
@@ -250,6 +250,29 @@ OLLAMA_WEB_SEARCH_API_KEY=your-key
 ```
 
 See [docs/ollama-web-search-integration.md](docs/ollama-web-search-integration.md) for the full design.
+
+**Voice transcription:** NanoClaw can transcribe voice messages locally using whisper.cpp (no cloud, no API cost). Install whisper.cpp and a GGML model, then add the transcription MCP server to your group's `containerConfig`:
+
+```bash
+# macOS (requires Apple Silicon for best performance)
+brew install whisper-cpp ffmpeg
+# Download a model (base/small/medium)
+curl -L -o data/models/ggml-small.bin \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+```
+
+```json
+{
+  "mcpServers": {
+    "nanoclaw-transcription": {
+      "command": "node",
+      "args": ["/app/mcp-servers/nanoclaw-transcription/dist/index.js"]
+    }
+  }
+}
+```
+
+The agent receives voice messages as file paths and calls `mcp__nanoclaw__transcription__transcribe_audio` to transcribe them. See `.claude/skills/add-transcription/SKILL.md` for full setup and troubleshooting.
 
 **How do I debug issues?**
 

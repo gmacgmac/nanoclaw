@@ -79,6 +79,33 @@ export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
+export function substitutePromptVars(prompt: string): string {
+  const now = new Date();
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    weekday: 'long',
+    timeZone: TIMEZONE,
+  });
+  const parts = dtf.formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+
+  const values: Record<string, string> = {
+    NOW: `${get('weekday')}, ${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`,
+    DATETIME: `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`,
+    DATE: `${get('year')}-${get('month')}-${get('day')}`,
+    TIME: `${get('hour')}:${get('minute')}:${get('second')}`,
+    DAY_OF_WEEK: get('weekday'),
+  };
+
+  return prompt.replace(/\{\{(NOW|DATETIME|DATE|TIME|DAY_OF_WEEK)\}\}/g, (_, key) => values[key] ?? `{{${key}}}`);
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -177,7 +204,7 @@ async function runTask(
     const output = await runContainerAgent(
       group,
       {
-        prompt: task.prompt,
+        prompt: substitutePromptVars(task.prompt),
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
