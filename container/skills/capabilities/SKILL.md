@@ -35,28 +35,18 @@ Each directory is an installed skill. The directory name is the skill name (e.g.
 ### 2. Available tools
 
 Read the allowed tools from your SDK configuration. You always have access to:
-- **Core:** Bash, Read, Write, Edit, Glob, Grep
+- **Core:** Read, Write, Edit, Glob, Grep
+- **Shell:** `execute_command` (MCP) — shell commands with approval checks for write-mounted paths. Core `Bash` is also available but bypasses approval entirely; use `allowedTools` to block it if enforcement is required.
 - **Web (MCP):** mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
 - **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
-- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management)
+- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management, command execution)
 
 ### 3. MCP server tools
 
-The NanoClaw MCP server exposes these tools (via `mcp__nanoclaw__*` prefix):
-- `send_message` — send a message to the user/group (main can send to any registered group via `target_jid`)
-- `schedule_task` — schedule a recurring or one-time task
-- `list_tasks` — list scheduled tasks
-- `pause_task` — pause a scheduled task
-- `resume_task` — resume a paused task
-- `cancel_task` — cancel and delete a task
-- `update_task` — update an existing task
-- `get_registered_groups` — list registered groups (to find JIDs for `send_message target_jid`)
-- `register_group` — register a new chat/group (main only)
-- `delegate_to_group` — delegate a task to another group's agent, response arrives back in your queue (main only)
-- `respond_to_group` — respond to a delegation request using the UUID from the received message
-- `manual_flush` — manually trigger memory flush (compacts conversation into long-term memory)
-- `ping` — test tool, returns pong
+NanoClaw exposes tools via the `mcp__nanoclaw__*` prefix. Use them as needed — full descriptions, parameters, and usage guidance are built into the tool definitions.
+
+- `send_message`, `schedule_task`, `list_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `manual_flush`, `execute_command`, `ping`
 
 ### 4. Container skills (Bash tools)
 

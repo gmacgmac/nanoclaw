@@ -47,10 +47,11 @@ ls /workspace/ipc/ 2>/dev/null
 
 Confirm which tool families are available to you:
 
-- **Core:** Bash, Read, Write, Edit, Glob, Grep
+- **Core:** Read, Write, Edit, Glob, Grep
+- **Shell:** `execute_command` (MCP) — shell commands with approval checks for write-mounted paths. Core `Bash` is also available but bypasses approval entirely; use `allowedTools` to block it if enforcement is required.
 - **Web (MCP):** mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **MCP:** mcp__nanoclaw__* (send_message, schedule_task, list_tasks, pause_task, resume_task, cancel_task, update_task, get_registered_groups, register_group, manual_flush, ping)
+- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management, command execution)
 
 ### 4. Container utilities
 
