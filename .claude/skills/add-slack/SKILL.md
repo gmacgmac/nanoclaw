@@ -187,6 +187,19 @@ rm -rf data/sessions/<folder>/.claude/skills
 
 Do not duplicate formatting rules in CLAUDE.md — the skill is the single source of truth.
 
+### D. Configure container settings
+
+Run `/configure-group <folder>` to set the group's container configuration:
+
+- Allowed tools (e.g. exclude `WebSearch`/`WebFetch` if desired)
+- Model and endpoint
+- Host commands (e.g. enable `/model` for preset switching)
+- Security settings (SSRF, injection scanning, approval mode)
+- Additional mounts and MCP servers
+- Personality (system prompt, timeout)
+
+See the `/configure-group` skill for full details.
+
 ## Phase 6: Verify
 
 ### Test the connection

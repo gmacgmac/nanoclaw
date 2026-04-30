@@ -187,7 +187,20 @@ This agent's responses are stored in the database for UI polling.
 Use clear formatting with markdown.
 ```
 
-## Phase 6: Restart Service
+## Phase 6: Configure container settings
+
+Run `/configure-group <folder>` to set the group's container configuration:
+
+- Allowed tools (e.g. exclude `WebSearch`/`WebFetch` if desired)
+- Model and endpoint
+- Host commands (e.g. enable `/model` for preset switching)
+- Security settings (SSRF, injection scanning, approval mode)
+- Additional mounts and MCP servers
+- Personality (system prompt, timeout)
+
+See the `/configure-group` skill for full details.
+
+## Phase 7: Restart Service
 
 **Restart is NOT required** if the service is already running. The message loop will pick up new internal groups on the next cycle. Only restart if you want to force immediate processing.
 
@@ -196,7 +209,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 # Linux: systemctl --user restart nanoclaw
 ```
 
-## Phase 7: Verify
+## Phase 8: Verify
 
 Check registration:
 

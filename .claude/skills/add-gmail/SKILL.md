@@ -163,6 +163,19 @@ Tell the user to send themselves a test email. The agent should pick it up withi
 
 Once verified, offer filter customization via `AskUserQuestion` — by default, only emails in the Primary inbox trigger the agent (Promotions, Social, Updates, and Forums are excluded). The user can keep this default or narrow further by sender, label, or keywords. No code changes needed for filters.
 
+## Phase 5: Configure Group
+
+Run `/configure-group <folder>` to set the group's container configuration:
+
+- Allowed tools (e.g. exclude `WebSearch`/`WebFetch` if desired)
+- Model and endpoint
+- Host commands (e.g. enable `/model` for preset switching)
+- Security settings (SSRF, injection scanning, approval mode)
+- Additional mounts and MCP servers
+- Personality (system prompt, timeout)
+
+See the `/configure-group` skill for full details.
+
 ### Check logs if needed
 
 ```bash
