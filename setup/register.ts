@@ -23,6 +23,7 @@ interface RegisterArgs {
   isMain: boolean;
   assistantName: string;
   botTokenName: string;
+  endpoint: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -36,6 +37,7 @@ function parseArgs(args: string[]): RegisterArgs {
     isMain: false,
     assistantName: 'Andy',
     botTokenName: '',
+    endpoint: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -66,6 +68,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--bot-token-name':
         result.botTokenName = (args[++i] || '').toLowerCase().trim();
+        break;
+      case '--endpoint':
+        result.endpoint = (args[++i] || '').toLowerCase().trim();
         break;
     }
   }
@@ -105,11 +110,14 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
-  // Build containerConfig if bot-token-name is specified for Telegram
-  const containerConfig =
-    parsed.botTokenName && parsed.channel === 'telegram'
-      ? { telegramBot: parsed.botTokenName }
-      : undefined;
+  // Build containerConfig with endpoint and optional telegramBot
+  const containerConfig: Record<string, unknown> = {};
+  if (parsed.endpoint) {
+    containerConfig.endpoint = parsed.endpoint;
+  }
+  if (parsed.botTokenName && parsed.channel === 'telegram') {
+    containerConfig.telegramBot = parsed.botTokenName;
+  }
 
   setRegisteredGroup(parsed.jid, {
     name: parsed.name,
@@ -118,7 +126,7 @@ export async function run(args: string[]): Promise<void> {
     added_at: new Date().toISOString(),
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
-    ...(containerConfig && { containerConfig }),
+    ...(Object.keys(containerConfig).length > 0 && { containerConfig }),
   });
 
   // Create chats table row for internal groups (required for message processing)

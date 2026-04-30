@@ -74,6 +74,7 @@ import {
 import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger, log } from './logger.js';
+import { handleHostCommand } from './host-commands.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -970,7 +971,7 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
-    onMessage: (chatJid: string, msg: NewMessage) => {
+    onMessage: async (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
@@ -988,6 +989,26 @@ async function main(): Promise<void> {
         };
         if (checkApprovalResponse(chatJid, msg.content, sendFn)) {
           return; // Consumed by approval flow — do not forward to agent
+        }
+      }
+
+      // Host commands — intercept before storage for groups with allowedHostCommands
+      const group = registeredGroups[chatJid];
+      const allowedHostCommands = group?.containerConfig?.allowedHostCommands;
+      if (allowedHostCommands?.length && msg.content.trim().startsWith('/')) {
+        const sendReply = async (text: string) => {
+          const ch = findChannel(channels, chatJid);
+          if (ch?.isConnected()) await ch.sendMessage(chatJid, text);
+        };
+        if (
+          await handleHostCommand(msg, {
+            jid: chatJid,
+            group,
+            sender: msg.sender,
+            reply: sendReply,
+          }, queue.closeStdin.bind(queue))
+        ) {
+          return;
         }
       }
 

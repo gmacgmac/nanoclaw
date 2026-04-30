@@ -296,8 +296,7 @@ nanoclaw/
 │   │   └── nanoclaw-web-search/   # Web search via credential proxy (any vendor)
 │   └── skills/
 │       ├── agent-browser.md       # Browser automation skill
-│       ├── learning-loop/SKILL.md # Skill extraction format guide (when learningLoop enabled)
-│       └── web-search/SKILL.md    # Web search MCP tool guidance
+│       └── learning-loop/SKILL.md # Skill extraction format guide (when learningLoop enabled)
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
