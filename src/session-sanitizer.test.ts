@@ -58,9 +58,7 @@ describe('sanitizeSessionJsonl', () => {
     mockFile(
       JSON.stringify({
         message: {
-          content: [
-            { type: 'tool_use', id: 'functions.Bash:1', name: 'Bash' },
-          ],
+          content: [{ type: 'tool_use', id: 'functions.Bash:1', name: 'Bash' }],
         },
       }) + '\n',
     );
@@ -110,9 +108,7 @@ describe('sanitizeSessionJsonl', () => {
     const toolResult = JSON.parse(lines[1]);
 
     const sanitizedId = toolUse.message.content[0].id;
-    expect(sanitizedId).toBe(
-      'functions-mcp--nanoclaw--send-message-0',
-    );
+    expect(sanitizedId).toBe('functions-mcp--nanoclaw--send-message-0');
     expect(toolResult.message.content[0].tool_use_id).toBe(sanitizedId);
   });
 
@@ -135,9 +131,7 @@ describe('sanitizeSessionJsonl', () => {
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
-    const ids = entry.message.content.map(
-      (b: { id: string }) => b.id,
-    );
+    const ids = entry.message.content.map((b: { id: string }) => b.id);
     expect(ids[0]).not.toBe(ids[1]);
     expect(ids[0]).toMatch(/^a-b(-\d+)?$/);
     expect(ids[1]).toMatch(/^a-b(-\d+)?$/);
@@ -148,9 +142,7 @@ describe('sanitizeSessionJsonl', () => {
     mockFile(
       JSON.stringify({
         message: {
-          content: [
-            { type: 'tool_use', id: 'abc-123-XYZ', name: 'Bash' },
-          ],
+          content: [{ type: 'tool_use', id: 'abc-123-XYZ', name: 'Bash' }],
         },
       }) + '\n',
     );
@@ -182,9 +174,7 @@ describe('sanitizeSessionJsonl', () => {
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
-    expect(entry.message.content[0].tool_use_id).toBe(
-      'orphan-id-here',
-    );
+    expect(entry.message.content[0].tool_use_id).toBe('orphan-id-here');
   });
 
   it('skips lines that are not parseable JSON', () => {
@@ -193,9 +183,7 @@ describe('sanitizeSessionJsonl', () => {
       [
         JSON.stringify({
           message: {
-            content: [
-              { type: 'tool_use', id: 'a.b', name: 'x' },
-            ],
+            content: [{ type: 'tool_use', id: 'a.b', name: 'x' }],
           },
         }),
         'not-json-at-all',
@@ -218,9 +206,7 @@ describe('sanitizeSessionJsonl', () => {
     mockFile(
       JSON.stringify({
         message: {
-          content: [
-            { type: 'tool_use', id: 'a.b', name: 'x' },
-          ],
+          content: [{ type: 'tool_use', id: 'a.b', name: 'x' }],
         },
       }) + '\n',
     );
@@ -272,9 +258,7 @@ describe('sanitizeSessionJsonl', () => {
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
-    expect(entry.message.content).toEqual([
-      { type: 'text', text: 'hello' },
-    ]);
+    expect(entry.message.content).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
   it('writes file when only thinking blocks exist (no tool blocks)', () => {

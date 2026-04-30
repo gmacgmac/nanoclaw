@@ -229,14 +229,23 @@ We don't want configuration sprawl. Every user should customize NanoClaw so that
 
 **Can I use third-party or open-source models?**
 
-Yes. NanoClaw supports any Claude API-compatible model endpoint. Set these environment variables in your `.env` file:
+Yes. NanoClaw supports any Claude API-compatible model endpoint. First, configure your provider in `~/.config/nanoclaw/secrets.env`:
 
 ```bash
-ANTHROPIC_BASE_URL=https://your-api-endpoint.com
-ANTHROPIC_AUTH_TOKEN=your-token-here
+# Example: Ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_API_KEY=placeholder
 ```
 
-This allows you to use:
+Then, when registering a group, explicitly specify the endpoint:
+
+```bash
+npx tsx setup/index.ts --step register -- --jid "..." --endpoint ollama ...
+```
+
+Each group must have an explicit endpoint — there is no default. The endpoint name must match a vendor prefix in `secrets.env` (e.g. `ollama`, `anthropic`, `zai`).
+
+Supported providers:
 - Local models via [Ollama](https://ollama.ai) with an API proxy
 - Open-source models hosted on [Together AI](https://together.ai), [Fireworks](https://fireworks.ai), etc.
 - Custom model deployments with Anthropic-compatible APIs

@@ -278,9 +278,9 @@ describe('handleHostCommand', () => {
     });
     await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
 
-    const writeCall = vi.mocked(fs.writeFileSync).mock.calls.find(
-      (call) => call[0] === settingsPath,
-    );
+    const writeCall = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find((call) => call[0] === settingsPath);
     expect(writeCall).toBeDefined();
     const written = JSON.parse(writeCall![1] as string);
     expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
@@ -303,9 +303,9 @@ describe('handleHostCommand', () => {
     });
     await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
 
-    const writeCall = vi.mocked(fs.writeFileSync).mock.calls.find(
-      (call) => call[0] === settingsPath,
-    );
+    const writeCall = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find((call) => call[0] === settingsPath);
     expect(writeCall).toBeDefined();
     const written = JSON.parse(writeCall![1] as string);
     expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
