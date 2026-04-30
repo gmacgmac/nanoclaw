@@ -295,6 +295,19 @@ If files already exist, tell the user: "Memory seed files already exist — skip
 
 WhatsApp uses standard text rendering — no formatting skill is needed.
 
+### D. Configure container settings
+
+Run `/configure-group <folder>` to set the group's container configuration:
+
+- Allowed tools (e.g. exclude `WebSearch`/`WebFetch` if desired)
+- Model and endpoint
+- Host commands (e.g. enable `/model` for preset switching)
+- Security settings (SSRF, injection scanning, approval mode)
+- Additional mounts and MCP servers
+- Personality (system prompt, timeout)
+
+See the `/configure-group` skill for full details.
+
 ## Phase 6: Verify
 
 ### Build and restart
