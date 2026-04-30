@@ -93,6 +93,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
 | `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
 | `webSearchVendor` | `string` | `undefined` | Routes web search through named vendor's proxy endpoint |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
 
 **`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 

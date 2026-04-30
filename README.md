@@ -176,6 +176,39 @@ Example with all security flags:
 
 Invalid values log a warning and fall back to the secure default. No database migration is needed — the `containerConfig` JSON column is schema-less.
 
+## Host Commands
+
+Host commands are intercepted on the host process before reaching the agent container. They work across all channels (Telegram, WhatsApp, Slack, etc.) and are gated per-group via an explicit allowlist.
+
+### `/model` — Switch Model Preset
+
+Enable it for a group by adding `allowedHostCommands: ['model']` to the group's `containerConfig`:
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.allowedHostCommands', json_array('model')) WHERE folder = 'mygroup'"
+```
+
+Then send `/model` in the group to see the active preset and available choices, or `/model <preset>` to switch.
+
+Define presets in `~/.config/nanoclaw/model-presets.json`:
+
+```json
+{
+  "ollama_k2.6": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud"
+  },
+  "opus_4.7": {
+    "endpoint": "anthropic",
+    "model": "claude-opus-4-7"
+  }
+}
+```
+
+Only `model` and `endpoint` are updated — all other `containerConfig` fields (skills, allowedTools, systemPrompt, etc.) are preserved. The active container is recycled on switch so the next message spawns a fresh container with the new config.
+
+**Security:** `allowedHostCommands` is `undefined` by default, which means no host commands are allowed. Senders must also pass the sender allowlist check.
+
 ## FAQ
 
 **Why Docker?**

@@ -85,7 +85,7 @@ export interface ContainerConfig {
    * Named endpoint to use for this group's API traffic.
    * Must match a vendor prefix defined in secrets.env (e.g. "anthropic", "ollama", "zai").
    * The credential proxy routes requests to the correct upstream based on this value.
-   * Defaults to "anthropic" if omitted.
+   * Required — no default. Set during group registration via --endpoint.
    */
   endpoint?: string;
 
@@ -157,6 +157,14 @@ export interface ContainerConfig {
    * - undefined / absent → [] (no pre-approved patterns)
    */
   commandAllowlist?: string[];
+
+  /**
+   * Per-group host command allowlist.
+   * undefined = no host commands allowed (secure default).
+   * [] = explicitly none.
+   * ['model'] = allows /model host command.
+   */
+  allowedHostCommands?: string[];
 
   /**
    * Self-improving learning loop — skill extraction during memory flush.

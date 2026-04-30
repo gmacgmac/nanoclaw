@@ -115,6 +115,32 @@ export function validateContainerConfig(
     }
   }
 
+  // --- allowedHostCommands ---
+  if (config.allowedHostCommands !== undefined) {
+    if (!Array.isArray(config.allowedHostCommands)) {
+      warnings.push({
+        field: 'allowedHostCommands',
+        message: 'Must be an array of strings',
+        fallback: undefined,
+      });
+      delete (config as Record<string, unknown>).allowedHostCommands;
+    } else {
+      const validCommands: string[] = [];
+      for (const cmd of config.allowedHostCommands) {
+        if (typeof cmd === 'string') {
+          validCommands.push(cmd);
+        } else {
+          warnings.push({
+            field: 'allowedHostCommands',
+            message: `Non-string entry skipped: ${JSON.stringify(cmd)}`,
+            fallback: '(skipped)',
+          });
+        }
+      }
+      config.allowedHostCommands = validCommands;
+    }
+  }
+
   // --- learningLoop ---
   if (
     config.learningLoop !== undefined &&

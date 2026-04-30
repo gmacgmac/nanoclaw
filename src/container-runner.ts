@@ -317,7 +317,13 @@ function buildContainerArgs(
 
   // Pass the group's chosen endpoint name so the agent-runner can forward it
   // to the credential proxy via the X-Nanoclaw-Endpoint header.
-  const endpoint = group.containerConfig?.endpoint ?? 'anthropic';
+  const endpoint = group.containerConfig?.endpoint;
+  if (!endpoint) {
+    throw new Error(
+      `No endpoint configured for group ${group.folder}. ` +
+      `Update container_config with a vendor name from secrets.env (e.g. "ollama", "anthropic", "zai").`
+    );
+  }
   args.push('-e', `NANOCLAW_ENDPOINT=${endpoint}`);
 
   // Inject Brave Search API key if this group uses the brave-search MCP server.

@@ -75,7 +75,6 @@ Convention: `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY`. Scan
 | `src/container-runner.ts` | Injects `NANOCLAW_WEB_SEARCH_VENDOR`, proxy host/port env vars |
 | `container/mcp-servers/nanoclaw-web-search/` | MCP server (web_search + web_fetch tools) |
 | `container/agent-runner/src/index.ts` | Appends `X-Nanoclaw-Web-Search-Vendor` to `ANTHROPIC_CUSTOM_HEADERS` |
-| `container/skills/web-search/SKILL.md` | Agent guidance — prefer MCP tools over built-in |
 
 ## Security
 
@@ -89,7 +88,7 @@ Convention: `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY`. Scan
 The original design considered transparent proxy interception (intercepting built-in WebSearch/WebFetch at the proxy level). This was rejected because those tools are server-side — Anthropic's API executes them, not the SDK. The request never reaches the proxy.
 
 The MCP server approach was chosen instead:
-- Agent calls MCP tools explicitly (guided by the `web-search` skill document)
+- Agent calls MCP tools explicitly (tool descriptions contain full usage docs)
 - MCP server is a thin wrapper that POSTs to the credential proxy
 - Proxy handles vendor resolution and credential injection
 - Works regardless of inference endpoint
