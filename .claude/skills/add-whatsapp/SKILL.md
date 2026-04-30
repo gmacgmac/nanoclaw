@@ -230,6 +230,7 @@ npx tsx setup/index.ts --step register \
   --trigger "@<trigger>" \
   --folder "whatsapp_main" \
   --channel whatsapp \
+  --endpoint <provider> \
   --assistant-name "<name>" \
   --is-main \
   --no-trigger-required  # Only for main/self-chat
@@ -243,8 +244,11 @@ npx tsx setup/index.ts --step register \
   --name "<group-name>" \
   --trigger "@<trigger>" \
   --folder "whatsapp_<group-name>" \
-  --channel whatsapp
+  --channel whatsapp \
+  --endpoint <provider>
 ```
+
+`<provider>` must match a vendor prefix in `secrets.env` (e.g. `ollama`, `anthropic`, `zai`).
 
 ## Phase 5: Group Setup
 

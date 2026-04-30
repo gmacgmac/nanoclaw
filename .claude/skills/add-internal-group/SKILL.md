@@ -80,11 +80,13 @@ npx tsx setup/index.ts register -- \
   --folder "{folder}" \
   --trigger "{trigger}" \
   --channel dashboard \
+  --endpoint <provider> \
   [--no-trigger-required] \
   [--is-main]
 ```
 
 Flags:
+- `--endpoint` — **required**. Vendor prefix from `secrets.env` (e.g. `ollama`, `anthropic`, `zai`)
 - `--no-trigger-required` — use if main group (responds to all messages)
 - `--is-main` — use if this is the primary group (there can only be one main group per JID)
 
@@ -96,7 +98,8 @@ npx tsx setup/index.ts register -- \
   --name "Research" \
   --folder "research" \
   --trigger "@research" \
-  --channel dashboard
+  --channel dashboard \
+  --endpoint ollama
 ```
 
 Example for a main-style group:
@@ -108,6 +111,7 @@ npx tsx setup/index.ts register -- \
   --folder "assistant" \
   --trigger "@assistant" \
   --channel dashboard \
+  --endpoint ollama \
   --no-trigger-required \
   --is-main
 ```

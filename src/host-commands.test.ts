@@ -18,6 +18,7 @@ vi.mock('./sender-allowlist.js', () => ({
 
 vi.mock('./config.js', () => ({
   HOME_DIR: '/mock/home',
+  DATA_DIR: '/mock/data',
 }));
 
 describe('handleHostCommand', () => {
@@ -29,7 +30,11 @@ describe('handleHostCommand', () => {
     vi.resetAllMocks();
     replies = [];
     closeStdinCalls = [];
-    mockLoadSenderAllowlist.mockReturnValue({ default: { allow: '*', mode: 'trigger' }, chats: {}, logDenied: true });
+    mockLoadSenderAllowlist.mockReturnValue({
+      default: { allow: '*', mode: 'trigger' },
+      chats: {},
+      logDenied: true,
+    });
     mockIsSenderAllowed.mockReturnValue(true);
   });
 
@@ -45,11 +50,13 @@ describe('handleHostCommand', () => {
     });
   }
 
-  function makeCtx(overrides: {
-    allowedHostCommands?: string[];
-    containerConfig?: Record<string, unknown>;
-    sender?: string;
-  } = {}) {
+  function makeCtx(
+    overrides: {
+      allowedHostCommands?: string[];
+      containerConfig?: Record<string, unknown>;
+      sender?: string;
+    } = {},
+  ) {
     const base = overrides.containerConfig ?? {};
     return {
       jid: 'tg:123',
@@ -86,25 +93,41 @@ describe('handleHostCommand', () => {
   };
 
   it('returns false for messages not starting with /', async () => {
-    const result = await handleHostCommand(makeMsg('hello'), makeCtx({ allowedHostCommands: ['model'] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('hello'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
 
   it('returns false when command is not in allowedHostCommands', async () => {
-    const result = await handleHostCommand(makeMsg('/hi'), makeCtx({ allowedHostCommands: ['model'] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/hi'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
 
   it('returns false when allowedHostCommands is undefined', async () => {
-    const result = await handleHostCommand(makeMsg('/model'), makeCtx({ allowedHostCommands: undefined }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
 
   it('returns false when allowedHostCommands is empty', async () => {
-    const result = await handleHostCommand(makeMsg('/model'), makeCtx({ allowedHostCommands: [] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      makeCtx({ allowedHostCommands: [] }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
@@ -116,14 +139,22 @@ describe('handleHostCommand', () => {
         'ollama_k2.6': { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
       }),
     });
-    const result = await handleHostCommand(makeMsg('/model'), makeCtx({ allowedHostCommands: ['model'] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
   });
 
   it('/model with no presets replies "No profiles configured."', async () => {
     mockFiles({});
-    const result = await handleHostCommand(makeMsg('/model'), makeCtx({ allowedHostCommands: ['model'] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies).toEqual(['No profiles configured.']);
   });
@@ -173,7 +204,12 @@ describe('handleHostCommand', () => {
       folder: 'test',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
-      containerConfig: { allowedHostCommands: ['model'], endpoint: 'ollama', model: 'kimi-k2.6:cloud', skills: ['x'] },
+      containerConfig: {
+        allowedHostCommands: ['model'],
+        endpoint: 'ollama',
+        model: 'kimi-k2.6:cloud',
+        skills: ['x'],
+      },
     };
     const ctx = {
       jid: 'tg:123',
@@ -183,15 +219,22 @@ describe('handleHostCommand', () => {
         replies.push(text);
       },
     };
-    const result = await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+    );
     expect(result).toBe(true);
-    expect(mockSetRegisteredGroup).toHaveBeenCalledWith('tg:123', expect.objectContaining({
-      containerConfig: expect.objectContaining({
-        model: 'claude-opus-4-7',
-        endpoint: 'anthropic',
-        skills: ['x'],
+    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({
+        containerConfig: expect.objectContaining({
+          model: 'claude-opus-4-7',
+          endpoint: 'anthropic',
+          skills: ['x'],
+        }),
       }),
-    }));
+    );
     expect(group.containerConfig).toEqual({
       allowedHostCommands: ['model'],
       endpoint: 'anthropic',
@@ -215,6 +258,59 @@ describe('handleHostCommand', () => {
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
 
+  it('/model <preset> updates settings.json with new model', async () => {
+    const settingsPath = '/mock/data/sessions/test/.claude/settings.json';
+    mockFiles({
+      [presetsPath]: JSON.stringify({
+        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
+      }),
+      [settingsPath]: JSON.stringify({
+        env: {
+          ANTHROPIC_MODEL: 'kimi-k2.6:cloud',
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        },
+      }),
+    });
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    const ctx = makeCtx({
+      allowedHostCommands: ['model'],
+      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+    });
+    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
+
+    const writeCall = vi.mocked(fs.writeFileSync).mock.calls.find(
+      (call) => call[0] === settingsPath,
+    );
+    expect(writeCall).toBeDefined();
+    const written = JSON.parse(writeCall![1] as string);
+    expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
+    expect(written.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('0');
+  });
+
+  it('/model <preset> creates settings.json if missing', async () => {
+    const settingsPath = '/mock/data/sessions/test/.claude/settings.json';
+    mockFiles({
+      [presetsPath]: JSON.stringify({
+        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
+      }),
+    });
+    vi.mocked(fs.existsSync).mockImplementation((p: unknown) => {
+      return String(p) !== settingsPath;
+    });
+    const ctx = makeCtx({
+      allowedHostCommands: ['model'],
+      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+    });
+    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
+
+    const writeCall = vi.mocked(fs.writeFileSync).mock.calls.find(
+      (call) => call[0] === settingsPath,
+    );
+    expect(writeCall).toBeDefined();
+    const written = JSON.parse(writeCall![1] as string);
+    expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
+  });
+
   it('/model unknown_preset replies with rejection', async () => {
     mockFiles({
       [presetsPath]: JSON.stringify({
@@ -222,7 +318,11 @@ describe('handleHostCommand', () => {
       }),
     });
     const ctx = makeCtx({ allowedHostCommands: ['model'] });
-    const result = await handleHostCommand(makeMsg('/model unknown'), ctx, closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model unknown'),
+      ctx,
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Unknown preset');
     expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
@@ -233,7 +333,11 @@ describe('handleHostCommand', () => {
     mockFiles({
       [presetsPath]: JSON.stringify({}),
     });
-    const result = await handleHostCommand(makeMsg('/hi'), makeCtx({ allowedHostCommands: ['model'] }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/hi'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
@@ -244,7 +348,11 @@ describe('handleHostCommand', () => {
         'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
       }),
     });
-    const result = await handleHostCommand(makeMsg('/model'), makeCtx({ allowedHostCommands: undefined }), closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });

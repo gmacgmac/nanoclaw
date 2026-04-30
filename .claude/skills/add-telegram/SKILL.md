@@ -160,20 +160,22 @@ The chat ID, name, and folder name are needed. Use `npx tsx setup/index.ts --ste
 For a main chat (responds to all messages):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --no-trigger-required --is-main
+npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --endpoint <provider> --no-trigger-required --is-main
 ```
 
 For additional chats (trigger-only):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
+npx tsx setup/index.ts --step register -- --jid "tg:123456789" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram --endpoint <provider>
 ```
 
 For secondary bots (using a bot other than the default `TELEGRAM_BOT_TOKEN`), add `--bot-token-name` and use the virtual JID from `/chatid`:
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:6013943815:choc" --name "GM Choc" --folder "choc_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --bot-token-name choc
+npx tsx setup/index.ts --step register -- --jid "tg:6013943815:choc" --name "GM Choc" --folder "choc_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --endpoint <provider> --bot-token-name choc
 ```
+
+`<provider>` must match a vendor prefix in `secrets.env` (e.g. `ollama`, `anthropic`, `zai`).
 
 The `--bot-token-name` value must match the `{NAME}` part of the `TELEGRAM_{NAME}_BOT_TOKEN` env var in `secrets.env`. It is case-insensitive, so `choc` matches `TELEGRAM_CHOC_BOT_TOKEN`.
 

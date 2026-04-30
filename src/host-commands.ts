@@ -1,11 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 
-import { HOME_DIR } from './config.js';
+import { HOME_DIR, DATA_DIR } from './config.js';
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
+import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
+
+// Feature toggle: sanitize session JSONL when switching models
+// If this causes issues, set to false to disable entirely
+const SANITIZE_SESSION_ON_SWITCH = true;
 
 export interface HostCommandCtx {
   jid: string;
@@ -33,11 +38,16 @@ function loadPresets(): ModelPresets {
     const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null) {
-      logger.warn({ path: PRESETS_PATH }, 'model-presets.json is not an object');
+      logger.warn(
+        { path: PRESETS_PATH },
+        'model-presets.json is not an object',
+      );
       return {};
     }
     const presets: ModelPresets = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
       if (
         typeof value === 'object' &&
         value !== null &&
@@ -84,10 +94,44 @@ function findActivePreset(
   return undefined;
 }
 
+function updateSettingsJson(groupFolder: string, model: string): void {
+  const settingsPath = path.join(
+    DATA_DIR,
+    'sessions',
+    groupFolder,
+    '.claude',
+    'settings.json',
+  );
+
+  let settings: Record<string, unknown> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      settings = JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      logger.warn(
+        { err, path: settingsPath },
+        'Failed to parse settings.json, will overwrite',
+      );
+    }
+  }
+
+  const env =
+    typeof settings.env === 'object' && settings.env !== null
+      ? (settings.env as Record<string, unknown>)
+      : {};
+
+  env.ANTHROPIC_MODEL = model;
+  settings.env = env;
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
+
 export async function handleHostCommand(
   msg: NewMessage,
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => void,
+  _clearSession?: (groupFolder: string) => void,
 ): Promise<boolean> {
   const text = msg.content.trim();
   if (!text.startsWith('/')) return false;
@@ -129,7 +173,11 @@ async function handleModelCommand(
     // Report current preset
     const currentEndpoint = ctx.group.containerConfig?.endpoint ?? 'anthropic';
     const currentModel = ctx.group.containerConfig?.model;
-    const activePreset = findActivePreset(presets, currentEndpoint, currentModel);
+    const activePreset = findActivePreset(
+      presets,
+      currentEndpoint,
+      currentModel,
+    );
 
     if (presetNames.length === 0) {
       await ctx.reply('No profiles configured.');
@@ -174,9 +222,25 @@ async function handleModelCommand(
   // Sync in-memory cache
   (ctx.group as RegisteredGroup).containerConfig = newConfig;
 
+  // Update settings.json so the container SDK reads the correct model
+  updateSettingsJson(ctx.group.folder, preset.model);
+
   // Recycle active container so next message picks up new config
   closeStdin(ctx.jid);
 
-  await ctx.reply(`Switched to \`${presetName}\` (${preset.endpoint} / ${preset.model}).`);
+  if (SANITIZE_SESSION_ON_SWITCH) {
+    try {
+      sanitizeSessionJsonl(ctx.group.folder);
+    } catch (err) {
+      logger.warn(
+        { err, folder: ctx.group.folder },
+        'Session sanitization failed — proceeding anyway',
+      );
+    }
+  }
+
+  await ctx.reply(
+    `Switched to \`${presetName}\` (${preset.endpoint} / ${preset.model}).`,
+  );
   return true;
 }

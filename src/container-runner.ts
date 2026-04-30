@@ -321,7 +321,7 @@ function buildContainerArgs(
   if (!endpoint) {
     throw new Error(
       `No endpoint configured for group ${group.folder}. ` +
-      `Update container_config with a vendor name from secrets.env (e.g. "ollama", "anthropic", "zai").`
+        `Update container_config with a vendor name from secrets.env (e.g. "ollama", "anthropic", "zai").`,
     );
   }
   args.push('-e', `NANOCLAW_ENDPOINT=${endpoint}`);
