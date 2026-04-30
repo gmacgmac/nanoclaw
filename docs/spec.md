@@ -406,6 +406,8 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
 | `endpoint` | `string` | `"anthropic"` | Named inference endpoint (vendor in secrets.env) |
 | `webSearchVendor` | `string` | `"ollama"` | Named web search vendor (in secrets.env) |
+| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
 
 #### `skills` — Per-Group Skill Selection
 
@@ -466,6 +468,14 @@ Full tool reference — use these names in `allowedTools`:
 | `"sonnet"` | Use Claude Sonnet |
 | `"haiku"` | Use Claude Haiku (faster, cheaper) |
 
+Model precedence (highest to lowest):
+1. `containerConfig.model` (database) — overrides everything
+2. `data/sessions/{folder}/.claude/settings.json` → `ANTHROPIC_MODEL`
+3. `.env` → `ANTHROPIC_MODEL`
+4. SDK default
+
+Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets defined in `~/.config/nanoclaw/model-presets.json`. This updates both the database config and `settings.json` atomically.
+
 #### `systemPrompt` — Per-Group Persona
 
 | Value | Behaviour |
@@ -522,6 +532,34 @@ The `nanoclaw` server is always present and cannot be overridden — if a group 
 **Brave Search MCP**: A self-built MCP server at `container/mcp-servers/brave-search/` that wraps the Brave Search API. The API key (`BRAVE_SEARCH_API_KEY`) is read from `~/.config/nanoclaw/secrets.env` on the host and injected as a container env var — the container never sees the host secrets file.
 
 **NanoClaw Web Search MCP**: A self-built MCP server at `container/mcp-servers/nanoclaw-web-search/` that exposes `web_search` and `web_fetch` tools. Unlike brave-search (which injects an API key directly), web search routes through the credential proxy — the MCP server only needs the proxy host/port and vendor name. The proxy injects real API keys at request time. Configured via `webSearchVendor` in `containerConfig` (defaults to `"ollama"`). Requires `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY` in `secrets.env`. See [OLLAMA_WEB_SEARCH_INTEGRATION.md](OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
+
+#### `allowedHostCommands` — Host Commands
+
+Host commands are intercepted on the host process before reaching the agent container. They work across all channels and are gated per-group via an explicit allowlist.
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | No host commands allowed (secure default) |
+| `['model']` | Enables `/model` to switch model presets |
+
+**`/model`** — Switch between model presets defined in `~/.config/nanoclaw/model-presets.json`:
+
+```json
+{
+  "ollama_k2.6": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud"
+  },
+  "opus_4.7": {
+    "endpoint": "anthropic",
+    "model": "claude-opus-4-7"
+  }
+}
+```
+
+Send `/model` to list active preset and available choices. Send `/model <preset>` to switch. The active container is recycled on switch so the next message spawns a fresh container with the new config. Only `model` and `endpoint` are updated — all other `containerConfig` fields are preserved.
+
+When switching models, NanoClaw automatically sanitizes the session `.jsonl` transcript: non-compliant `tool_use` IDs (e.g. from Ollama) are rewritten to match `^[a-zA-Z0-9-]+$`, and `thinking` blocks (which carry model-specific cryptographic signatures) are stripped so the new model can safely resume the session.
 
 ### Claude Authentication
 

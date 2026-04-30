@@ -1000,13 +1000,22 @@ async function main(): Promise<void> {
           const ch = findChannel(channels, chatJid);
           if (ch?.isConnected()) await ch.sendMessage(chatJid, text);
         };
+        const clearSession = (groupFolder: string) => {
+          delete sessions[groupFolder];
+          deleteSession(groupFolder);
+        };
         if (
-          await handleHostCommand(msg, {
-            jid: chatJid,
-            group,
-            sender: msg.sender,
-            reply: sendReply,
-          }, queue.closeStdin.bind(queue))
+          await handleHostCommand(
+            msg,
+            {
+              jid: chatJid,
+              group,
+              sender: msg.sender,
+              reply: sendReply,
+            },
+            queue.closeStdin.bind(queue),
+            clearSession,
+          )
         ) {
           return;
         }
