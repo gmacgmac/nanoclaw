@@ -81,10 +81,7 @@ export function sanitizeSessionJsonl(groupFolder: string): void {
       if (b.type === 'tool_use' || b.type === 'tool_result') {
         hasToolBlocks = true;
       }
-      if (
-        b.type === 'tool_use' &&
-        typeof b.id === 'string'
-      ) {
+      if (b.type === 'tool_use' && typeof b.id === 'string') {
         const originalId = b.id;
         if (!idMap.has(originalId)) {
           let sanitized = sanitizeId(originalId);
@@ -154,10 +151,7 @@ export function sanitizeSessionJsonl(groupFolder: string): void {
         }
       }
 
-      if (
-        b.type === 'tool_result' &&
-        typeof b.tool_use_id === 'string'
-      ) {
+      if (b.type === 'tool_result' && typeof b.tool_use_id === 'string') {
         const mapped = idMap.get(b.tool_use_id);
         if (mapped) {
           b.tool_use_id = mapped;

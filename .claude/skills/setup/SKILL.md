@@ -246,6 +246,8 @@ Tell the user to open `~/.config/nanoclaw/secrets.env` in their editor and make 
 - Replace the entire `ANTHROPIC_API_KEY=placeholder` line with: `CLAUDE_CODE_OAUTH_TOKEN=<token>`
 - Note: this disables api-key mode — the placeholder line must be removed, not kept alongside the token.
 
+**Store the chosen provider name** (e.g. `ollama`, `zai`, `anthropic`) — this is required when registering groups in Step 5. Each group must be explicitly configured with an endpoint via `--endpoint`.
+
 ## 5. Set Up Channels
 
 AskUserQuestion (multiSelect): Which messaging channels do you want to enable?
