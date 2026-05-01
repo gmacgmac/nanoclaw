@@ -262,6 +262,11 @@ Run `/configure-group <folder>` to set the group's container configuration:
 
 See the `/configure-group` skill for full details.
 
+> **Command menu:** The Telegram `/` command menu is automatically synced on startup based on `allowedHostCommands`. After enabling host commands (e.g. `/model`), restart NanoClaw to update the menu:
+> ```bash
+> launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+> ```
+
 ## Phase 6: Verify
 
 ### Test the connection

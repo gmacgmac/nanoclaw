@@ -562,6 +562,70 @@ export class TelegramChannel implements Channel {
     if (this.bots.size > 1) {
       console.log(`  ${this.bots.size} Telegram bots connected\n`);
     }
+
+    // Sync command menus for all registered Telegram groups
+    const syncPromises: Promise<void>[] = [];
+    for (const [jid, _group] of Object.entries(
+      this.opts.registeredGroups(),
+    )) {
+      if (!jid.startsWith('tg:')) continue;
+      syncPromises.push(
+        this.syncCommandMenu(jid).catch((err) => {
+          logger.warn(
+            { jid, err },
+            'Command menu sync failed during startup',
+          );
+        }),
+      );
+    }
+    await Promise.all(syncPromises);
+  }
+
+  /**
+   * Sync the Telegram bot command menu for a registered group.
+   * Commands shown depend on containerConfig.allowedHostCommands.
+   */
+  async syncCommandMenu(jid: string): Promise<void> {
+    const resolved = this.getBotForJid(jid);
+    if (!resolved) return;
+
+    const group = this.opts.registeredGroups()[jid];
+    if (!group) return;
+
+    const { chatId } = parseTelegramJid(jid);
+    if (!chatId) return;
+
+    const commands: { command: string; description: string }[] = [
+      {
+        command: 'chatid',
+        description: 'Show this chat ID for registration',
+      },
+      {
+        command: 'ping',
+        description: 'Check bot status',
+      },
+    ];
+
+    const allowedHostCommands =
+      group.containerConfig?.allowedHostCommands ?? [];
+    if (allowedHostCommands.includes('model')) {
+      commands.push({
+        command: 'model',
+        description: 'Switch model preset',
+      });
+    }
+
+    try {
+      await resolved.bot.api.setMyCommands(commands, {
+        scope: { type: 'chat', chat_id: chatId },
+      });
+      logger.info(
+        { jid, commands: commands.map((c) => c.command) },
+        'Telegram command menu synced',
+      );
+    } catch (err) {
+      logger.warn({ jid, err }, 'Failed to sync Telegram command menu');
+    }
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
