@@ -565,16 +565,11 @@ export class TelegramChannel implements Channel {
 
     // Sync command menus for all registered Telegram groups
     const syncPromises: Promise<void>[] = [];
-    for (const [jid, _group] of Object.entries(
-      this.opts.registeredGroups(),
-    )) {
+    for (const [jid, _group] of Object.entries(this.opts.registeredGroups())) {
       if (!jid.startsWith('tg:')) continue;
       syncPromises.push(
         this.syncCommandMenu(jid).catch((err) => {
-          logger.warn(
-            { jid, err },
-            'Command menu sync failed during startup',
-          );
+          logger.warn({ jid, err }, 'Command menu sync failed during startup');
         }),
       );
     }

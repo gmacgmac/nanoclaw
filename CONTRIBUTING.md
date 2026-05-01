@@ -9,7 +9,7 @@
    ```
    If a related PR or issue exists, build on it rather than duplicating effort.
 
-2. **Check alignment.** Read the [Philosophy section in README.md](README.md#philosophy). Source code changes should only be things 90%+ of users need. Skills can be more niche, but should still be useful beyond a single person's setup.
+2. **Check alignment.** Read [README.md](README.md). Source code changes should only be things 90%+ of users need. Skills can be more niche, but should still be useful beyond a single person's setup.
 
 3. **One thing per PR.** Each PR should do one thing — one bug fix, one skill, one simplification. Don't mix unrelated changes in a single PR.
 
