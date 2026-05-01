@@ -16,14 +16,21 @@ export interface ProxyPlugin {
    * Handle an incoming request.
    * @returns true if handled (response sent), false to pass through to default routing.
    */
-  handle(req: IncomingMessage, res: ServerResponse, body: Buffer): Promise<boolean>;
+  handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    body: Buffer,
+  ): Promise<boolean>;
 }
 
 export type ProxyPluginFactory = () => ProxyPlugin | null;
 
 const registry = new Map<string, ProxyPluginFactory>();
 
-export function registerProxyPlugin(name: string, factory: ProxyPluginFactory): void {
+export function registerProxyPlugin(
+  name: string,
+  factory: ProxyPluginFactory,
+): void {
   registry.set(name, factory);
 }
 
@@ -33,6 +40,6 @@ export function registerProxyPlugin(name: string, factory: ProxyPluginFactory): 
  */
 export function createProxyPlugins(): ProxyPlugin[] {
   return [...registry.values()]
-    .map(factory => factory())
+    .map((factory) => factory())
     .filter((p): p is ProxyPlugin => p !== null);
 }

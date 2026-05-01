@@ -121,7 +121,12 @@ class UplynkProxyPlugin implements ProxyPlugin {
     }
 
     logger.info(
-      { method, path: apiPath, upstream: 'services.uplynk.com', plugin: this.name },
+      {
+        method,
+        path: apiPath,
+        upstream: 'services.uplynk.com',
+        plugin: this.name,
+      },
       'Proxy plugin forwarding request',
     );
 
