@@ -1136,7 +1136,10 @@ describe('TelegramChannel', () => {
 
       expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
         [
-          { command: 'chatid', description: 'Show this chat ID for registration' },
+          {
+            command: 'chatid',
+            description: 'Show this chat ID for registration',
+          },
           { command: 'ping', description: 'Check bot status' },
           { command: 'model', description: 'Switch model preset' },
         ],
@@ -1160,7 +1163,10 @@ describe('TelegramChannel', () => {
 
       expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
         [
-          { command: 'chatid', description: 'Show this chat ID for registration' },
+          {
+            command: 'chatid',
+            description: 'Show this chat ID for registration',
+          },
           { command: 'ping', description: 'Check bot status' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
