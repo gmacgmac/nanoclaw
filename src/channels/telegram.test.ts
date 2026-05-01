@@ -53,6 +53,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -1113,6 +1114,74 @@ describe('TelegramChannel', () => {
         expect.stringContaining('tg:100200300'),
         expect.any(Object),
       );
+    });
+  });
+
+  // --- syncCommandMenu ---
+
+  describe('syncCommandMenu', () => {
+    it('sets /chatid and /model when model host command is allowed', async () => {
+      const opts = createTestOpts();
+      opts.registeredGroups = vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Main',
+          folder: 'telegram_main',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: { allowedHostCommands: ['model'] },
+        },
+      }));
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
+        [
+          { command: 'chatid', description: 'Show this chat ID for registration' },
+          { command: 'ping', description: 'Check bot status' },
+          { command: 'model', description: 'Switch model preset' },
+        ],
+        { scope: { type: 'chat', chat_id: '100200300' } },
+      );
+    });
+
+    it('sets only /chatid and /ping when no host commands are allowed', async () => {
+      const opts = createTestOpts();
+      opts.registeredGroups = vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Main',
+          folder: 'telegram_main',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: {},
+        },
+      }));
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
+        [
+          { command: 'chatid', description: 'Show this chat ID for registration' },
+          { command: 'ping', description: 'Check bot status' },
+        ],
+        { scope: { type: 'chat', chat_id: '100200300' } },
+      );
+    });
+
+    it('does not call setMyCommands for non-telegram JIDs', async () => {
+      const opts = createTestOpts();
+      opts.registeredGroups = vi.fn(() => ({
+        'wa:123': {
+          name: 'WhatsApp',
+          folder: 'whatsapp_main',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: { allowedHostCommands: ['model'] },
+        },
+      }));
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      expect(currentBot().api.setMyCommands).not.toHaveBeenCalled();
     });
   });
 
