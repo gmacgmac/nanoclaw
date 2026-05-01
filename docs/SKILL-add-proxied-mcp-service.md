@@ -238,4 +238,57 @@ YOUR_VENDOR_{SERVICE}_API_KEY=your-key-here
 
 ---
 
+---
+
+## Proxy Plugin Alternative (Lightweight)
+
+When you need a single vendor's API with custom signing — but don't need structured MCP tool definitions, multi-vendor routing, or per-group vendor override — use a **proxy plugin** instead of a full MCP server.
+
+### When to Use
+
+- Single vendor, single auth scheme
+- Agent builds its own tools via raw HTTP (e.g. `curl` through the proxy)
+- No MCP server, no Dockerfile changes, no container-runner wiring needed
+- A bootstrap skill teaches the agent how to call the API
+
+### Architecture
+
+```
+src/proxy-plugins/
+├── registry.ts   # ProxyPlugin interface + Map-based registry + factory helpers
+├── index.ts      # Barrel — imports each plugin module (triggers self-registration)
+└── uplynk.ts     # First plugin: HMAC-SHA256 signing for Uplynk CMS API
+```
+
+### How It Works
+
+1. Each plugin module calls `registerProxyPlugin(name, factory)` at import time (same self-registration pattern as channels).
+2. At proxy startup, `createProxyPlugins()` calls every factory. Factories return `null` when their required credentials are missing in `secrets.env` — zero overhead for unconfigured plugins.
+3. The credential proxy checks active plugins (by `pathPrefixes`) **before** existing inference/web-search routing.
+4. A matching plugin handles signing, auth injection, and forwarding to the upstream API. The response is piped back to the caller.
+
+### How It Differs from the MCP Pattern
+
+| Aspect | Full MCP (this doc) | Proxy Plugin |
+|--------|---------------------|-------------|
+| MCP server | Yes — new server in `container/mcp-servers/` | No |
+| Dockerfile changes | Yes — `COPY` + `npm install` + `npm run build` | No |
+| Container-runner wiring | Yes — env vars, vendor header injection | No |
+| Per-group vendor override | Yes (`containerConfig.{service}Vendor`) | No (single vendor) |
+| Agent tool surface | Structured MCP tools (`mcp__server__tool`) | Raw HTTP via proxy (agent builds its own calls) |
+| Credential isolation | Same — credentials never enter containers | Same |
+
+### Reference Implementation
+
+`src/proxy-plugins/uplynk.ts` — reads `UPLYNK_USERID` + `UPLYNK_API_KEY` from `secrets.env`, signs requests with HMAC-SHA256 + raw deflate, forwards to `services.uplynk.com`. Agent sends plain JSON to `http://host.docker.internal:<port>/uplynk/<api-path>`.
+
+### When to Upgrade to Full MCP
+
+Upgrade to the full MCP pattern (Steps 1–6 above) when you need:
+- Structured tool definitions visible to the agent via `mcp__server__tool`
+- Multi-vendor routing with per-group vendor override
+- Complex request/response transformation beyond signing
+
+---
+
 *Derived from the web search proxy routing implementation (April 2026). See `cortex-tasks/agentic-tools/nanoclaw_2026-04-06_web-search-proxy-routing/` for the full task set.*

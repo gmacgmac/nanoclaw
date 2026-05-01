@@ -78,6 +78,14 @@ Real API credentials **never enter containers**. Instead, the host runs an HTTP 
 4. The proxy strips placeholder auth, injects real credentials (`x-api-key` or `Authorization: Bearer`), and forwards to `api.anthropic.com`
 5. Agents cannot discover real credentials — not in environment, stdin, files, or `/proc`
 
+**Proxy Plugins**
+
+Proxy plugins extend the credential proxy with custom API signing and forwarding for specific upstream services. They run in the host process (not in containers) and share the same security properties as the core proxy: credentials never enter containers and are only read from `secrets.env` on the host.
+
+Plugins load conditionally — a plugin's factory returns `null` when its required credentials are not configured, so unconfigured plugins add zero overhead and no attack surface. Plugin code executes only in the trusted host process.
+
+Example: the Uplynk plugin reads `UPLYNK_USERID` + `UPLYNK_API_KEY` from `secrets.env`, signs requests with HMAC-SHA256, and forwards to `services.uplynk.com`. Containers send plain JSON to the proxy; signing and credential injection happen entirely on the host side.
+
 **NOT Mounted:**
 - WhatsApp session (`store/auth/`) - host only
 - Mount allowlist - external, never mounted
