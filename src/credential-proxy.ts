@@ -138,7 +138,7 @@ export function startCredentialProxy(
   const proxyPlugins = createProxyPlugins();
   if (proxyPlugins.length > 0) {
     logger.info(
-      { plugins: proxyPlugins.map(p => p.name) },
+      { plugins: proxyPlugins.map((p) => p.name) },
       'Proxy plugins loaded',
     );
   }
@@ -195,8 +195,8 @@ export function startCredentialProxy(
         }
 
         // --- Proxy plugins ---
-        const matchedPlugin = proxyPlugins.find(p =>
-          p.pathPrefixes.some(prefix => req.url?.startsWith(prefix)),
+        const matchedPlugin = proxyPlugins.find((p) =>
+          p.pathPrefixes.some((prefix) => req.url?.startsWith(prefix)),
         );
         if (matchedPlugin) {
           try {
@@ -204,7 +204,10 @@ export function startCredentialProxy(
             if (handled) return;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            logger.error({ err: msg, plugin: matchedPlugin.name }, 'Proxy plugin error');
+            logger.error(
+              { err: msg, plugin: matchedPlugin.name },
+              'Proxy plugin error',
+            );
             if (!res.headersSent) {
               res.writeHead(500, { 'content-type': 'application/json' });
               res.end(JSON.stringify({ error: msg }));

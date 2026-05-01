@@ -55,10 +55,12 @@ function makeRequest(
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve({
-          statusCode: res.statusCode!,
-          body: Buffer.concat(chunks).toString(),
-        }));
+        res.on('end', () =>
+          resolve({
+            statusCode: res.statusCode!,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
       },
     );
     req.on('error', reject);
@@ -67,7 +69,7 @@ function makeRequest(
   });
 }
 
-const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // --- Tests ---
 
@@ -87,7 +89,10 @@ describeOrSkip('uplynk proxy plugin — live API', () => {
   });
 
   it('GET /uplynk/api/v4/assets returns asset collection', async () => {
-    const res = await makeRequest(port, { method: 'GET', path: '/uplynk/api/v4/assets' });
+    const res = await makeRequest(port, {
+      method: 'GET',
+      path: '/uplynk/api/v4/assets',
+    });
     expect(res.statusCode).toBe(200);
     const json = JSON.parse(res.body);
     expect(json['@type']).toBe('Collection');
@@ -119,7 +124,11 @@ describeOrSkip('uplynk proxy plugin — live API', () => {
 
   it('non-plugin path bypasses plugin', async () => {
     await delay(1500);
-    const res = await makeRequest(port, { method: 'POST', path: '/v1/messages' }, '{}');
+    const res = await makeRequest(
+      port,
+      { method: 'POST', path: '/v1/messages' },
+      '{}',
+    );
     // Goes to inference routing, not plugin
     expect(res.body).not.toContain('Uplynk upstream error');
   });
