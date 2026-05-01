@@ -30,6 +30,8 @@ import {
 } from './env.js';
 import { logger } from './logger.js';
 import { transcribeAudio } from './transcription.js';
+import { createProxyPlugins } from './proxy-plugins/registry.js';
+import './proxy-plugins/index.js'; // trigger self-registration
 
 /**
  * Resolve an audio file path that may be a container path
@@ -132,6 +134,15 @@ export function startCredentialProxy(
   const webSearchTable = scanWebSearchEndpoints();
   const webSearchVendors = Object.keys(webSearchTable);
 
+  // Build proxy plugin instances (only active if credentials configured)
+  const proxyPlugins = createProxyPlugins();
+  if (proxyPlugins.length > 0) {
+    logger.info(
+      { plugins: proxyPlugins.map(p => p.name) },
+      'Proxy plugins loaded',
+    );
+  }
+
   // Legacy secrets for backward compatibility (OAuth, single-endpoint setups)
   const legacySecrets = readEnvFile([
     'ANTHROPIC_API_KEY',
@@ -181,6 +192,25 @@ export function startCredentialProxy(
             res.end(JSON.stringify({ error: msg }));
           }
           return;
+        }
+
+        // --- Proxy plugins ---
+        const matchedPlugin = proxyPlugins.find(p =>
+          p.pathPrefixes.some(prefix => req.url?.startsWith(prefix)),
+        );
+        if (matchedPlugin) {
+          try {
+            const handled = await matchedPlugin.handle(req, res, body);
+            if (handled) return;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error({ err: msg, plugin: matchedPlugin.name }, 'Proxy plugin error');
+            if (!res.headersSent) {
+              res.writeHead(500, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: msg }));
+            }
+            return;
+          }
         }
 
         // Check if this is a web search request (path-based routing)

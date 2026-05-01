@@ -635,6 +635,30 @@ npx tsx setup/index.ts --step register -- --jid "tg:123456789:fin" --name "Fin G
 
 Groups registered with plain JIDs (no `:botName` suffix) fall back to `containerConfig.telegramBot` or the default bot.
 
+### `isMain` — Main Group Privileges
+
+The `isMain` flag on `registered_groups` designates a group as the main control group. It is set during setup for the first registered group and cannot be changed by agents via IPC (defense in depth in `src/ipc.ts`).
+
+| Behaviour | Main (`isMain = true`) | Non-Main |
+|-----------|------------------------|----------|
+| Trigger required | No — responds to all messages | Yes, unless `requiresTrigger: false` |
+| Send message to other groups | Yes (any JID) | Own chat JID only |
+| Schedule / pause / cancel tasks | Any group | Own group only |
+| Register new groups | Yes | No |
+| Refresh group metadata | Yes | No |
+| View group list | All groups | Empty list |
+| `additionalMounts` read-only enforcement | Exempt | Enforced when `mount-allowlist.json` has `nonMainReadOnly: true` |
+
+**Trigger states:** Two independent flags control whether a group requires a trigger word:
+
+| `isMain` | `requiresTrigger` | Behaviour |
+|----------|-------------------|-----------|
+| `true` | any | No trigger required |
+| `false` | `false` | No trigger required (e.g. solo 1-on-1 chats) |
+| `false` | `undefined` / `true` | Trigger required |
+
+Default is `requiresTrigger: undefined` which behaves as `true`.
+
 ---
 
 ## Host Commands
