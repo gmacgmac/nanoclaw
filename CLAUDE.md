@@ -35,6 +35,20 @@ When working in Claude Code CLI on the host (this context), write memories to th
 
 Query the database with: `sqlite3 store/messages.db`
 
+### DB Schema (source of truth: `src/db.ts`)
+
+| Table | Columns |
+|-------|---------|
+| `chats` | `jid` (PK), `name`, `last_message_time`, `channel`, `is_group` |
+| `messages` | `id`, `chat_jid`, `sender`, `sender_name`, `content`, `timestamp`, `is_from_me`, `is_bot_message` |
+| `registered_groups` | `jid` (PK), `name`, `folder`, `trigger_pattern`, `added_at`, `container_config`, `requires_trigger`, `is_main`, `multi_agent_router` |
+| `sessions` | `group_folder` (PK), `session_id` |
+| `scheduled_tasks` | `id` (PK), `group_folder`, `chat_jid`, `prompt`, `schedule_type`, `schedule_value`, `context_mode`, `next_run`, `last_run`, `last_result`, `status`, `created_at`, `script` |
+| `task_run_logs` | `id`, `task_id`, `run_at`, `duration_ms`, `status`, `result`, `error` |
+| `delegations` | `uuid` (PK), `caller_jid`, `target_jid`, `created_at`, `expires_at`, `status` |
+| `error_log` | `id`, `level`, `message`, `context`, `timestamp` |
+| `router_state` | `key` (PK), `value` |
+
 ## Credential Rules
 
 All secrets go in `~/.config/nanoclaw/secrets.env`. This includes:
