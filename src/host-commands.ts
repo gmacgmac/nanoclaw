@@ -4,6 +4,7 @@ import path from 'path';
 import { HOME_DIR, DATA_DIR } from './config.js';
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
+import { buildNudgePrompt } from './lib/nudge-prompt.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
@@ -130,14 +131,37 @@ function updateSettingsJson(groupFolder: string, model: string): void {
 export async function handleHostCommand(
   msg: NewMessage,
   ctx: HostCommandCtx,
-  closeStdin: (jid: string) => void,
-  _clearSession?: (groupFolder: string) => void,
+  closeStdin: (jid: string) => boolean,
+  clearSession?: (groupFolder: string) => void,
+  enqueueNudge?: (jid: string, groupFolder: string) => Promise<boolean>,
 ): Promise<boolean> {
   const text = msg.content.trim();
   if (!text.startsWith('/')) return false;
 
   const parts = text.slice(1).split(/\s+/);
-  const commandName = parts[0];
+  const commandName = parts[0].toLowerCase();
+
+  // --- Ungated commands (available to all groups, no allowedHostCommands check) ---
+
+  if (commandName === 'shutdown') {
+    // Sender auth check
+    const allowlistCfg = loadSenderAllowlist();
+    if (!isSenderAllowed(ctx.jid, ctx.sender, allowlistCfg)) {
+      await ctx.reply('Not authorised.');
+      return true;
+    }
+
+    const stopped = closeStdin(ctx.jid);
+    if (stopped) {
+      logger.info({ group: ctx.group.name, sender: ctx.sender }, '/shutdown command executed');
+      await ctx.reply('Container stopped. Next message will start a new container with the same session.');
+    } else {
+      await ctx.reply('No container running for this group.');
+    }
+    return true;
+  }
+
+  // --- Gated commands (require allowedHostCommands config) ---
 
   const allowed = ctx.group.containerConfig?.allowedHostCommands;
   if (!allowed?.includes(commandName)) {
@@ -155,6 +179,10 @@ export async function handleHostCommand(
     return handleModelCommand(parts.slice(1), ctx, closeStdin);
   }
 
+  if (commandName === 'newsession') {
+    return handleNewSessionCommand(ctx, closeStdin, clearSession, enqueueNudge);
+  }
+
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
   // but treat as consumed to avoid leaking to agent.
   await ctx.reply(`Unknown host command: /${commandName}`);
@@ -164,7 +192,7 @@ export async function handleHostCommand(
 async function handleModelCommand(
   args: string[],
   ctx: HostCommandCtx,
-  closeStdin: (jid: string) => void,
+  closeStdin: (jid: string) => boolean,
 ): Promise<boolean> {
   const presets = loadPresets();
   const presetNames = Object.keys(presets);
@@ -242,5 +270,67 @@ async function handleModelCommand(
   await ctx.reply(
     `Switched to \`${presetName}\` (${preset.endpoint} / ${preset.model}).`,
   );
+  return true;
+}
+
+
+async function handleNewSessionCommand(
+  ctx: HostCommandCtx,
+  closeStdin: (jid: string) => boolean,
+  clearSession?: (groupFolder: string) => void,
+  enqueueNudge?: (jid: string, groupFolder: string) => Promise<boolean>,
+): Promise<boolean> {
+  // Check if a container is active by attempting to send a message.
+  // sendMessage returns false if no active container — but we don't actually
+  // want to send anything yet. Use closeStdin's return value as the probe:
+  // we'll call enqueueNudge which spawns a fresh container for the nudge anyway.
+
+  if (!enqueueNudge) {
+    // No nudge callback — just clear session directly
+    closeStdin(ctx.jid);
+    clearSession?.(ctx.group.folder);
+    logger.info(
+      { group: ctx.group.name, sender: ctx.sender },
+      '/newsession command executed — session cleared (no nudge callback)',
+    );
+    await ctx.reply('Session cleared. Next message starts fresh.');
+    return true;
+  }
+
+  // Stop any running container first so the nudge task gets a fresh one
+  const hadContainer = closeStdin(ctx.jid);
+
+  if (!hadContainer) {
+    // No container was running — nothing to write memories from
+    clearSession?.(ctx.group.folder);
+    logger.info(
+      { group: ctx.group.name, sender: ctx.sender },
+      '/newsession command executed — session cleared (no container)',
+    );
+    await ctx.reply(
+      'Session cleared (no container was running). Next message starts fresh.',
+    );
+    return true;
+  }
+
+  // Container was running — nudge memories before clearing
+  await ctx.reply('Starting new session... writing memories first.');
+
+  const nudgeOk = await enqueueNudge(ctx.jid, ctx.group.folder);
+  if (!nudgeOk) {
+    logger.warn(
+      { group: ctx.group.name },
+      '/newsession nudge failed — clearing session anyway',
+    );
+  }
+
+  // Clear session (in-memory + SQLite)
+  clearSession?.(ctx.group.folder);
+
+  logger.info(
+    { group: ctx.group.name, sender: ctx.sender },
+    '/newsession command executed — session cleared',
+  );
+  await ctx.reply('Session cleared. Next message starts fresh.');
   return true;
 }

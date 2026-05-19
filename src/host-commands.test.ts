@@ -88,8 +88,9 @@ describe('handleHostCommand', () => {
     };
   }
 
-  const closeStdin = (jid: string) => {
+  const closeStdin = (jid: string): boolean => {
     closeStdinCalls.push(jid);
+    return true;
   };
 
   it('returns false for messages not starting with /', async () => {
@@ -355,5 +356,160 @@ describe('handleHostCommand', () => {
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
+  });
+
+  // --- /shutdown tests ---
+
+  it('/shutdown stops a running container and replies confirmation', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/shutdown'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']);
+    expect(replies[0]).toContain('Container stopped');
+  });
+
+  it('/shutdown works without allowedHostCommands configured', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/shutdown'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']);
+  });
+
+  it('/shutdown replies "No container running" when no active container', async () => {
+    const noopCloseStdin = (_jid: string): boolean => false;
+    const result = await handleHostCommand(
+      makeMsg('/shutdown'),
+      makeCtx({ allowedHostCommands: undefined }),
+      noopCloseStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies[0]).toBe('No container running for this group.');
+  });
+
+  it('/shutdown rejects unauthorized sender', async () => {
+    mockIsSenderAllowed.mockReturnValue(false);
+    const result = await handleHostCommand(
+      makeMsg('/shutdown'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies).toEqual(['Not authorised.']);
+    expect(closeStdinCalls).toEqual([]);
+  });
+
+  it('/shutdown is case-insensitive', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/Shutdown'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']);
+  });
+
+  // --- /newsession tests ---
+
+  it('/newsession is gated — returns false when not in allowedHostCommands', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/newsession'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
+    expect(result).toBe(false);
+    expect(replies).toEqual([]);
+  });
+
+  it('/newsession clears session when no container is running', async () => {
+    const noopCloseStdin = (_jid: string): boolean => false;
+    const clearSessionCalls: string[] = [];
+    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const enqueueNudge = vi.fn();
+
+    const result = await handleHostCommand(
+      makeMsg('/newsession'),
+      makeCtx({ allowedHostCommands: ['newsession'] }),
+      noopCloseStdin,
+      clearSession,
+      enqueueNudge,
+    );
+    expect(result).toBe(true);
+    expect(clearSessionCalls).toEqual(['test']);
+    expect(enqueueNudge).not.toHaveBeenCalled();
+    expect(replies[0]).toContain('no container was running');
+  });
+
+  it('/newsession nudges then clears session when container is running', async () => {
+    const clearSessionCalls: string[] = [];
+    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const enqueueNudge = vi.fn().mockResolvedValue(true);
+
+    const result = await handleHostCommand(
+      makeMsg('/newsession'),
+      makeCtx({ allowedHostCommands: ['newsession'] }),
+      closeStdin,
+      clearSession,
+      enqueueNudge,
+    );
+    expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']); // first call stops existing container
+    expect(enqueueNudge).toHaveBeenCalledWith('tg:123', 'test');
+    expect(clearSessionCalls).toEqual(['test']);
+    expect(replies[0]).toContain('writing memories first');
+    expect(replies[1]).toContain('Session cleared');
+  });
+
+  it('/newsession clears session even when nudge fails', async () => {
+    const clearSessionCalls: string[] = [];
+    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const enqueueNudge = vi.fn().mockResolvedValue(false);
+
+    const result = await handleHostCommand(
+      makeMsg('/newsession'),
+      makeCtx({ allowedHostCommands: ['newsession'] }),
+      closeStdin,
+      clearSession,
+      enqueueNudge,
+    );
+    expect(result).toBe(true);
+    expect(clearSessionCalls).toEqual(['test']);
+    expect(replies[1]).toContain('Session cleared');
+  });
+
+  it('/newsession rejects unauthorized sender', async () => {
+    mockIsSenderAllowed.mockReturnValue(false);
+    const clearSessionCalls: string[] = [];
+    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+
+    const result = await handleHostCommand(
+      makeMsg('/newsession'),
+      makeCtx({ allowedHostCommands: ['newsession'] }),
+      closeStdin,
+      clearSession,
+    );
+    expect(result).toBe(true);
+    expect(replies).toEqual(['Not authorised.']);
+    expect(clearSessionCalls).toEqual([]);
+  });
+
+  it('/newsession is case-insensitive', async () => {
+    const noopCloseStdin = (_jid: string): boolean => false;
+    const clearSessionCalls: string[] = [];
+    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+
+    const result = await handleHostCommand(
+      makeMsg('/NewSession'),
+      makeCtx({ allowedHostCommands: ['newsession'] }),
+      noopCloseStdin,
+      clearSession,
+    );
+    expect(result).toBe(true);
+    expect(clearSessionCalls).toEqual(['test']);
   });
 });

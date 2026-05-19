@@ -46,7 +46,7 @@ Read the allowed tools from your SDK configuration. You always have access to:
 
 NanoClaw exposes tools via the `mcp__nanoclaw__*` prefix. Use them as needed — full descriptions, parameters, and usage guidance are built into the tool definitions.
 
-- `send_message`, `schedule_task`, `list_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `manual_flush`, `execute_command`, `ping`
+- `send_message`, `schedule_task`, `list_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `execute_command`, `ping`
 
 ### 4. Container skills (Bash tools)
 
@@ -79,7 +79,7 @@ Present the report as a clean, readable message. Example:
 • Core: Bash, Read, Write, Edit, Glob, Grep
 • Web (MCP): mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 • Orchestration: Task, TeamCreate, SendMessage
-• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group, manual_flush
+• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group
 
 *Container Tools:*
 • agent-browser: ✓

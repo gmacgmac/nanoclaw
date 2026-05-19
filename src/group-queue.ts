@@ -179,17 +179,19 @@ export class GroupQueue {
 
   /**
    * Signal the active container to wind down by writing a close sentinel.
+   * Returns true if a container was active and the sentinel was written.
    */
-  closeStdin(groupJid: string): void {
+  closeStdin(groupJid: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return;
+    if (!state.active || !state.groupFolder) return false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(path.join(inputDir, '_close'), '');
+      return true;
     } catch {
-      // ignore
+      return false;
     }
   }
 

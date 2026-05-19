@@ -363,7 +363,7 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('skips bot commands (/chatid, /ping) but passes other / messages through', async () => {
+    it('skips bot commands (/chatid, /ping, /shutdown, /newsession, /model) but passes other / messages through', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel(opts);
       await channel.connect();
@@ -376,6 +376,18 @@ describe('TelegramChannel', () => {
 
       const ctx2 = createTextCtx({ text: '/ping' });
       await triggerTextMessage(ctx2);
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      const ctx4 = createTextCtx({ text: '/shutdown' });
+      await triggerTextMessage(ctx4);
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      const ctx5 = createTextCtx({ text: '/newsession' });
+      await triggerTextMessage(ctx5);
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      const ctx6 = createTextCtx({ text: '/model' });
+      await triggerTextMessage(ctx6);
       expect(opts.onMessage).not.toHaveBeenCalled();
 
       // Non-bot /commands should flow through
@@ -1120,7 +1132,36 @@ describe('TelegramChannel', () => {
   // --- syncCommandMenu ---
 
   describe('syncCommandMenu', () => {
-    it('sets /chatid and /model when model host command is allowed', async () => {
+    it('sets /chatid, /shutdown, /newsession, and /model when all host commands are allowed', async () => {
+      const opts = createTestOpts();
+      opts.registeredGroups = vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Main',
+          folder: 'telegram_main',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: { allowedHostCommands: ['model', 'newsession'] },
+        },
+      }));
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
+        [
+          {
+            command: 'chatid',
+            description: 'Show this chat ID for registration',
+          },
+          { command: 'ping', description: 'Check bot status' },
+          { command: 'shutdown', description: 'Force stop container (emergency)' },
+          { command: 'newsession', description: 'Write memories and start fresh session' },
+          { command: 'model', description: 'Switch model preset' },
+        ],
+        { scope: { type: 'chat', chat_id: '100200300' } },
+      );
+    });
+
+    it('sets /shutdown but not /newsession when newsession is not in allowedHostCommands', async () => {
       const opts = createTestOpts();
       opts.registeredGroups = vi.fn(() => ({
         'tg:100200300': {
@@ -1141,13 +1182,14 @@ describe('TelegramChannel', () => {
             description: 'Show this chat ID for registration',
           },
           { command: 'ping', description: 'Check bot status' },
+          { command: 'shutdown', description: 'Force stop container (emergency)' },
           { command: 'model', description: 'Switch model preset' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );
     });
 
-    it('sets only /chatid and /ping when no host commands are allowed', async () => {
+    it('sets only /chatid, /ping, and /shutdown when no host commands are allowed', async () => {
       const opts = createTestOpts();
       opts.registeredGroups = vi.fn(() => ({
         'tg:100200300': {
@@ -1168,6 +1210,7 @@ describe('TelegramChannel', () => {
             description: 'Show this chat ID for registration',
           },
           { command: 'ping', description: 'Check bot status' },
+          { command: 'shutdown', description: 'Force stop container (emergency)' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );

@@ -295,7 +295,7 @@ export class TelegramChannel implements Channel {
       });
 
       // Telegram bot commands handled above — skip them in the general handler
-      const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping']);
+      const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping', 'shutdown', 'newsession', 'model']);
 
       bot.on('message:text', async (ctx) => {
         if (ctx.message.text.startsWith('/')) {
@@ -601,8 +601,22 @@ export class TelegramChannel implements Channel {
       },
     ];
 
+    // /shutdown is always available (ungated)
+    commands.push({
+      command: 'shutdown',
+      description: 'Force stop container (emergency)',
+    });
+
     const allowedHostCommands =
       group.containerConfig?.allowedHostCommands ?? [];
+
+    if (allowedHostCommands.includes('newsession')) {
+      commands.push({
+        command: 'newsession',
+        description: 'Write memories and start fresh session',
+      });
+    }
+
     if (allowedHostCommands.includes('model')) {
       commands.push({
         command: 'model',

@@ -1,21 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 
-import { deleteSession, getAllRegisteredGroups, getAllSessions } from './db.js';
+import { getAllRegisteredGroups, getAllSessions } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { buildFlushPrompt } from './lib/flush-prompt.js';
+import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 const DEFAULT_CONTEXT_WINDOW = 128000;
-const FLUSH_THRESHOLD = 0.5;
-
-/** Generate the flush prompt for nightly maintenance. */
-export function getNightlyFlushPrompt(
-  learningLoop?: boolean | 'extract-only',
-): string {
-  return buildFlushPrompt({ reason: 'nightly', learningLoop });
-}
+const NUDGE_THRESHOLD = 0.5;
 
 /**
  * Parse the last input_tokens value from a group's token-usage.log.
@@ -47,34 +40,32 @@ export function parseLastInputTokens(groupFolder: string): number {
 
 export interface NightlyMaintenanceResult {
   groupsChecked: number;
-  groupsFlushed: string[];
+  groupsNudged: string[];
 }
 
 export interface NightlyDependencies {
-  /** Run a flush prompt against a group and return when complete. */
-  runFlush: (group: RegisteredGroup, chatJid: string) => Promise<boolean>;
+  /** Enqueue a nightly nudge prompt for a group via the group queue. */
+  runNudge: (group: RegisteredGroup, chatJid: string) => Promise<boolean>;
   /** Override for testing — defaults to getAllRegisteredGroups(). */
   getGroups?: () => Record<string, RegisteredGroup>;
   /** Override for testing — defaults to getAllSessions(). */
   getSessions?: () => Record<string, string>;
-  /** Override for testing — defaults to deleteSession(). */
-  clearSession?: (groupFolder: string) => void;
 }
 
 /**
  * Nightly maintenance: check each group with an active session,
- * flush those above 50% context usage.
+ * nudge memory persistence for those above 50% context usage.
+ * Does NOT delete sessions — containers stay alive (normal idle timeout applies).
  */
 export async function runNightlyMaintenance(
   deps: NightlyDependencies,
 ): Promise<NightlyMaintenanceResult> {
   const groups = (deps.getGroups ?? getAllRegisteredGroups)();
   const sessions = (deps.getSessions ?? getAllSessions)();
-  const clearSession = deps.clearSession ?? deleteSession;
 
   const result: NightlyMaintenanceResult = {
     groupsChecked: 0,
-    groupsFlushed: [],
+    groupsNudged: [],
   };
 
   for (const [jid, group] of Object.entries(groups)) {
@@ -89,10 +80,10 @@ export async function runNightlyMaintenance(
     if (lastTokens <= 0) continue;
 
     const usage = lastTokens / contextWindowSize;
-    if (usage < FLUSH_THRESHOLD) {
+    if (usage < NUDGE_THRESHOLD) {
       logger.debug(
         { group: group.folder, usage: `${(usage * 100).toFixed(1)}%` },
-        'Group below nightly flush threshold',
+        'Group below nightly nudge threshold',
       );
       continue;
     }
@@ -104,28 +95,27 @@ export async function runNightlyMaintenance(
         lastTokens,
         contextWindowSize,
       },
-      'Group above nightly flush threshold, triggering flush',
+      'Group above nightly nudge threshold, triggering nudge',
     );
 
     try {
-      const flushed = await deps.runFlush(group, jid);
-      if (flushed) {
-        clearSession(group.folder);
-        result.groupsFlushed.push(group.folder);
+      const nudged = await deps.runNudge(group, jid);
+      if (nudged) {
+        result.groupsNudged.push(group.folder);
         logger.info(
           { group: group.folder },
-          'Nightly flush + session reset complete',
+          'Nightly nudge complete',
         );
       }
     } catch (err) {
-      logger.error({ group: group.folder, err }, 'Nightly flush failed');
+      logger.error({ group: group.folder, err }, 'Nightly nudge failed');
     }
   }
 
   logger.info(
     {
       groupsChecked: result.groupsChecked,
-      groupsFlushed: result.groupsFlushed.length,
+      groupsNudged: result.groupsNudged.length,
     },
     'Nightly maintenance complete',
   );

@@ -50,10 +50,9 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
-import { getNightlyFlushPrompt } from './nightly-maintenance.js';
-import { scanContextFiles, ContextScanResult } from './lib/context-scanner.js';
+import { buildNudgePrompt, getNightlyNudgePrompt } from './lib/nudge-prompt.js';
+import { scanContextFiles } from './lib/context-scanner.js';
 import { validateContainerConfig } from './lib/config-validator.js';
-import { getExtractedSkills } from './lib/skill-manager.js';
 import {
   findChannel,
   formatMessages,
@@ -426,27 +425,11 @@ async function runAgent(
   );
 
   // Wrap onOutput to track session ID from streamed results
-  let sessionFlushed = false;
-
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
-        }
-        if (output.flushCompleted) {
-          logger.info(
-            { group: group.name },
-            'Flush completed — stopping container, clearing session',
-          );
-          queue.closeStdin(chatJid);
-          delete sessions[group.folder];
-          deleteSession(group.folder);
-          sessionFlushed = true;
-          logger.info(
-            { group: group.name },
-            'Session cleared after memory flush',
-          );
         }
         await onOutput(output);
       }
@@ -577,55 +560,10 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    // Don't re-set session if flush already cleared it during streaming
-    if (output.newSessionId && !sessionFlushed) {
+    // Track session ID from final output
+    if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
-    }
-
-    if (output.flushCompleted) {
-      logger.info(
-        { group: group.name },
-        'Flush completed (post-output) — stopping container, clearing session',
-      );
-      queue.closeStdin(chatJid);
-      delete sessions[group.folder];
-      deleteSession(group.folder);
-      logger.info(
-        { group: group.name },
-        'Session cleared after memory flush (post-output)',
-      );
-    }
-
-    // Post-flush skill notification: if learningLoop is enabled and a flush
-    // happened (streaming or post-output), check for newly extracted skills.
-    if (
-      (sessionFlushed || output.flushCompleted) &&
-      containerConfig.learningLoop
-    ) {
-      try {
-        const groupFolderPath = resolveGroupFolderPath(group.folder);
-        const today = new Date().toISOString().split('T')[0];
-        const skills = getExtractedSkills(groupFolderPath);
-        const newSkills = skills.filter((s) => s.extracted === today);
-
-        for (const skill of newSkills) {
-          const msg = `🧠 Extracted skill: *${skill.name}* (${skill.confidence} confidence)`;
-          try {
-            await routeOutbound(channels, chatJid, msg);
-          } catch (notifyErr) {
-            logger.warn(
-              { err: notifyErr, group: group.name, skill: skill.name },
-              'Failed to send skill extraction notification',
-            );
-          }
-        }
-      } catch (skillErr) {
-        logger.warn(
-          { err: skillErr, group: group.name },
-          'Failed to check for extracted skills after flush',
-        );
-      }
     }
 
     if (output.status === 'error') {
@@ -1004,6 +942,48 @@ async function main(): Promise<void> {
           delete sessions[groupFolder];
           deleteSession(groupFolder);
         };
+        const enqueueNudge = (jid: string, groupFolder: string): Promise<boolean> => {
+          return new Promise<boolean>((resolve) => {
+            const taskId = `newsession-nudge-${groupFolder}-${Date.now()}`;
+            queue.enqueueTask(jid, taskId, async () => {
+              try {
+                const nudgeGroup = registeredGroups[jid];
+                if (!nudgeGroup) { resolve(false); return; }
+                const output = await runContainerAgent(
+                  nudgeGroup,
+                  {
+                    prompt: buildNudgePrompt({ reason: 'periodic' }),
+                    sessionId: sessions[nudgeGroup.folder],
+                    groupFolder: nudgeGroup.folder,
+                    chatJid: jid,
+                    isMain: nudgeGroup.isMain === true,
+                    assistantName: ASSISTANT_NAME,
+                    allowedTools: nudgeGroup.containerConfig?.allowedTools,
+                    model: nudgeGroup.containerConfig?.model,
+                    systemPrompt: nudgeGroup.containerConfig?.systemPrompt,
+                    mcpServers: nudgeGroup.containerConfig?.mcpServers,
+                    endpoint: nudgeGroup.containerConfig?.endpoint,
+                    webSearchVendor: nudgeGroup.containerConfig?.webSearchVendor,
+                    contextWindowSize: nudgeGroup.containerConfig?.contextWindowSize,
+                    learningLoop: nudgeGroup.containerConfig?.learningLoop,
+                  },
+                  (proc, containerName) =>
+                    queue.registerProcess(jid, proc, containerName, nudgeGroup.folder),
+                  async (streamedOutput: ContainerOutput) => {
+                    if (streamedOutput.newSessionId) {
+                      sessions[nudgeGroup.folder] = streamedOutput.newSessionId;
+                      setSession(nudgeGroup.folder, streamedOutput.newSessionId);
+                    }
+                  },
+                );
+                resolve(output.status !== 'error');
+              } catch (err) {
+                logger.error({ groupFolder, err }, '/newsession nudge task failed');
+                resolve(false);
+              }
+            });
+          });
+        };
         if (
           await handleHostCommand(
             msg,
@@ -1015,6 +995,7 @@ async function main(): Promise<void> {
             },
             queue.closeStdin.bind(queue),
             clearSession,
+            enqueueNudge,
           )
         ) {
           return;
@@ -1089,22 +1070,18 @@ async function main(): Promise<void> {
   });
   startNightlyCron(
     {
-      runFlush: (group, chatJid) => {
-        // Route nightly flush through the queue so the container gets proper
-        // lifecycle management (active=true, closeStdin works, concurrency
-        // limiting, drainGroup cleanup). Same pattern as scheduled tasks.
+      runNudge: (group, chatJid) => {
+        // Route nightly nudge through the queue so the container gets proper
+        // lifecycle management (concurrency limiting, one-container-at-a-time).
+        // Same pattern as scheduled tasks. No session deletion after nudge.
         return new Promise<boolean>((resolve) => {
-          const taskId = `nightly-flush-${group.folder}-${Date.now()}`;
+          const taskId = `nightly-nudge-${group.folder}-${Date.now()}`;
           queue.enqueueTask(chatJid, taskId, async () => {
-            const FLUSH_CLOSE_DELAY_MS = 10000;
-            let closeScheduled = false;
-            let flushSucceeded = false;
-
             try {
               const output = await runContainerAgent(
                 group,
                 {
-                  prompt: getNightlyFlushPrompt(
+                  prompt: getNightlyNudgePrompt(
                     group.containerConfig?.learningLoop,
                   ),
                   sessionId: sessions[group.folder],
@@ -1134,46 +1111,24 @@ async function main(): Promise<void> {
                     sessions[group.folder] = streamedOutput.newSessionId;
                     setSession(group.folder, streamedOutput.newSessionId);
                   }
-                  // Schedule container close on any result or success
-                  if (
-                    !closeScheduled &&
-                    (streamedOutput.result !== null ||
-                      streamedOutput.status === 'success')
-                  ) {
-                    closeScheduled = true;
-                    setTimeout(
-                      () => queue.closeStdin(chatJid),
-                      FLUSH_CLOSE_DELAY_MS,
-                    );
-                  }
-                  if (streamedOutput.flushCompleted) {
-                    flushSucceeded = true;
-                  }
                 },
               );
 
-              if (output.flushCompleted) flushSucceeded = true;
-              // Nightly flush: the entire container's purpose is the flush prompt.
-              // A successful exit means the flush worked — no sentinel needed.
-              if (output.status === 'success') flushSucceeded = true;
               if (output.status === 'error') {
                 logger.error(
                   { group: group.name, error: output.error },
-                  'Nightly flush container error',
+                  'Nightly nudge container error',
                 );
+                resolve(false);
+              } else {
+                resolve(true);
               }
             } catch (err) {
-              logger.error({ group: group.name, err }, 'Nightly flush failed');
+              logger.error({ group: group.name, err }, 'Nightly nudge failed');
+              resolve(false);
             }
-
-            resolve(flushSucceeded);
           });
         });
-      },
-      clearSession: (groupFolder) => {
-        deleteSession(groupFolder);
-        delete sessions[groupFolder];
-        logger.info({ groupFolder }, 'Nightly cron cleared session');
       },
     },
     '0 0 * * *',

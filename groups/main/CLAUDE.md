@@ -83,7 +83,6 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 ## Memory Protocol
 
 @memory/MEMORY.md
-@memory/COMPACT.md
 
 You have a persistent memory system at `memory/`.
 

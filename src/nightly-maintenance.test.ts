@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GROUPS_DIR } from './config.js';
 import {
-  getNightlyFlushPrompt,
   NightlyDependencies,
   parseLastInputTokens,
   runNightlyMaintenance,
@@ -57,20 +56,6 @@ describe('parseLastInputTokens', () => {
   });
 });
 
-// --- getNightlyFlushPrompt ---
-
-describe('getNightlyFlushPrompt', () => {
-  it("returns a string containing today's date and <internal> tags", () => {
-    const prompt = getNightlyFlushPrompt();
-    const today = new Date().toISOString().split('T')[0];
-    expect(prompt).toContain('<internal>');
-    expect(prompt).toContain('</internal>');
-    expect(prompt).toContain(today);
-    expect(prompt).toContain('MEMORY.md');
-    expect(prompt).toContain('COMPACT.md');
-  });
-});
-
 // --- runNightlyMaintenance ---
 
 describe('runNightlyMaintenance', () => {
@@ -103,19 +88,17 @@ describe('runNightlyMaintenance', () => {
     }
   });
 
-  it('flushes groups above 50% and clears session', async () => {
+  it('nudges groups above 50% without clearing session', async () => {
     // Group at 70% of 100k context window
     fs.writeFileSync(
       logPath,
       '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
     );
 
-    const runFlush = vi.fn().mockResolvedValue(true);
-    const clearSession = vi.fn();
+    const runNudge = vi.fn().mockResolvedValue(true);
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
     };
@@ -123,9 +106,8 @@ describe('runNightlyMaintenance', () => {
     const result = await runNightlyMaintenance(deps);
 
     expect(result.groupsChecked).toBe(1);
-    expect(result.groupsFlushed).toEqual(['maint-group']);
-    expect(runFlush).toHaveBeenCalledOnce();
-    expect(clearSession).toHaveBeenCalledWith('maint-group');
+    expect(result.groupsNudged).toEqual(['maint-group']);
+    expect(runNudge).toHaveBeenCalledOnce();
   });
 
   it('skips groups below 50% threshold', async () => {
@@ -141,12 +123,10 @@ describe('runNightlyMaintenance', () => {
       '[2026-04-07T10:00:00Z] id=msg_001 type=message input=38000 output=200\n',
     );
 
-    const runFlush = vi.fn();
-    const clearSession = vi.fn();
+    const runNudge = vi.fn();
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('below-group') }),
       getSessions: () => ({ 'below-group': 'session-456' }),
     };
@@ -154,18 +134,15 @@ describe('runNightlyMaintenance', () => {
     const result = await runNightlyMaintenance(deps);
 
     expect(result.groupsChecked).toBe(1);
-    expect(result.groupsFlushed).toEqual([]);
-    expect(runFlush).not.toHaveBeenCalled();
-    expect(clearSession).not.toHaveBeenCalled();
+    expect(result.groupsNudged).toEqual([]);
+    expect(runNudge).not.toHaveBeenCalled();
   });
 
   it('skips groups without active sessions', async () => {
-    const runFlush = vi.fn();
-    const clearSession = vi.fn();
+    const runNudge = vi.fn();
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group') }),
       getSessions: () => ({}), // No active sessions
     };
@@ -173,44 +150,39 @@ describe('runNightlyMaintenance', () => {
     const result = await runNightlyMaintenance(deps);
 
     expect(result.groupsChecked).toBe(0);
-    expect(result.groupsFlushed).toEqual([]);
-    expect(runFlush).not.toHaveBeenCalled();
+    expect(result.groupsNudged).toEqual([]);
+    expect(runNudge).not.toHaveBeenCalled();
   });
 
-  it('does not clear session when flush fails', async () => {
+  it('does not record group when nudge returns false', async () => {
     fs.writeFileSync(
       logPath,
       '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
     );
 
-    const runFlush = vi.fn().mockResolvedValue(false);
-    const clearSession = vi.fn();
+    const runNudge = vi.fn().mockResolvedValue(false);
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
     };
 
     const result = await runNightlyMaintenance(deps);
 
-    expect(result.groupsFlushed).toEqual([]);
-    expect(clearSession).not.toHaveBeenCalled();
+    expect(result.groupsNudged).toEqual([]);
   });
 
-  it('handles flush errors gracefully without crashing', async () => {
+  it('handles nudge errors gracefully without crashing', async () => {
     fs.writeFileSync(
       logPath,
       '[2026-04-07T10:00:00Z] id=msg_001 type=message input=70000 output=500\n',
     );
 
-    const runFlush = vi.fn().mockRejectedValue(new Error('container crashed'));
-    const clearSession = vi.fn();
+    const runNudge = vi.fn().mockRejectedValue(new Error('container crashed'));
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
     };
@@ -218,8 +190,7 @@ describe('runNightlyMaintenance', () => {
     // Should not throw
     const result = await runNightlyMaintenance(deps);
 
-    expect(result.groupsFlushed).toEqual([]);
-    expect(clearSession).not.toHaveBeenCalled();
+    expect(result.groupsNudged).toEqual([]);
   });
 
   it('processes multiple groups independently', async () => {
@@ -237,12 +208,10 @@ describe('runNightlyMaintenance', () => {
       '[2026-04-07T10:00:00Z] id=msg_001 type=message input=20000 output=200\n',
     );
 
-    const runFlush = vi.fn().mockResolvedValue(true);
-    const clearSession = vi.fn();
+    const runNudge = vi.fn().mockResolvedValue(true);
 
     const deps: NightlyDependencies = {
-      runFlush,
-      clearSession,
+      runNudge,
       getGroups: () => ({
         'jid1@g.us': makeGroup('above-group', 100000),
         'jid2@g.us': makeGroup('below-group', 100000),
@@ -256,8 +225,7 @@ describe('runNightlyMaintenance', () => {
     const result = await runNightlyMaintenance(deps);
 
     expect(result.groupsChecked).toBe(2);
-    expect(result.groupsFlushed).toEqual(['above-group']);
-    expect(runFlush).toHaveBeenCalledOnce();
-    expect(clearSession).toHaveBeenCalledWith('above-group');
+    expect(result.groupsNudged).toEqual(['above-group']);
+    expect(runNudge).toHaveBeenCalledOnce();
   });
 });
