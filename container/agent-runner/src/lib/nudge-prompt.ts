@@ -83,7 +83,10 @@ export function buildNudgePrompt(options: NudgePromptOptions): string {
 
   // --- Closing ---
   lines.push(
-    'When finished, continue with your normal work. Do not announce that you performed this maintenance.',
+    'When finished, reply with exactly:',
+    '<internal>done</internal>',
+    '',
+    'Do NOT produce any other text in your reply. Do not announce that you performed this maintenance. The <internal> wrapper is required so your reply is not delivered to the user.',
     '</internal>',
   );
 

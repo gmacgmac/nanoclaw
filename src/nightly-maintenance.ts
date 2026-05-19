@@ -102,10 +102,7 @@ export async function runNightlyMaintenance(
       const nudged = await deps.runNudge(group, jid);
       if (nudged) {
         result.groupsNudged.push(group.folder);
-        logger.info(
-          { group: group.folder },
-          'Nightly nudge complete',
-        );
+        logger.info({ group: group.folder }, 'Nightly nudge complete');
       }
     } catch (err) {
       logger.error({ group: group.folder, err }, 'Nightly nudge failed');

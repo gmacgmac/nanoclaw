@@ -44,9 +44,7 @@ One casual line. Not a description of what you're about to do technically. Then 
 
 This is non-negotiable — a silent agent feels broken. Always acknowledge first.
 
-**Do NOT use `send_message` as your primary reply mechanism.** If you're just answering a question, your text output handles delivery.
-
-**Important:** You MUST always produce some visible text output at the end of your turn — even a short summary like "Done." or "Sent." This tells the host system your turn completed. Do NOT wrap your entire final output in `<internal>` tags.
+**`send_message` is NOT your primary reply mechanism, it's for mid turn responses or message routing**: If you're just answering a question, your text output handles delivery.
 
 ## Routed Messages
 
@@ -54,7 +52,7 @@ When a message contains `[Routed from ...]`, another agent routed a user's messa
 
 Example: message says `[Routed from GM. Reply using send_message with target_jid: "tg:123456789"]`
 → Call `send_message` with `target_jid: "tg:123456789"` and your response text.
-→ After sending, still produce a short visible text output (e.g. "Sent." or a brief summary). This goes to your own group (not the user) and signals turn completion to the host. Do NOT suppress it with `<internal>` tags.
+→ After sending, wrap any remaining text in `<internal>` tags so it doesn't double-send to your own group.
 
 ## Delegated Tasks
 
@@ -66,15 +64,16 @@ Do NOT use `send_message` for delegation responses — use `respond_to_group`.
 
 ## `<internal>` Tags
 
-Wrap text in `<internal>` tags to suppress it from the user. It's logged but never sent.
+Wrap text in `<internal>` tags to suppress it from being delivered to the user. It's logged in the session but never sent to the chat.
 
-Use this for genuine internal reasoning — thinking out loud, noting state, intermediate observations. NOT as a way to suppress your final output after using `send_message`.
+Use this for:
+- Suppressing duplicate output after calling `send_message`
+- Internal reasoning or intermediate observations
+- Any output that shouldn't reach the user
 
 ```
-<internal>Checking three sources before responding...</internal>
+<internal>Already sent via send_message, suppressing.</internal>
 ```
-
-**Critical rule:** Your turn must always end with some visible (non-internal) text output. If everything is wrapped in `<internal>`, the host thinks you produced nothing and may replay the message. Even a single word like "Done." outside the tags is enough.
 
 ### Sub-agents and teammates
 

@@ -40,6 +40,7 @@ interface ContainerInput {
   learningLoop?: boolean | 'extract-only';
   approvalTimeout?: number;
   commandAllowlist?: string[];
+  nudgeInterval?: number;
   mcpServers?: {
     [name: string]: {
       command: string;
@@ -83,7 +84,12 @@ const IPC_POLL_MS = 500;
 let lastInputTokens = 0;
 
 // Module-level turn counter for periodic memory nudge
+// Tracks completed results (not outer-loop iterations) since messages
+// are piped into the running query and the outer loop rarely iterates.
 let turnsSinceLastNudge = 0;
+
+// Module-level flag to prevent repeated threshold nudges in a single session
+let thresholdNudgedThisSession = false;
 
 // All known tools (SDK + claude_code preset built-ins).
 // Update this list when upgrading the Claude Agent SDK.
@@ -405,7 +411,7 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-  options?: { acceptIpc?: boolean },
+  options?: { acceptIpc?: boolean; nudgeInterval?: number; contextWindowSize?: number },
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const acceptIpc = options?.acceptIpc !== false; // default true
   const stream = new MessageStream();
@@ -578,6 +584,31 @@ async function runQuery(
         result: textResult || null,
         newSessionId
       });
+
+      // --- Periodic memory nudge (inside query loop) ---
+      // Count completed results as "turns" since messages are piped into
+      // the running query and the outer loop rarely iterates.
+      const nudgeInterval = options?.nudgeInterval || 0;
+      if (nudgeInterval > 0 && !containerInput.isScheduledTask) {
+        turnsSinceLastNudge++;
+        if (turnsSinceLastNudge >= nudgeInterval) {
+          log(`Periodic nudge triggered (turns since last: ${turnsSinceLastNudge})`);
+          turnsSinceLastNudge = 0;
+          const nudgePrompt = buildNudgePrompt({ reason: 'periodic' });
+          stream.push(nudgePrompt);
+          log('Periodic memory nudge injected into stream');
+        }
+      }
+
+      // --- Memory threshold nudge check (inside query loop) ---
+      const ctxSize = options?.contextWindowSize || 0;
+      if (ctxSize > 0 && !thresholdNudgedThisSession && lastInputTokens > ctxSize * 0.8) {
+        log(`Token threshold crossed (${lastInputTokens}/${ctxSize}), injecting threshold memory nudge`);
+        thresholdNudgedThisSession = true;
+        const nudgePrompt = buildNudgePrompt({ reason: 'threshold' });
+        stream.push(nudgePrompt);
+        log('Threshold memory nudge injected into stream');
+      }
     }
   }
 
@@ -642,13 +673,15 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
-  let thresholdNudgedThisSession = false;
 
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, {
+        nudgeInterval: containerInput.isScheduledTask ? 0 : (containerInput.nudgeInterval ?? 10),
+        contextWindowSize,
+      });
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -662,32 +695,6 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
-      }
-
-      // --- Periodic memory nudge (every 10 user messages) ---
-      // Only count user messages — skip scheduled tasks entirely
-      if (!containerInput.isScheduledTask) {
-        turnsSinceLastNudge++;
-        if (turnsSinceLastNudge >= 2) {
-          log(`Periodic nudge triggered (turns since last: ${turnsSinceLastNudge})`);
-          turnsSinceLastNudge = 0;
-          const nudgePrompt = buildNudgePrompt({ reason: 'periodic' });
-          const nudgeResult = await runQuery(nudgePrompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
-          if (nudgeResult.newSessionId) sessionId = nudgeResult.newSessionId;
-          if (nudgeResult.lastAssistantUuid) resumeAt = nudgeResult.lastAssistantUuid;
-          log('Periodic memory nudge executed');
-        }
-      }
-
-      // --- Memory threshold nudge check ---
-      if (!thresholdNudgedThisSession && lastInputTokens > contextWindowSize * 0.8) {
-        log(`Token threshold crossed (${lastInputTokens}/${contextWindowSize}), injecting threshold memory nudge`);
-        thresholdNudgedThisSession = true;
-        const nudgePrompt = buildNudgePrompt({ reason: 'threshold' });
-        const nudgeResult = await runQuery(nudgePrompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, { acceptIpc: false });
-        if (nudgeResult.newSessionId) sessionId = nudgeResult.newSessionId;
-        if (nudgeResult.lastAssistantUuid) resumeAt = nudgeResult.lastAssistantUuid;
-        log(`Threshold memory nudge executed (inputTokens: ${lastInputTokens}, threshold: ${contextWindowSize * 0.8})`);
       }
 
       // Emit session update so host can track it

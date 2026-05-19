@@ -429,7 +429,9 @@ describe('handleHostCommand', () => {
   it('/newsession clears session when no container is running', async () => {
     const noopCloseStdin = (_jid: string): boolean => false;
     const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const clearSession = (groupFolder: string) => {
+      clearSessionCalls.push(groupFolder);
+    };
     const enqueueNudge = vi.fn();
 
     const result = await handleHostCommand(
@@ -447,7 +449,9 @@ describe('handleHostCommand', () => {
 
   it('/newsession nudges then clears session when container is running', async () => {
     const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const clearSession = (groupFolder: string) => {
+      clearSessionCalls.push(groupFolder);
+    };
     const enqueueNudge = vi.fn().mockResolvedValue(true);
 
     const result = await handleHostCommand(
@@ -467,7 +471,9 @@ describe('handleHostCommand', () => {
 
   it('/newsession clears session even when nudge fails', async () => {
     const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const clearSession = (groupFolder: string) => {
+      clearSessionCalls.push(groupFolder);
+    };
     const enqueueNudge = vi.fn().mockResolvedValue(false);
 
     const result = await handleHostCommand(
@@ -485,7 +491,9 @@ describe('handleHostCommand', () => {
   it('/newsession rejects unauthorized sender', async () => {
     mockIsSenderAllowed.mockReturnValue(false);
     const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const clearSession = (groupFolder: string) => {
+      clearSessionCalls.push(groupFolder);
+    };
 
     const result = await handleHostCommand(
       makeMsg('/newsession'),
@@ -501,7 +509,9 @@ describe('handleHostCommand', () => {
   it('/newsession is case-insensitive', async () => {
     const noopCloseStdin = (_jid: string): boolean => false;
     const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => { clearSessionCalls.push(groupFolder); };
+    const clearSession = (groupFolder: string) => {
+      clearSessionCalls.push(groupFolder);
+    };
 
     const result = await handleHostCommand(
       makeMsg('/NewSession'),

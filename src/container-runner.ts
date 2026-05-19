@@ -54,6 +54,7 @@ export interface ContainerInput {
   learningLoop?: boolean | 'extract-only';
   approvalTimeout?: number;
   commandAllowlist?: string[];
+  nudgeInterval?: number;
   mcpServers?: {
     [name: string]: {
       command: string;

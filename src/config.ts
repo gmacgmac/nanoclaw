@@ -17,6 +17,7 @@ const envConfig = readEnvFile([
   'IDLE_TIMEOUT',
   'MAX_MESSAGES_PER_PROMPT',
   'MAX_CONCURRENT_CONTAINERS',
+  'NUDGE_INTERVAL',
   'TZ',
 ]);
 
@@ -94,6 +95,14 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
       '5',
     10,
   ) || 5,
+);
+
+export const NUDGE_INTERVAL = Math.max(
+  0,
+  parseInt(
+    process.env.NUDGE_INTERVAL || envConfig.NUDGE_INTERVAL || '10',
+    10,
+  ) || 10,
 );
 
 function escapeRegex(str: string): string {

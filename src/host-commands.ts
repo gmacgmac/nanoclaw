@@ -153,8 +153,13 @@ export async function handleHostCommand(
 
     const stopped = closeStdin(ctx.jid);
     if (stopped) {
-      logger.info({ group: ctx.group.name, sender: ctx.sender }, '/shutdown command executed');
-      await ctx.reply('Container stopped. Next message will start a new container with the same session.');
+      logger.info(
+        { group: ctx.group.name, sender: ctx.sender },
+        '/shutdown command executed',
+      );
+      await ctx.reply(
+        'Container stopped. Next message will start a new container with the same session.',
+      );
     } else {
       await ctx.reply('No container running for this group.');
     }
@@ -272,7 +277,6 @@ async function handleModelCommand(
   );
   return true;
 }
-
 
 async function handleNewSessionCommand(
   ctx: HostCommandCtx,

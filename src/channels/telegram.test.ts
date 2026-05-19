@@ -1153,8 +1153,14 @@ describe('TelegramChannel', () => {
             description: 'Show this chat ID for registration',
           },
           { command: 'ping', description: 'Check bot status' },
-          { command: 'shutdown', description: 'Force stop container (emergency)' },
-          { command: 'newsession', description: 'Write memories and start fresh session' },
+          {
+            command: 'shutdown',
+            description: 'Force stop container (emergency)',
+          },
+          {
+            command: 'newsession',
+            description: 'Write memories and start fresh session',
+          },
           { command: 'model', description: 'Switch model preset' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
@@ -1182,7 +1188,10 @@ describe('TelegramChannel', () => {
             description: 'Show this chat ID for registration',
           },
           { command: 'ping', description: 'Check bot status' },
-          { command: 'shutdown', description: 'Force stop container (emergency)' },
+          {
+            command: 'shutdown',
+            description: 'Force stop container (emergency)',
+          },
           { command: 'model', description: 'Switch model preset' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
@@ -1210,7 +1219,10 @@ describe('TelegramChannel', () => {
             description: 'Show this chat ID for registration',
           },
           { command: 'ping', description: 'Check bot status' },
-          { command: 'shutdown', description: 'Force stop container (emergency)' },
+          {
+            command: 'shutdown',
+            description: 'Force stop container (emergency)',
+          },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );

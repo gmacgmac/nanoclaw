@@ -295,7 +295,13 @@ export class TelegramChannel implements Channel {
       });
 
       // Telegram bot commands handled above — skip them in the general handler
-      const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping', 'shutdown', 'newsession', 'model']);
+      const TELEGRAM_BOT_COMMANDS = new Set([
+        'chatid',
+        'ping',
+        'shutdown',
+        'newsession',
+        'model',
+      ]);
 
       bot.on('message:text', async (ctx) => {
         if (ctx.message.text.startsWith('/')) {

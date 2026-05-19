@@ -9,6 +9,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
+  NUDGE_INTERVAL,
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -554,6 +555,7 @@ async function runAgent(
         learningLoop: containerConfig.learningLoop,
         approvalTimeout: containerConfig.approvalTimeout,
         commandAllowlist: containerConfig.commandAllowlist,
+        nudgeInterval: NUDGE_INTERVAL,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -942,13 +944,19 @@ async function main(): Promise<void> {
           delete sessions[groupFolder];
           deleteSession(groupFolder);
         };
-        const enqueueNudge = (jid: string, groupFolder: string): Promise<boolean> => {
+        const enqueueNudge = (
+          jid: string,
+          groupFolder: string,
+        ): Promise<boolean> => {
           return new Promise<boolean>((resolve) => {
             const taskId = `newsession-nudge-${groupFolder}-${Date.now()}`;
             queue.enqueueTask(jid, taskId, async () => {
               try {
                 const nudgeGroup = registeredGroups[jid];
-                if (!nudgeGroup) { resolve(false); return; }
+                if (!nudgeGroup) {
+                  resolve(false);
+                  return;
+                }
                 const output = await runContainerAgent(
                   nudgeGroup,
                   {
@@ -963,22 +971,36 @@ async function main(): Promise<void> {
                     systemPrompt: nudgeGroup.containerConfig?.systemPrompt,
                     mcpServers: nudgeGroup.containerConfig?.mcpServers,
                     endpoint: nudgeGroup.containerConfig?.endpoint,
-                    webSearchVendor: nudgeGroup.containerConfig?.webSearchVendor,
-                    contextWindowSize: nudgeGroup.containerConfig?.contextWindowSize,
+                    webSearchVendor:
+                      nudgeGroup.containerConfig?.webSearchVendor,
+                    contextWindowSize:
+                      nudgeGroup.containerConfig?.contextWindowSize,
                     learningLoop: nudgeGroup.containerConfig?.learningLoop,
+                    nudgeInterval: 0,
                   },
                   (proc, containerName) =>
-                    queue.registerProcess(jid, proc, containerName, nudgeGroup.folder),
+                    queue.registerProcess(
+                      jid,
+                      proc,
+                      containerName,
+                      nudgeGroup.folder,
+                    ),
                   async (streamedOutput: ContainerOutput) => {
                     if (streamedOutput.newSessionId) {
                       sessions[nudgeGroup.folder] = streamedOutput.newSessionId;
-                      setSession(nudgeGroup.folder, streamedOutput.newSessionId);
+                      setSession(
+                        nudgeGroup.folder,
+                        streamedOutput.newSessionId,
+                      );
                     }
                   },
                 );
                 resolve(output.status !== 'error');
               } catch (err) {
-                logger.error({ groupFolder, err }, '/newsession nudge task failed');
+                logger.error(
+                  { groupFolder, err },
+                  '/newsession nudge task failed',
+                );
                 resolve(false);
               }
             });
@@ -1097,6 +1119,7 @@ async function main(): Promise<void> {
                   webSearchVendor: group.containerConfig?.webSearchVendor,
                   contextWindowSize: group.containerConfig?.contextWindowSize,
                   learningLoop: group.containerConfig?.learningLoop,
+                  nudgeInterval: 0,
                 },
                 (proc, containerName) =>
                   queue.registerProcess(
