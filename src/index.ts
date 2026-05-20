@@ -51,7 +51,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
-import { buildNudgePrompt, getNightlyNudgePrompt } from './lib/nudge-prompt.js';
+import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { scanContextFiles } from './lib/context-scanner.js';
 import { validateContainerConfig } from './lib/config-validator.js';
 import {
@@ -932,10 +932,10 @@ async function main(): Promise<void> {
         }
       }
 
-      // Host commands — intercept before storage for groups with allowedHostCommands
+      // Host commands — intercept before storage (ungated commands like /shutdown
+      // must be reachable even without allowedHostCommands configured)
       const group = registeredGroups[chatJid];
-      const allowedHostCommands = group?.containerConfig?.allowedHostCommands;
-      if (allowedHostCommands?.length && msg.content.trim().startsWith('/')) {
+      if (group && msg.content.trim().startsWith('/')) {
         const sendReply = async (text: string) => {
           const ch = findChannel(channels, chatJid);
           if (ch?.isConnected()) await ch.sendMessage(chatJid, text);
@@ -943,68 +943,6 @@ async function main(): Promise<void> {
         const clearSession = (groupFolder: string) => {
           delete sessions[groupFolder];
           deleteSession(groupFolder);
-        };
-        const enqueueNudge = (
-          jid: string,
-          groupFolder: string,
-        ): Promise<boolean> => {
-          return new Promise<boolean>((resolve) => {
-            const taskId = `newsession-nudge-${groupFolder}-${Date.now()}`;
-            queue.enqueueTask(jid, taskId, async () => {
-              try {
-                const nudgeGroup = registeredGroups[jid];
-                if (!nudgeGroup) {
-                  resolve(false);
-                  return;
-                }
-                const output = await runContainerAgent(
-                  nudgeGroup,
-                  {
-                    prompt: buildNudgePrompt({ reason: 'periodic' }),
-                    sessionId: sessions[nudgeGroup.folder],
-                    groupFolder: nudgeGroup.folder,
-                    chatJid: jid,
-                    isMain: nudgeGroup.isMain === true,
-                    assistantName: ASSISTANT_NAME,
-                    allowedTools: nudgeGroup.containerConfig?.allowedTools,
-                    model: nudgeGroup.containerConfig?.model,
-                    systemPrompt: nudgeGroup.containerConfig?.systemPrompt,
-                    mcpServers: nudgeGroup.containerConfig?.mcpServers,
-                    endpoint: nudgeGroup.containerConfig?.endpoint,
-                    webSearchVendor:
-                      nudgeGroup.containerConfig?.webSearchVendor,
-                    contextWindowSize:
-                      nudgeGroup.containerConfig?.contextWindowSize,
-                    learningLoop: nudgeGroup.containerConfig?.learningLoop,
-                    nudgeInterval: 0,
-                  },
-                  (proc, containerName) =>
-                    queue.registerProcess(
-                      jid,
-                      proc,
-                      containerName,
-                      nudgeGroup.folder,
-                    ),
-                  async (streamedOutput: ContainerOutput) => {
-                    if (streamedOutput.newSessionId) {
-                      sessions[nudgeGroup.folder] = streamedOutput.newSessionId;
-                      setSession(
-                        nudgeGroup.folder,
-                        streamedOutput.newSessionId,
-                      );
-                    }
-                  },
-                );
-                resolve(output.status !== 'error');
-              } catch (err) {
-                logger.error(
-                  { groupFolder, err },
-                  '/newsession nudge task failed',
-                );
-                resolve(false);
-              }
-            });
-          });
         };
         if (
           await handleHostCommand(
@@ -1017,7 +955,6 @@ async function main(): Promise<void> {
             },
             queue.closeStdin.bind(queue),
             clearSession,
-            enqueueNudge,
           )
         ) {
           return;

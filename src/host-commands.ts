@@ -4,7 +4,6 @@ import path from 'path';
 import { HOME_DIR, DATA_DIR } from './config.js';
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
-import { buildNudgePrompt } from './lib/nudge-prompt.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
@@ -133,7 +132,6 @@ export async function handleHostCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
   clearSession?: (groupFolder: string) => void,
-  enqueueNudge?: (jid: string, groupFolder: string) => Promise<boolean>,
 ): Promise<boolean> {
   const text = msg.content.trim();
   if (!text.startsWith('/')) return false;
@@ -185,7 +183,7 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'newsession') {
-    return handleNewSessionCommand(ctx, closeStdin, clearSession, enqueueNudge);
+    return handleNewSessionCommand(ctx, closeStdin, clearSession);
   }
 
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
@@ -282,53 +280,8 @@ async function handleNewSessionCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
   clearSession?: (groupFolder: string) => void,
-  enqueueNudge?: (jid: string, groupFolder: string) => Promise<boolean>,
 ): Promise<boolean> {
-  // Check if a container is active by attempting to send a message.
-  // sendMessage returns false if no active container — but we don't actually
-  // want to send anything yet. Use closeStdin's return value as the probe:
-  // we'll call enqueueNudge which spawns a fresh container for the nudge anyway.
-
-  if (!enqueueNudge) {
-    // No nudge callback — just clear session directly
-    closeStdin(ctx.jid);
-    clearSession?.(ctx.group.folder);
-    logger.info(
-      { group: ctx.group.name, sender: ctx.sender },
-      '/newsession command executed — session cleared (no nudge callback)',
-    );
-    await ctx.reply('Session cleared. Next message starts fresh.');
-    return true;
-  }
-
-  // Stop any running container first so the nudge task gets a fresh one
-  const hadContainer = closeStdin(ctx.jid);
-
-  if (!hadContainer) {
-    // No container was running — nothing to write memories from
-    clearSession?.(ctx.group.folder);
-    logger.info(
-      { group: ctx.group.name, sender: ctx.sender },
-      '/newsession command executed — session cleared (no container)',
-    );
-    await ctx.reply(
-      'Session cleared (no container was running). Next message starts fresh.',
-    );
-    return true;
-  }
-
-  // Container was running — nudge memories before clearing
-  await ctx.reply('Starting new session... writing memories first.');
-
-  const nudgeOk = await enqueueNudge(ctx.jid, ctx.group.folder);
-  if (!nudgeOk) {
-    logger.warn(
-      { group: ctx.group.name },
-      '/newsession nudge failed — clearing session anyway',
-    );
-  }
-
-  // Clear session (in-memory + SQLite)
+  closeStdin(ctx.jid);
   clearSession?.(ctx.group.folder);
 
   logger.info(

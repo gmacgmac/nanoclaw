@@ -363,12 +363,12 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('skips bot commands (/chatid, /ping, /shutdown, /newsession, /model) but passes other / messages through', async () => {
+    it('skips bot commands (/chatid, /ping) but passes host commands and other / messages through', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel(opts);
       await channel.connect();
 
-      // Bot commands should be skipped
+      // Bot commands (handled by grammY bot.command()) should be skipped
       const ctx1 = createTextCtx({ text: '/chatid' });
       await triggerTextMessage(ctx1);
       expect(opts.onMessage).not.toHaveBeenCalled();
@@ -378,22 +378,24 @@ describe('TelegramChannel', () => {
       await triggerTextMessage(ctx2);
       expect(opts.onMessage).not.toHaveBeenCalled();
 
+      // Host commands (/shutdown, /newsession, /model) pass through to onMessage
+      // so handleHostCommand in index.ts can intercept them
       const ctx4 = createTextCtx({ text: '/shutdown' });
       await triggerTextMessage(ctx4);
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
 
       const ctx5 = createTextCtx({ text: '/newsession' });
       await triggerTextMessage(ctx5);
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledTimes(2);
 
       const ctx6 = createTextCtx({ text: '/model' });
       await triggerTextMessage(ctx6);
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledTimes(3);
 
-      // Non-bot /commands should flow through
+      // Other /commands also flow through
       const ctx3 = createTextCtx({ text: '/remote-control' });
       await triggerTextMessage(ctx3);
-      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      expect(opts.onMessage).toHaveBeenCalledTimes(4);
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '/remote-control' }),

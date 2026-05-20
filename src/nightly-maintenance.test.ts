@@ -194,11 +194,11 @@ describe('runNightlyMaintenance', () => {
   });
 
   it('processes multiple groups independently', async () => {
-    // above-group at 60% of 100k
+    // above-group at 80% of 100k
     fs.mkdirSync(path.join(GROUPS_DIR, 'above-group'), { recursive: true });
     fs.writeFileSync(
       path.join(GROUPS_DIR, 'above-group', 'token-usage.log'),
-      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=60000 output=500\n',
+      '[2026-04-07T10:00:00Z] id=msg_001 type=message input=80000 output=500\n',
     );
 
     // below-group at 20% of 100k

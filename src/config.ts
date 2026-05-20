@@ -14,9 +14,11 @@ const envConfig = readEnvFile([
   'CONTAINER_TIMEOUT',
   'CONTAINER_MAX_OUTPUT_SIZE',
   'CREDENTIAL_PROXY_PORT',
+  'DEFAULT_CONTEXT_WINDOW',
   'IDLE_TIMEOUT',
   'MAX_MESSAGES_PER_PROMPT',
   'MAX_CONCURRENT_CONTAINERS',
+  'NIGHTLY_NUDGE_THRESHOLD',
   'NUDGE_INTERVAL',
   'TZ',
 ]);
@@ -103,6 +105,28 @@ export const NUDGE_INTERVAL = Math.max(
     process.env.NUDGE_INTERVAL || envConfig.NUDGE_INTERVAL || '10',
     10,
   ) || 10,
+);
+
+// Nightly nudge threshold as a fraction (0.0–1.0). Groups above this % of
+// their context window get a memory nudge during nightly maintenance.
+export const NIGHTLY_NUDGE_THRESHOLD = Math.min(
+  1,
+  Math.max(
+    0,
+    parseFloat(
+      process.env.NIGHTLY_NUDGE_THRESHOLD ||
+        envConfig.NIGHTLY_NUDGE_THRESHOLD ||
+        '0.7',
+    ) || 0.7,
+  ),
+);
+
+// Default context window size (tokens) when a group doesn't specify one.
+export const DEFAULT_CONTEXT_WINDOW = parseInt(
+  process.env.DEFAULT_CONTEXT_WINDOW ||
+    envConfig.DEFAULT_CONTEXT_WINDOW ||
+    '128000',
+  10,
 );
 
 function escapeRegex(str: string): string {

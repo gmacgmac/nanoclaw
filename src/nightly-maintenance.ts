@@ -1,14 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 
+import { DEFAULT_CONTEXT_WINDOW, NIGHTLY_NUDGE_THRESHOLD } from './config.js';
 import { getAllRegisteredGroups, getAllSessions } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
-
-const DEFAULT_CONTEXT_WINDOW = 128000;
-const NUDGE_THRESHOLD = 0.5;
 
 /**
  * Parse the last input_tokens value from a group's token-usage.log.
@@ -80,7 +78,7 @@ export async function runNightlyMaintenance(
     if (lastTokens <= 0) continue;
 
     const usage = lastTokens / contextWindowSize;
-    if (usage < NUDGE_THRESHOLD) {
+    if (usage < NIGHTLY_NUDGE_THRESHOLD) {
       logger.debug(
         { group: group.folder, usage: `${(usage * 100).toFixed(1)}%` },
         'Group below nightly nudge threshold',
