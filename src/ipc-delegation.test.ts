@@ -77,6 +77,7 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    sendAttachment: async () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

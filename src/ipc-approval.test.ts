@@ -66,6 +66,7 @@ beforeEach(() => {
       jid: string,
       text: string,
     ) => Promise<void>,
+    sendAttachment: async () => {},
     registeredGroups: () => groups,
     registerGroup: vi.fn(),
     syncGroups: async () => {},

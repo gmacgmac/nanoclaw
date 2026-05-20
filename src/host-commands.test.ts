@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
 import { handleHostCommand } from './host-commands.js';
-
-vi.mock('fs');
 
 const mockSetRegisteredGroup = vi.fn();
 vi.mock('./db.js', () => ({
@@ -16,13 +13,25 @@ vi.mock('./sender-allowlist.js', () => ({
   loadSenderAllowlist: () => mockLoadSenderAllowlist(),
 }));
 
+const mockResolvePreset = vi.fn();
+const mockGetAvailablePresetNames = vi.fn();
+vi.mock('./presets.js', () => ({
+  resolvePreset: (...args: unknown[]) => mockResolvePreset(...args),
+  getAvailablePresetNames: () => mockGetAvailablePresetNames(),
+}));
+
+const mockSanitizeSessionJsonl = vi.fn();
+vi.mock('./session-sanitizer.js', () => ({
+  sanitizeSessionJsonl: (...args: unknown[]) =>
+    mockSanitizeSessionJsonl(...args),
+}));
+
 vi.mock('./config.js', () => ({
   HOME_DIR: '/mock/home',
   DATA_DIR: '/mock/data',
 }));
 
 describe('handleHostCommand', () => {
-  const presetsPath = '/mock/home/.config/nanoclaw/model-presets.json';
   let replies: string[] = [];
   let closeStdinCalls: string[] = [];
 
@@ -36,19 +45,13 @@ describe('handleHostCommand', () => {
       logDenied: true,
     });
     mockIsSenderAllowed.mockReturnValue(true);
+    mockGetAvailablePresetNames.mockReturnValue([]);
+    mockResolvePreset.mockReturnValue(null);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  function mockFiles(files: Record<string, string>) {
-    vi.mocked(fs.readFileSync).mockImplementation((p: unknown) => {
-      const filePath = String(p);
-      if (files[filePath] !== undefined) return files[filePath];
-      throw Object.assign(new Error(`ENOENT: ${filePath}`), { code: 'ENOENT' });
-    });
-  }
 
   function makeCtx(
     overrides: {
@@ -135,11 +138,7 @@ describe('handleHostCommand', () => {
 
   it('replies "Not authorised." for denied sender and consumes message', async () => {
     mockIsSenderAllowed.mockReturnValue(false);
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'ollama_k2.6': { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
-      }),
-    });
+    mockGetAvailablePresetNames.mockReturnValue(['ollama_k2.6']);
     const result = await handleHostCommand(
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: ['model'] }),
@@ -150,7 +149,7 @@ describe('handleHostCommand', () => {
   });
 
   it('/model with no presets replies "No profiles configured."', async () => {
-    mockFiles({});
+    mockGetAvailablePresetNames.mockReturnValue([]);
     const result = await handleHostCommand(
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: ['model'] }),
@@ -161,15 +160,20 @@ describe('handleHostCommand', () => {
   });
 
   it('/model lists active preset and available choices', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'ollama_k2.6': { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
+    mockGetAvailablePresetNames.mockReturnValue(['ollama_k2.6', 'opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'ollama_k2.6')
+        return {
+          name: 'ollama_k2.6',
+          endpoint: 'ollama',
+          model: 'kimi-k2.6:cloud',
+          capabilities: { vision: false },
+        };
+      return null;
     });
     const ctx = makeCtx({
       allowedHostCommands: ['model'],
-      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+      containerConfig: { preset: 'ollama_k2.6' },
     });
     const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
     expect(result).toBe(true);
@@ -179,26 +183,41 @@ describe('handleHostCommand', () => {
     expect(replies[0]).toContain('`opus_4.7`');
   });
 
-  it('/model with custom endpoint/model shows raw values when no preset match', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
-    });
+  it('/model shows unresolved when preset name exists but cannot be resolved', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockReturnValue(null);
     const ctx = makeCtx({
       allowedHostCommands: ['model'],
-      containerConfig: { endpoint: 'ollama', model: 'custom-model' },
+      containerConfig: { preset: 'deleted_preset' },
     });
     const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
     expect(result).toBe(true);
-    expect(replies[0]).toContain('Active: ollama / custom-model');
+    expect(replies[0]).toContain('Active: `deleted_preset` (unresolved)');
   });
 
-  it('/model <preset> updates DB and in-memory cache', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
+  it('/model shows "none" when no preset is set', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockReturnValue(null);
+    const ctx = makeCtx({
+      allowedHostCommands: ['model'],
+      containerConfig: {},
+    });
+    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Active: none');
+  });
+
+  it('/model <preset> updates DB with preset name only', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
     });
     const group = {
       name: 'Test',
@@ -207,8 +226,7 @@ describe('handleHostCommand', () => {
       added_at: '2024-01-01T00:00:00.000Z',
       containerConfig: {
         allowedHostCommands: ['model'],
-        endpoint: 'ollama',
-        model: 'kimi-k2.6:cloud',
+        preset: 'ollama_k2.6',
         skills: ['x'],
       },
     };
@@ -230,94 +248,88 @@ describe('handleHostCommand', () => {
       'tg:123',
       expect.objectContaining({
         containerConfig: expect.objectContaining({
-          model: 'claude-opus-4-7',
-          endpoint: 'anthropic',
+          preset: 'opus_4.7',
           skills: ['x'],
         }),
       }),
     );
-    expect(group.containerConfig).toEqual({
-      allowedHostCommands: ['model'],
-      endpoint: 'anthropic',
-      model: 'claude-opus-4-7',
-      skills: ['x'],
-    });
+    // Verify in-memory cache updated
+    expect(group.containerConfig.preset).toBe('opus_4.7');
     expect(replies[0]).toContain('Switched to `opus_4.7`');
+    expect(replies[0]).toContain('anthropic / claude-opus-4-7');
   });
 
   it('/model <preset> recycles active container', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
     });
     const ctx = makeCtx({
       allowedHostCommands: ['model'],
-      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+      containerConfig: { preset: 'ollama_k2.6' },
     });
     await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
 
-  it('/model <preset> updates settings.json with new model', async () => {
-    const settingsPath = '/mock/data/sessions/test/.claude/settings.json';
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
-      [settingsPath]: JSON.stringify({
-        env: {
-          ANTHROPIC_MODEL: 'kimi-k2.6:cloud',
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-        },
-      }),
+  it('/model <preset> calls sanitizeSessionJsonl on switch', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
     });
-    vi.mocked(fs.existsSync).mockReturnValue(true);
     const ctx = makeCtx({
       allowedHostCommands: ['model'],
-      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+      containerConfig: { preset: 'ollama_k2.6' },
     });
     await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
-
-    const writeCall = vi
-      .mocked(fs.writeFileSync)
-      .mock.calls.find((call) => call[0] === settingsPath);
-    expect(writeCall).toBeDefined();
-    const written = JSON.parse(writeCall![1] as string);
-    expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
-    expect(written.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('0');
+    expect(mockSanitizeSessionJsonl).toHaveBeenCalledWith('test');
   });
 
-  it('/model <preset> creates settings.json if missing', async () => {
-    const settingsPath = '/mock/data/sessions/test/.claude/settings.json';
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
+  it('/model <preset> continues even if sanitization throws', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
     });
-    vi.mocked(fs.existsSync).mockImplementation((p: unknown) => {
-      return String(p) !== settingsPath;
+    mockSanitizeSessionJsonl.mockImplementation(() => {
+      throw new Error('disk full');
     });
     const ctx = makeCtx({
       allowedHostCommands: ['model'],
-      containerConfig: { endpoint: 'ollama', model: 'kimi-k2.6:cloud' },
+      containerConfig: { preset: 'ollama_k2.6' },
     });
-    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
-
-    const writeCall = vi
-      .mocked(fs.writeFileSync)
-      .mock.calls.find((call) => call[0] === settingsPath);
-    expect(writeCall).toBeDefined();
-    const written = JSON.parse(writeCall![1] as string);
-    expect(written.env.ANTHROPIC_MODEL).toBe('claude-opus-4-7');
+    const result = await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Switched to `opus_4.7`');
   });
 
   it('/model unknown_preset replies with rejection', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
-    });
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockReturnValue(null);
     const ctx = makeCtx({ allowedHostCommands: ['model'] });
     const result = await handleHostCommand(
       makeMsg('/model unknown'),
@@ -331,9 +343,6 @@ describe('handleHostCommand', () => {
   });
 
   it('falls through for /hi when only model is allowed', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({}),
-    });
     const result = await handleHostCommand(
       makeMsg('/hi'),
       makeCtx({ allowedHostCommands: ['model'] }),
@@ -344,11 +353,6 @@ describe('handleHostCommand', () => {
   });
 
   it('falls through for /model when group has no allowedHostCommands', async () => {
-    mockFiles({
-      [presetsPath]: JSON.stringify({
-        'opus_4.7': { endpoint: 'anthropic', model: 'claude-opus-4-7' },
-      }),
-    });
     const result = await handleHostCommand(
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: undefined }),

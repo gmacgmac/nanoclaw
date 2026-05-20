@@ -30,6 +30,7 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 import { readEnvFile } from './env.js';
 import { getExtractedSkills } from './lib/skill-manager.js';
+import { resolvePreset } from './presets.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -62,6 +63,8 @@ export interface ContainerInput {
       env?: Record<string, string>;
     };
   };
+  // Multimodal: base64-encoded images for vision-capable models
+  images?: Array<{ base64: string; mediaType: string; caption?: string }>;
 }
 
 export interface ContainerOutput {
@@ -105,30 +108,24 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   // via workspace-level memory/ directory + @import in CLAUDE.md instead.
   // See: PR_context-management-memories.md for the full architecture.
 
+  // Always regenerate settings.json from the resolved preset so it never drifts.
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-            ANTHROPIC_MODEL: 'glm-5:cloud',
-          },
+  const resolved = resolvePreset(group.containerConfig?.preset);
+  fs.writeFileSync(
+    settingsFile,
+    JSON.stringify(
+      {
+        env: {
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+          ANTHROPIC_MODEL: resolved?.model ?? '',
         },
-        null,
-        2,
-      ) + '\n',
-    );
-  }
+      },
+      null,
+      2,
+    ) + '\n',
+  );
 
   // Sync skills from container/skills/ into each group's .claude/skills/
   // Skills can be filtered per-group via containerConfig.skills:
@@ -317,11 +314,12 @@ function buildContainerArgs(
 
   // Pass the group's chosen endpoint name so the agent-runner can forward it
   // to the credential proxy via the X-Nanoclaw-Endpoint header.
-  const endpoint = group.containerConfig?.endpoint;
+  const resolvedPreset = resolvePreset(group.containerConfig?.preset);
+  const endpoint = resolvedPreset?.endpoint;
   if (!endpoint) {
     throw new Error(
       `No endpoint configured for group ${group.folder}. ` +
-        `Update container_config with a vendor name from secrets.env (e.g. "ollama", "anthropic", "zai").`,
+        `Set a preset in container_config or define one in model-presets.json.`,
     );
   }
   args.push('-e', `NANOCLAW_ENDPOINT=${endpoint}`);
@@ -344,7 +342,7 @@ function buildContainerArgs(
   // Unlike brave-search (which injects an API key), web search routes through the proxy.
   // The MCP server only needs to know where the proxy is and which vendor to request.
   if (group.containerConfig?.mcpServers?.['nanoclaw-web-search']) {
-    const webSearchVendor = group.containerConfig?.webSearchVendor ?? 'ollama';
+    const webSearchVendor = resolvedPreset?.webSearchVendor ?? 'ollama';
     args.push('-e', `NANOCLAW_WEB_SEARCH_VENDOR=${webSearchVendor}`);
     args.push('-e', `NANOCLAW_PROXY_HOST=${CONTAINER_HOST_GATEWAY}`);
     args.push('-e', `NANOCLAW_PROXY_PORT=${CREDENTIAL_PROXY_PORT}`);

@@ -830,6 +830,16 @@ export function logError(entry: ErrorLogEntry): void {
   ).run(entry.level, entry.message, contextJson);
 }
 
+// --- Transaction helper ---
+
+/**
+ * Run a function inside a SQLite transaction (all-or-nothing).
+ * If fn throws, the transaction is rolled back.
+ */
+export function runInTransaction(fn: () => void): void {
+  db.transaction(fn)();
+}
+
 export function getErrorLogs(
   limit: number = 100,
   level?: 'error' | 'fatal' | 'warn',

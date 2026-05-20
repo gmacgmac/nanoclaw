@@ -14,6 +14,7 @@ vi.mock('./config.js', () => ({
   CREDENTIAL_PROXY_PORT: 3001,
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
+  HOME_DIR: '/tmp/nanoclaw-test-home',
   IDLE_TIMEOUT: 1800000, // 30min
   TIMEZONE: 'America/Los_Angeles',
 }));
@@ -49,6 +50,45 @@ vi.mock('fs', async () => {
 // Mock mount-security
 vi.mock('./mount-security.js', () => ({
   validateAdditionalMounts: vi.fn(() => []),
+}));
+
+// Mock presets module to avoid file system access
+vi.mock('./presets.js', () => ({
+  resolvePreset: vi.fn((name?: string) => {
+    if (name === 'ollama') {
+      return {
+        name: 'ollama',
+        endpoint: 'ollama',
+        model: 'test-model',
+        capabilities: { vision: false },
+        contextWindow: 128000,
+        webSearchVendor: 'ollama',
+      };
+    }
+    if (name === 'zai') {
+      return {
+        name: 'zai',
+        endpoint: 'zai',
+        model: 'test-model',
+        capabilities: { vision: false },
+        contextWindow: 128000,
+        webSearchVendor: 'zai',
+      };
+    }
+    // Default: return anthropic preset for any name (including 'default')
+    if (name) {
+      return {
+        name,
+        endpoint: 'anthropic',
+        model: 'test-model',
+        capabilities: { vision: false },
+        contextWindow: 128000,
+        webSearchVendor: 'ollama',
+      };
+    }
+    return null;
+  }),
+  PRESETS_PATH: '/tmp/nanoclaw-test-home/.config/nanoclaw/model-presets.json',
 }));
 
 // Create a controllable fake ChildProcess
@@ -96,6 +136,7 @@ const testGroup: RegisteredGroup = {
   folder: 'test-group',
   trigger: '@Andy',
   added_at: new Date().toISOString(),
+  containerConfig: { preset: 'default' },
 };
 
 const testInput = {
@@ -286,7 +327,7 @@ describe('NANOCLAW_ENDPOINT env var', () => {
   it('passes configured endpoint from containerConfig', async () => {
     const groupWithEndpoint: RegisteredGroup = {
       ...testGroup,
-      containerConfig: { endpoint: 'ollama' },
+      containerConfig: { preset: 'ollama' },
     };
 
     const resultPromise = runContainerAgent(
@@ -323,7 +364,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
-        webSearchVendor: 'ollama',
+        preset: 'ollama',
         mcpServers: {
           'nanoclaw-web-search': {
             command: 'node',
@@ -368,6 +409,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
+        preset: 'default',
         mcpServers: {
           'nanoclaw-web-search': {
             command: 'node',
@@ -399,7 +441,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
-        webSearchVendor: 'zai',
+        preset: 'zai',
         mcpServers: {
           'nanoclaw-web-search': {
             command: 'node',
@@ -431,6 +473,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
+        preset: 'default',
         mcpServers: {
           'brave-search': { command: 'node', args: ['server.js'] },
         },
@@ -455,7 +498,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     expect(vendorIdx).toBe(-1);
   });
 
-  it('does NOT inject web search env vars when containerConfig is absent', async () => {
+  it('does NOT inject web search env vars when containerConfig has no web search MCP', async () => {
     const resultPromise = runContainerAgent(
       testGroup,
       testInput,
@@ -478,8 +521,7 @@ describe('NANOCLAW_WEB_SEARCH env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
-        endpoint: 'ollama',
-        webSearchVendor: 'ollama',
+        preset: 'ollama',
         mcpServers: {
           'brave-search': { command: 'node', args: ['server.js'] },
           'nanoclaw-web-search': {
@@ -533,7 +575,7 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
   it('passes NANOCLAW_APPROVAL_MODE=true when approvalMode is enabled', async () => {
     const group: RegisteredGroup = {
       ...testGroup,
-      containerConfig: { approvalMode: true },
+      containerConfig: { preset: 'default', approvalMode: true },
     };
 
     const resultPromise = runContainerAgent(
@@ -573,6 +615,7 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
     const group: RegisteredGroup = {
       ...testGroup,
       containerConfig: {
+        preset: 'default',
         approvalMode: true,
         additionalMounts: [
           { hostPath: '~/finance', readonly: false },
@@ -603,7 +646,7 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
   it('does NOT pass approval env vars when approvalMode is false', async () => {
     const group: RegisteredGroup = {
       ...testGroup,
-      containerConfig: { approvalMode: false },
+      containerConfig: { preset: 'default', approvalMode: false },
     };
 
     const resultPromise = runContainerAgent(
@@ -650,7 +693,7 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
   it('passes empty NANOCLAW_WRITE_MOUNTS when no write mounts exist', async () => {
     const group: RegisteredGroup = {
       ...testGroup,
-      containerConfig: { approvalMode: true },
+      containerConfig: { preset: 'default', approvalMode: true },
     };
 
     const resultPromise = runContainerAgent(

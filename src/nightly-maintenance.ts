@@ -6,6 +6,7 @@ import { getAllRegisteredGroups, getAllSessions } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { logger } from './logger.js';
+import { resolvePreset } from './presets.js';
 import { RegisteredGroup } from './types.js';
 
 /**
@@ -71,8 +72,8 @@ export async function runNightlyMaintenance(
     if (!sessions[group.folder]) continue;
     result.groupsChecked++;
 
-    const contextWindowSize =
-      group.containerConfig?.contextWindowSize || DEFAULT_CONTEXT_WINDOW;
+    const resolved = resolvePreset(group.containerConfig?.preset);
+    const contextWindowSize = resolved?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     const lastTokens = parseLastInputTokens(group.folder);
 
     if (lastTokens <= 0) continue;

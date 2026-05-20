@@ -51,6 +51,14 @@ export class DashboardChannel implements Channel {
   async disconnect(): Promise<void> {
     // No-op
   }
+
+  async sendAttachment(
+    _jid: string,
+    _filePath: string,
+    _caption?: string,
+  ): Promise<void> {
+    // Dashboard doesn't support file attachments yet
+  }
 }
 
 // Self-register on import

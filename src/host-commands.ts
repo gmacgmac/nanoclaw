@@ -1,9 +1,6 @@
-import fs from 'fs';
-import path from 'path';
-
-import { HOME_DIR, DATA_DIR } from './config.js';
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
+import { getAvailablePresetNames, resolvePreset } from './presets.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
@@ -17,114 +14,6 @@ export interface HostCommandCtx {
   group: RegisteredGroup;
   sender: string;
   reply: (text: string) => Promise<void>;
-}
-
-interface ModelPreset {
-  endpoint: string;
-  model: string;
-}
-
-type ModelPresets = Record<string, ModelPreset>;
-
-const PRESETS_PATH = path.join(
-  HOME_DIR,
-  '.config',
-  'nanoclaw',
-  'model-presets.json',
-);
-
-function loadPresets(): ModelPresets {
-  try {
-    const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) {
-      logger.warn(
-        { path: PRESETS_PATH },
-        'model-presets.json is not an object',
-      );
-      return {};
-    }
-    const presets: ModelPresets = {};
-    for (const [key, value] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
-      if (
-        typeof value === 'object' &&
-        value !== null &&
-        'endpoint' in value &&
-        'model' in value &&
-        typeof (value as Record<string, unknown>).endpoint === 'string' &&
-        typeof (value as Record<string, unknown>).model === 'string'
-      ) {
-        presets[key] = {
-          endpoint: (value as Record<string, unknown>).endpoint as string,
-          model: (value as Record<string, unknown>).model as string,
-        };
-      } else {
-        logger.warn(
-          { preset: key, path: PRESETS_PATH },
-          'Skipping invalid model preset entry',
-        );
-      }
-    }
-    return presets;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      logger.warn({ path: PRESETS_PATH }, 'model-presets.json not found');
-    } else {
-      logger.warn(
-        { err, path: PRESETS_PATH },
-        'Failed to load model-presets.json',
-      );
-    }
-    return {};
-  }
-}
-
-function findActivePreset(
-  presets: ModelPresets,
-  endpoint?: string,
-  model?: string,
-): string | undefined {
-  for (const [name, preset] of Object.entries(presets)) {
-    if (preset.endpoint === endpoint && preset.model === model) {
-      return name;
-    }
-  }
-  return undefined;
-}
-
-function updateSettingsJson(groupFolder: string, model: string): void {
-  const settingsPath = path.join(
-    DATA_DIR,
-    'sessions',
-    groupFolder,
-    '.claude',
-    'settings.json',
-  );
-
-  let settings: Record<string, unknown> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      const raw = fs.readFileSync(settingsPath, 'utf-8');
-      settings = JSON.parse(raw) as Record<string, unknown>;
-    } catch (err) {
-      logger.warn(
-        { err, path: settingsPath },
-        'Failed to parse settings.json, will overwrite',
-      );
-    }
-  }
-
-  const env =
-    typeof settings.env === 'object' && settings.env !== null
-      ? (settings.env as Record<string, unknown>)
-      : {};
-
-  env.ANTHROPIC_MODEL = model;
-  settings.env = env;
-
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
 export async function handleHostCommand(
@@ -197,26 +86,26 @@ async function handleModelCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
 ): Promise<boolean> {
-  const presets = loadPresets();
-  const presetNames = Object.keys(presets);
+  const presetNames = getAvailablePresetNames();
 
   if (args.length === 0) {
-    // Report current preset
-    const currentEndpoint = ctx.group.containerConfig?.endpoint ?? 'anthropic';
-    const currentModel = ctx.group.containerConfig?.model;
-    const activePreset = findActivePreset(
-      presets,
-      currentEndpoint,
-      currentModel,
-    );
-
+    // Report current preset and list available
     if (presetNames.length === 0) {
       await ctx.reply('No profiles configured.');
       return true;
     }
 
+    const currentPresetName = ctx.group.containerConfig?.preset;
+    const resolved = resolvePreset(currentPresetName);
+
+    const activeLine = resolved
+      ? `Active: \`${resolved.name}\``
+      : currentPresetName
+        ? `Active: \`${currentPresetName}\` (unresolved)`
+        : 'Active: none';
+
     const lines = [
-      `Active: ${activePreset ? `\`${activePreset}\`` : `${currentEndpoint} / ${currentModel ?? 'default'}`}`,
+      activeLine,
       '',
       'Available:',
       ...presetNames.map((n) => `  • \`${n}\``),
@@ -226,21 +115,20 @@ async function handleModelCommand(
   }
 
   const presetName = args[0];
-  const preset = presets[presetName];
+  const resolved = resolvePreset(presetName);
 
-  if (!preset) {
+  if (!resolved) {
     await ctx.reply(
       `Unknown preset \`${presetName}\`. Available: ${presetNames.map((n) => `\`${n}\``).join(', ') || 'none'}`,
     );
     return true;
   }
 
-  // Merge new model/endpoint into existing config
+  // Set preset name on config — only the name is stored, resolution happens at spawn
   const existingConfig = ctx.group.containerConfig ?? {};
   const newConfig = {
     ...existingConfig,
-    model: preset.model,
-    endpoint: preset.endpoint,
+    preset: presetName,
   };
 
   const updatedGroup: RegisteredGroup = {
@@ -253,10 +141,8 @@ async function handleModelCommand(
   // Sync in-memory cache
   (ctx.group as RegisteredGroup).containerConfig = newConfig;
 
-  // Update settings.json so the container SDK reads the correct model
-  updateSettingsJson(ctx.group.folder, preset.model);
-
-  // Recycle active container so next message picks up new config
+  // Recycle active container so next message picks up new config.
+  // settings.json is regenerated on spawn — no need to update it here.
   closeStdin(ctx.jid);
 
   if (SANITIZE_SESSION_ON_SWITCH) {
@@ -271,7 +157,7 @@ async function handleModelCommand(
   }
 
   await ctx.reply(
-    `Switched to \`${presetName}\` (${preset.endpoint} / ${preset.model}).`,
+    `Switched to \`${presetName}\` (${resolved.endpoint} / ${resolved.model}).`,
   );
   return true;
 }

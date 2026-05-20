@@ -26,7 +26,7 @@ describe('validateContainerConfig', () => {
       approvalTimeout: 60,
       commandAllowlist: ['^git\\b', '^npm\\b'],
       learningLoop: 'extract-only',
-      model: 'sonnet',
+      preset: 'sonnet',
       timeout: 300000,
     };
     const result = validateContainerConfig(input);
@@ -259,17 +259,15 @@ describe('validateContainerConfig', () => {
 
   it('non-security fields pass through untouched', () => {
     const input: ContainerConfig = {
-      model: 'opus',
+      preset: 'opus',
       timeout: 600000,
-      endpoint: 'ollama',
       skills: ['status'],
       allowedTools: ['Read', 'Write'],
     };
     const result = validateContainerConfig(input);
     expect(result.warnings).toHaveLength(0);
-    expect(result.config.model).toBe('opus');
+    expect(result.config.preset).toBe('opus');
     expect(result.config.timeout).toBe(600000);
-    expect(result.config.endpoint).toBe('ollama');
     expect(result.config.skills).toEqual(['status']);
     expect(result.config.allowedTools).toEqual(['Read', 'Write']);
   });

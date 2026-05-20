@@ -10,6 +10,26 @@ import {
 } from './nightly-maintenance.js';
 import { RegisteredGroup } from './types.js';
 
+// Mock resolvePreset to return contextWindow from the preset name
+vi.mock('./presets.js', () => ({
+  resolvePreset: (name: string | undefined) => {
+    if (!name) return null;
+    // Preset name encodes context window for test purposes (e.g. "test-100k")
+    const match = name.match(/^test-(\d+)k$/);
+    if (match) {
+      return {
+        name,
+        endpoint: 'anthropic',
+        model: 'test-model',
+        capabilities: { vision: false },
+        contextWindow: parseInt(match[1], 10) * 1000,
+        webSearchVendor: 'ollama',
+      };
+    }
+    return null;
+  },
+}));
+
 // --- parseLastInputTokens ---
 
 describe('parseLastInputTokens', () => {
@@ -70,7 +90,7 @@ describe('runNightlyMaintenance', () => {
     folder,
     trigger: `@${folder}`,
     added_at: '2026-01-01T00:00:00Z',
-    containerConfig: contextWindowSize ? { contextWindowSize } : undefined,
+    containerConfig: contextWindowSize ? { preset: `test-${contextWindowSize / 1000}k` } : undefined,
   });
 
   beforeEach(() => {

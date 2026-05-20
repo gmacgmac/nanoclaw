@@ -15,12 +15,13 @@ import {
   storeMessageDirect,
   updateTask,
 } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendAttachment: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -241,6 +242,9 @@ export async function processIpcMessageData(
     source?: string;
     sender_name?: string;
     sender?: string;
+    // attachment fields
+    filePath?: string;
+    caption?: string;
     // approval_request fields
     command?: string;
     patterns?: Array<{ name: string; description: string; matched: string }>;
@@ -253,6 +257,37 @@ export async function processIpcMessageData(
   isMain: boolean,
   deps: IpcDeps,
 ): Promise<void> {
+  // --- Handle attachment messages from send_attachment MCP tool ---
+  if (data.type === 'attachment') {
+    if (!data.chatJid || !data.filePath) return;
+
+    // Resolve container path to host path
+    // /workspace/group/... → groups/{sourceGroup}/...
+    const relativePath = data.filePath.replace(/^\/workspace\/group\//, '');
+    const hostPath = path.join(resolveGroupFolderPath(sourceGroup), relativePath);
+
+    if (!fs.existsSync(hostPath)) {
+      logger.warn({ hostPath, containerPath: data.filePath, sourceGroup }, 'Attachment file not found on host');
+      return;
+    }
+
+    // Security: verify resolved path is within the group folder
+    const resolvedHost = path.resolve(hostPath);
+    const groupDir = path.resolve(resolveGroupFolderPath(sourceGroup));
+    if (!resolvedHost.startsWith(groupDir)) {
+      logger.warn({ hostPath, sourceGroup }, 'Attachment path escapes group folder');
+      return;
+    }
+
+    // Route to channel
+    try {
+      await deps.sendAttachment(data.chatJid, resolvedHost, data.caption);
+    } catch (err) {
+      logger.error({ err, chatJid: data.chatJid, hostPath }, 'Failed to send attachment');
+    }
+    return;
+  }
+
   // --- Handle approval requests from execute_command MCP tool ---
   if (data.type === 'approval_request') {
     if (!data.chatJid || !data.command) return;

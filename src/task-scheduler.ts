@@ -23,6 +23,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { resolvePreset } from './presets.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -204,6 +205,25 @@ async function runTask(
   };
 
   try {
+    const resolved = resolvePreset(group.containerConfig?.preset);
+    if (!resolved) {
+      const presetName = group.containerConfig?.preset ?? '(none)';
+      error = `Preset '${presetName}' not found, task container not spawned`;
+      logger.warn(
+        { taskId: task.id, group: group.name, preset: group.containerConfig?.preset },
+        'Preset resolution failed, task container not spawned',
+      );
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: Date.now() - startTime,
+        status: 'error',
+        result: null,
+        error,
+      });
+      return;
+    }
+
     const output = await runContainerAgent(
       group,
       {

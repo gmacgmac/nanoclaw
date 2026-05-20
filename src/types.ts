@@ -55,11 +55,11 @@ export interface ContainerConfig {
   allowedTools?: string[];
 
   /**
-   * Per-group model override.
-   * undefined = inherit from host env (backward compat).
-   * Accepts model IDs or aliases: "sonnet", "opus", "haiku", "glm-5:cloud", etc.
+   * Preset name from model-presets.json.
+   * Replaces endpoint/model/webSearchVendor/contextWindowSize — those are now
+   * resolved at runtime via resolvePreset(). Set during registration or /model switch.
    */
-  model?: string;
+  preset?: string;
 
   /**
    * Per-group system prompt (appended to the claude_code preset).
@@ -81,29 +81,7 @@ export interface ContainerConfig {
     };
   };
 
-  /**
-   * Named endpoint to use for this group's API traffic.
-   * Must match a vendor prefix defined in secrets.env (e.g. "anthropic", "ollama", "zai").
-   * The credential proxy routes requests to the correct upstream based on this value.
-   * Required — no default. Set during group registration via --endpoint.
-   */
-  endpoint?: string;
 
-  /**
-   * Context window size for this group's model (in tokens).
-   * Used to calculate flush thresholds (80% live, 50% nightly).
-   * Defaults to 128000 if omitted.
-   */
-  contextWindowSize?: number;
-
-  /**
-   * Named web search vendor for this group's web search traffic.
-   * Must match a vendor prefix defined in secrets.env
-   * (e.g. "ollama" for OLLAMA_WEB_SEARCH_BASE_URL / OLLAMA_WEB_SEARCH_API_KEY).
-   * The credential proxy routes web search requests to the correct upstream.
-   * Defaults to "ollama" if omitted.
-   */
-  webSearchVendor?: string;
 
   /**
    * Name of the Telegram bot instance to use for this group's outbound replies.
@@ -238,6 +216,8 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: send a file/image attachment to the user.
+  sendAttachment?(jid: string, filePath: string, caption?: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

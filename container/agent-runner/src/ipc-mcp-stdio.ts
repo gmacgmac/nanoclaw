@@ -69,6 +69,46 @@ server.tool(
 );
 
 server.tool(
+  'send_attachment',
+  'Send a file (image, document, etc.) to the user or group. The file must exist in /workspace/group/. Use this to share generated images, charts, documents, or any file the user needs.',
+  {
+    file_path: z.string().describe('Absolute path to the file within /workspace/group/ (e.g., /workspace/group/media/chart.png)'),
+    caption: z.string().optional().describe('Optional caption/description to send with the file'),
+    target_jid: z.string().optional().describe('(Main group only) JID of the target group. Defaults to current group.'),
+  },
+  async (args) => {
+    // Validate file exists
+    if (!fs.existsSync(args.file_path)) {
+      return { content: [{ type: 'text' as const, text: `Error: File not found: ${args.file_path}` }] };
+    }
+
+    // Security: file must be under /workspace/group/
+    const resolved = path.resolve(args.file_path);
+    if (!resolved.startsWith('/workspace/group/')) {
+      return { content: [{ type: 'text' as const, text: 'Error: File must be within /workspace/group/' }] };
+    }
+
+    const targetJid = isMain && args.target_jid ? args.target_jid : chatJid;
+
+    // NOTE: filePath is a container path (/workspace/group/media/file.jpg).
+    // The host IPC handler (BE_14) resolves this to the actual host path
+    // (groups/{folder}/media/file.jpg) before sending to the channel.
+    const data = {
+      type: 'attachment',
+      chatJid: targetJid,
+      filePath: resolved,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `Attachment sent: ${path.basename(resolved)}` }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

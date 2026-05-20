@@ -1,7 +1,7 @@
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
-import { Api, Bot } from 'grammy';
+import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -667,6 +667,48 @@ export class TelegramChannel implements Channel {
       );
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendAttachment(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
+    const resolved = this.getBotForJid(jid);
+    if (!resolved) {
+      logger.warn({ jid }, 'Telegram: no bot available to send attachment');
+      return;
+    }
+
+    try {
+      const numericId = parseTelegramJid(jid).chatId;
+      const ext = path.extname(filePath).toLowerCase();
+      const inputFile = new InputFile(filePath, path.basename(filePath));
+
+      const imageExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+      const videoExts = new Set(['.mp4', '.mov', '.avi', '.mkv']);
+
+      if (imageExts.has(ext)) {
+        await resolved.bot.api.sendPhoto(numericId, inputFile, {
+          caption: caption || undefined,
+        });
+      } else if (videoExts.has(ext)) {
+        await resolved.bot.api.sendVideo(numericId, inputFile, {
+          caption: caption || undefined,
+        });
+      } else {
+        await resolved.bot.api.sendDocument(numericId, inputFile, {
+          caption: caption || undefined,
+        });
+      }
+
+      logger.info(
+        { jid, file: path.basename(filePath), bot: resolved.name },
+        'Telegram attachment sent',
+      );
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to send Telegram attachment');
     }
   }
 

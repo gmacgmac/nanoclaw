@@ -2,6 +2,7 @@
  * Step: register — Write channel registration config, create group folders.
  *
  * Accepts --channel to specify the messaging platform (whatsapp, telegram, slack, discord).
+ * Accepts --preset to assign a model preset at registration time (validated against model-presets.json).
  * Uses parameterized SQL queries to prevent injection.
  */
 import fs from 'fs';
@@ -11,6 +12,7 @@ import { STORE_DIR } from '../src/config.ts';
 import { initDatabase, setRegisteredGroup, storeChatMetadata } from '../src/db.ts';
 import { isValidGroupFolder } from '../src/group-folder.ts';
 import { logger } from '../src/logger.ts';
+import { resolvePreset, getAvailablePresetNames } from '../src/presets.ts';
 import { emitStatus } from './status.ts';
 
 interface RegisterArgs {
@@ -23,7 +25,7 @@ interface RegisterArgs {
   isMain: boolean;
   assistantName: string;
   botTokenName: string;
-  endpoint: string;
+  preset: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -37,7 +39,7 @@ function parseArgs(args: string[]): RegisterArgs {
     isMain: false,
     assistantName: 'Andy',
     botTokenName: '',
-    endpoint: '',
+    preset: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -69,8 +71,8 @@ function parseArgs(args: string[]): RegisterArgs {
       case '--bot-token-name':
         result.botTokenName = (args[++i] || '').toLowerCase().trim();
         break;
-      case '--endpoint':
-        result.endpoint = (args[++i] || '').toLowerCase().trim();
+      case '--preset':
+        result.preset = (args[++i] || '').trim();
         break;
     }
   }
@@ -110,10 +112,28 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
-  // Build containerConfig with endpoint and optional telegramBot
+  // Validate preset if provided
+  if (parsed.preset) {
+    const resolved = resolvePreset(parsed.preset);
+    if (!resolved) {
+      const available = getAvailablePresetNames();
+      logger.error(
+        { preset: parsed.preset, available },
+        `Preset "${parsed.preset}" not found. Available: ${available.join(', ') || '(none)'}`,
+      );
+      emitStatus('REGISTER_CHANNEL', {
+        STATUS: 'failed',
+        ERROR: 'invalid_preset',
+        LOG: 'logs/setup.log',
+      });
+      process.exit(4);
+    }
+  }
+
+  // Build containerConfig with preset and optional telegramBot
   const containerConfig: Record<string, unknown> = {};
-  if (parsed.endpoint) {
-    containerConfig.endpoint = parsed.endpoint;
+  if (parsed.preset) {
+    containerConfig.preset = parsed.preset;
   }
   if (parsed.botTokenName && parsed.channel === 'telegram') {
     containerConfig.telegramBot = parsed.botTokenName;

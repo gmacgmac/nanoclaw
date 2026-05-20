@@ -75,6 +75,14 @@ import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger, log } from './logger.js';
 import { handleHostCommand } from './host-commands.js';
+import { runPresetMigration } from './migrations/001-preset-migration.js';
+import {
+  getAvailablePresetNames,
+  loadPresets,
+  PRESETS_PATH,
+  resolvePreset,
+} from './presets.js';
+import { encodeImageForVision, EncodedImage, isSupportedImage } from './image.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -299,6 +307,69 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  // Validate preset before spawning container
+  const resolved = resolvePreset(group.containerConfig?.preset);
+  if (!resolved) {
+    const presets = loadPresets();
+    const available = getAvailablePresetNames();
+    let errorMsg: string;
+
+    if (Object.keys(presets).length === 0) {
+      errorMsg = `❌ No model presets configured.\n\nEdit \`${PRESETS_PATH}\` to define model presets, then use /model to select one.`;
+    } else if (!group.containerConfig?.preset) {
+      errorMsg = `❌ No model preset assigned to this group.\n\nAvailable presets: ${available.map((n) => `\`${n}\``).join(', ')}\n\nUse /model <name> to select one.`;
+    } else {
+      errorMsg = `❌ Preset \`${group.containerConfig.preset}\` not found.\n\nAvailable presets: ${available.map((n) => `\`${n}\``).join(', ')}\n\nUse /model <name> to switch.`;
+    }
+
+    logger.warn(
+      { group: group.name, preset: group.containerConfig?.preset },
+      'Preset resolution failed, container not spawned',
+    );
+    await channel.sendMessage(chatJid, errorMsg);
+
+    // Roll back cursor so messages remain pending for retry after user fixes preset
+    lastAgentTimestamp[chatJid] = previousCursor;
+    saveState();
+    return true; // consumed from queue perspective — don't retry-spam
+  }
+
+  // Extract images from messages if vision is supported
+  const MAX_IMAGES_PAYLOAD = 10 * 1024 * 1024; // 10MB conservative limit
+  let images: EncodedImage[] = [];
+
+  if (resolved.capabilities.vision) {
+    let totalSize = 0;
+    for (const msg of filteredMessages) {
+      const photoMatch = msg.content.match(/^\[Photo\]:\s*(\S+)(?:\s+(.+))?$/);
+      if (photoMatch) {
+        const filePath = photoMatch[1].trim();
+        const caption = photoMatch[2]?.trim();
+        if (isSupportedImage(filePath)) {
+          const encoded = await encodeImageForVision(filePath, caption);
+          if (encoded) {
+            const entrySize = encoded.base64.length;
+            if (totalSize + entrySize > MAX_IMAGES_PAYLOAD) {
+              logger.warn(
+                { group: group.name, imageCount: images.length },
+                'Image payload size limit reached, truncating',
+              );
+              break;
+            }
+            totalSize += entrySize;
+            images.push(encoded);
+          }
+        }
+      }
+    }
+    if (images.length > 0) {
+      logger.info(
+        { group: group.name, imageCount: images.length, totalSize },
+        'Encoded images for vision',
+      );
+    }
+  }
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -317,7 +388,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, images, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -374,6 +445,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  images: EncodedImage[],
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -535,6 +607,16 @@ async function runAgent(
       );
     }
 
+    const resolved = resolvePreset(group.containerConfig?.preset);
+
+    if (!resolved) {
+      logger.warn(
+        { group: group.name, preset: group.containerConfig?.preset },
+        'Preset resolution failed, container not spawned',
+      );
+      return 'error';
+    }
+
     const output = await runContainerAgent(
       group,
       {
@@ -546,16 +628,17 @@ async function runAgent(
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
         allowedTools: effectiveAllowedTools,
-        model: containerConfig.model,
+        model: resolved.model,
         systemPrompt: containerConfig.systemPrompt,
         mcpServers: containerConfig.mcpServers,
-        endpoint: containerConfig.endpoint,
-        webSearchVendor: containerConfig.webSearchVendor,
-        contextWindowSize: containerConfig.contextWindowSize,
+        endpoint: resolved.endpoint,
+        webSearchVendor: resolved.webSearchVendor,
+        contextWindowSize: resolved.contextWindow,
         learningLoop: containerConfig.learningLoop,
         approvalTimeout: containerConfig.approvalTimeout,
         commandAllowlist: containerConfig.commandAllowlist,
         nudgeInterval: NUDGE_INTERVAL,
+        images: images.length > 0 ? images : undefined,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -789,7 +872,39 @@ async function startMessageLoop(): Promise<void> {
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Extract images for piped messages if vision is supported
+          let pipedImages: EncodedImage[] | undefined;
+          const resolved = resolvePreset(group.containerConfig?.preset);
+          if (resolved?.capabilities.vision) {
+            const MAX_PIPED_IMAGES_PAYLOAD = 10 * 1024 * 1024;
+            let totalSize = 0;
+            const extracted: EncodedImage[] = [];
+            for (const msg of messagesToSend) {
+              const photoMatch = msg.content.match(/^\[Photo\]:\s*(\S+)(?:\s+(.+))?$/);
+              if (photoMatch) {
+                const filePath = photoMatch[1].trim();
+                const caption = photoMatch[2]?.trim();
+                if (isSupportedImage(filePath)) {
+                  const encoded = await encodeImageForVision(filePath, caption);
+                  if (encoded) {
+                    const entrySize = encoded.base64.length;
+                    if (totalSize + entrySize > MAX_PIPED_IMAGES_PAYLOAD) break;
+                    totalSize += entrySize;
+                    extracted.push(encoded);
+                  }
+                }
+              }
+            }
+            if (extracted.length > 0) {
+              pipedImages = extracted;
+              logger.debug(
+                { chatJid, imageCount: extracted.length },
+                'Encoded images for piped IPC message',
+              );
+            }
+          }
+
+          if (queue.sendMessage(chatJid, formatted, pipedImages)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -847,6 +962,7 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+  runPresetMigration();
   loadState();
   restoreRemoteControl();
 
@@ -1037,6 +1153,17 @@ async function main(): Promise<void> {
           const taskId = `nightly-nudge-${group.folder}-${Date.now()}`;
           queue.enqueueTask(chatJid, taskId, async () => {
             try {
+              const nightlyResolved = resolvePreset(group.containerConfig?.preset);
+
+              if (!nightlyResolved) {
+                logger.warn(
+                  { group: group.name, preset: group.containerConfig?.preset },
+                  'Preset resolution failed, nightly nudge skipped',
+                );
+                resolve(false);
+                return;
+              }
+
               const output = await runContainerAgent(
                 group,
                 {
@@ -1049,12 +1176,12 @@ async function main(): Promise<void> {
                   isMain: group.isMain === true,
                   assistantName: ASSISTANT_NAME,
                   allowedTools: group.containerConfig?.allowedTools,
-                  model: group.containerConfig?.model,
+                  model: nightlyResolved.model,
                   systemPrompt: group.containerConfig?.systemPrompt,
                   mcpServers: group.containerConfig?.mcpServers,
-                  endpoint: group.containerConfig?.endpoint,
-                  webSearchVendor: group.containerConfig?.webSearchVendor,
-                  contextWindowSize: group.containerConfig?.contextWindowSize,
+                  endpoint: nightlyResolved.endpoint,
+                  webSearchVendor: nightlyResolved.webSearchVendor,
+                  contextWindowSize: nightlyResolved.contextWindow,
                   learningLoop: group.containerConfig?.learningLoop,
                   nudgeInterval: 0,
                 },
@@ -1098,6 +1225,12 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
+    },
+    sendAttachment: async (jid, filePath, caption) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (!channel.sendAttachment) throw new Error(`Channel ${channel.name} does not support attachments`);
+      await channel.sendAttachment(jid, filePath, caption);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
