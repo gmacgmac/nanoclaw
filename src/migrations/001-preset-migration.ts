@@ -10,7 +10,11 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, STORE_DIR } from '../config.js';
-import { getAllRegisteredGroups, runInTransaction, setRegisteredGroup } from '../db.js';
+import {
+  getAllRegisteredGroups,
+  runInTransaction,
+  setRegisteredGroup,
+} from '../db.js';
 import { logger } from '../logger.js';
 import { findPresetByModelEndpoint, loadPresets } from '../presets.js';
 import { RegisteredGroup } from '../types.js';
@@ -64,13 +68,21 @@ export function runPresetMigration(): void {
   }
 
   // 4. Resolve each group
-  const errors: Array<{ jid: string; name: string; endpoint: string; model: string }> = [];
+  const errors: Array<{
+    jid: string;
+    name: string;
+    endpoint: string;
+    model: string;
+  }> = [];
   const updates: Array<{ jid: string; group: RegisteredGroup }> = [];
 
   for (const [jid, group] of groupEntries) {
     // Already has preset — skip
     if (group.containerConfig?.preset) {
-      logger.info({ jid, name: group.name, preset: group.containerConfig.preset }, 'Group already has preset — skipping');
+      logger.info(
+        { jid, name: group.name, preset: group.containerConfig.preset },
+        'Group already has preset — skipping',
+      );
       continue;
     }
 
@@ -78,7 +90,7 @@ export function runPresetMigration(): void {
     if (!group.containerConfig) {
       logger.warn(
         { jid, name: group.name },
-        "Group has no model configuration. Use /model to assign a preset after startup.",
+        'Group has no model configuration. Use /model to assign a preset after startup.',
       );
       continue;
     }
@@ -92,7 +104,7 @@ export function runPresetMigration(): void {
     if (!endpoint) {
       logger.warn(
         { jid, name: group.name },
-        "Group has no endpoint configured. Use /model to assign a preset after startup.",
+        'Group has no endpoint configured. Use /model to assign a preset after startup.',
       );
       continue;
     }
@@ -134,7 +146,12 @@ export function runPresetMigration(): void {
     logger.error('=== PRESET MIGRATION FAILED ===');
     for (const err of errors) {
       logger.error(
-        { jid: err.jid, name: err.name, endpoint: err.endpoint, model: err.model },
+        {
+          jid: err.jid,
+          name: err.name,
+          endpoint: err.endpoint,
+          model: err.model,
+        },
         'Cannot resolve group to a preset',
       );
     }

@@ -21,7 +21,11 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendAttachment: (jid: string, filePath: string, caption?: string) => Promise<void>;
+  sendAttachment: (
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -264,10 +268,16 @@ export async function processIpcMessageData(
     // Resolve container path to host path
     // /workspace/group/... → groups/{sourceGroup}/...
     const relativePath = data.filePath.replace(/^\/workspace\/group\//, '');
-    const hostPath = path.join(resolveGroupFolderPath(sourceGroup), relativePath);
+    const hostPath = path.join(
+      resolveGroupFolderPath(sourceGroup),
+      relativePath,
+    );
 
     if (!fs.existsSync(hostPath)) {
-      logger.warn({ hostPath, containerPath: data.filePath, sourceGroup }, 'Attachment file not found on host');
+      logger.warn(
+        { hostPath, containerPath: data.filePath, sourceGroup },
+        'Attachment file not found on host',
+      );
       return;
     }
 
@@ -275,7 +285,10 @@ export async function processIpcMessageData(
     const resolvedHost = path.resolve(hostPath);
     const groupDir = path.resolve(resolveGroupFolderPath(sourceGroup));
     if (!resolvedHost.startsWith(groupDir)) {
-      logger.warn({ hostPath, sourceGroup }, 'Attachment path escapes group folder');
+      logger.warn(
+        { hostPath, sourceGroup },
+        'Attachment path escapes group folder',
+      );
       return;
     }
 
@@ -283,7 +296,10 @@ export async function processIpcMessageData(
     try {
       await deps.sendAttachment(data.chatJid, resolvedHost, data.caption);
     } catch (err) {
-      logger.error({ err, chatJid: data.chatJid, hostPath }, 'Failed to send attachment');
+      logger.error(
+        { err, chatJid: data.chatJid, hostPath },
+        'Failed to send attachment',
+      );
     }
     return;
   }

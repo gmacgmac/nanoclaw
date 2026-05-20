@@ -82,7 +82,11 @@ import {
   PRESETS_PATH,
   resolvePreset,
 } from './presets.js';
-import { encodeImageForVision, EncodedImage, isSupportedImage } from './image.js';
+import {
+  encodeImageForVision,
+  EncodedImage,
+  isSupportedImage,
+} from './image.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -341,7 +345,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (resolved.capabilities.vision) {
     let totalSize = 0;
     for (const msg of filteredMessages) {
-      const photoMatch = msg.content.match(/^\[Photo\]:\s*(\S+)(?:\s+(.+))?$/);
+      const photoMatch = msg.content.match(/^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i);
       if (photoMatch) {
         const filePath = photoMatch[1].trim();
         const caption = photoMatch[2]?.trim();
@@ -388,32 +392,38 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, images, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    images,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -880,7 +890,9 @@ async function startMessageLoop(): Promise<void> {
             let totalSize = 0;
             const extracted: EncodedImage[] = [];
             for (const msg of messagesToSend) {
-              const photoMatch = msg.content.match(/^\[Photo\]:\s*(\S+)(?:\s+(.+))?$/);
+              const photoMatch = msg.content.match(
+                /^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i,
+              );
               if (photoMatch) {
                 const filePath = photoMatch[1].trim();
                 const caption = photoMatch[2]?.trim();
@@ -1153,7 +1165,9 @@ async function main(): Promise<void> {
           const taskId = `nightly-nudge-${group.folder}-${Date.now()}`;
           queue.enqueueTask(chatJid, taskId, async () => {
             try {
-              const nightlyResolved = resolvePreset(group.containerConfig?.preset);
+              const nightlyResolved = resolvePreset(
+                group.containerConfig?.preset,
+              );
 
               if (!nightlyResolved) {
                 logger.warn(
@@ -1229,7 +1243,8 @@ async function main(): Promise<void> {
     sendAttachment: async (jid, filePath, caption) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      if (!channel.sendAttachment) throw new Error(`Channel ${channel.name} does not support attachments`);
+      if (!channel.sendAttachment)
+        throw new Error(`Channel ${channel.name} does not support attachments`);
       await channel.sendAttachment(jid, filePath, caption);
     },
     registeredGroups: () => registeredGroups,

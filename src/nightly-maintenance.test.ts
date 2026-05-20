@@ -90,7 +90,9 @@ describe('runNightlyMaintenance', () => {
     folder,
     trigger: `@${folder}`,
     added_at: '2026-01-01T00:00:00Z',
-    containerConfig: contextWindowSize ? { preset: `test-${contextWindowSize / 1000}k` } : undefined,
+    containerConfig: contextWindowSize
+      ? { preset: `test-${contextWindowSize / 1000}k` }
+      : undefined,
   });
 
   beforeEach(() => {

@@ -1260,7 +1260,7 @@ For groups using a non-Anthropic endpoint (e.g. `containerConfig.endpoint = "oll
 
 ```bash
 # Restart NanoClaw (rebuild + restart via launchd)
-cd $NANOCLAW_ROOT && npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 
 # Stop / Start NanoClaw
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist

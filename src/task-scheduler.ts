@@ -210,7 +210,11 @@ async function runTask(
       const presetName = group.containerConfig?.preset ?? '(none)';
       error = `Preset '${presetName}' not found, task container not spawned`;
       logger.warn(
-        { taskId: task.id, group: group.name, preset: group.containerConfig?.preset },
+        {
+          taskId: task.id,
+          group: group.name,
+          preset: group.containerConfig?.preset,
+        },
         'Preset resolution failed, task container not spawned',
       );
       logTaskRun({

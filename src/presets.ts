@@ -72,10 +72,7 @@ function validateCapabilities(
   };
 }
 
-function validatePresetEntry(
-  key: string,
-  value: unknown,
-): ModelPreset | null {
+function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
   if (typeof value !== 'object' || value === null) {
     logger.warn({ preset: key }, 'Skipping invalid model preset entry');
     return null;
@@ -84,7 +81,10 @@ function validatePresetEntry(
   const obj = value as Record<string, unknown>;
 
   if (typeof obj.endpoint !== 'string' || !obj.endpoint) {
-    logger.warn({ preset: key }, 'Preset missing required string field: endpoint');
+    logger.warn(
+      { preset: key },
+      'Preset missing required string field: endpoint',
+    );
     return null;
   }
 
@@ -161,9 +161,7 @@ export function loadPresets(): Record<string, ModelPreset> {
 /**
  * Resolve a preset by name. Returns null if name is undefined or not found.
  */
-export function resolvePreset(
-  name: string | undefined,
-): ResolvedPreset | null {
+export function resolvePreset(name: string | undefined): ResolvedPreset | null {
   if (!name) return null;
 
   const presets = loadPresets();
@@ -198,5 +196,3 @@ export function findPresetByModelEndpoint(
   }
   return undefined;
 }
-
-

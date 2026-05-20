@@ -81,8 +81,6 @@ export interface ContainerConfig {
     };
   };
 
-
-
   /**
    * Name of the Telegram bot instance to use for this group's outbound replies.
    * Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env (case-insensitive).
@@ -217,7 +215,11 @@ export interface Channel {
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
   // Optional: send a file/image attachment to the user.
-  sendAttachment?(jid: string, filePath: string, caption?: string): Promise<void>;
+  sendAttachment?(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

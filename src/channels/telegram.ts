@@ -708,7 +708,10 @@ export class TelegramChannel implements Channel {
         'Telegram attachment sent',
       );
     } catch (err) {
-      logger.error({ jid, filePath, err }, 'Failed to send Telegram attachment');
+      logger.error(
+        { jid, filePath, err },
+        'Failed to send Telegram attachment',
+      );
     }
   }
 
