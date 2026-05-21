@@ -345,7 +345,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (resolved.capabilities.vision) {
     let totalSize = 0;
     for (const msg of filteredMessages) {
-      const photoMatch = msg.content.match(/^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i);
+      const photoMatch = msg.content.match(
+        /^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i,
+      );
       if (photoMatch) {
         const filePath = photoMatch[1].trim();
         const caption = photoMatch[2]?.trim();

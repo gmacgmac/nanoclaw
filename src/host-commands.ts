@@ -53,6 +53,27 @@ export async function handleHostCommand(
     return true;
   }
 
+  if (commandName === 'stop') {
+    // Sender auth check
+    const allowlistCfg = loadSenderAllowlist();
+    if (!isSenderAllowed(ctx.jid, ctx.sender, allowlistCfg)) {
+      await ctx.reply('Not authorised.');
+      return true;
+    }
+
+    const stopped = closeStdin(ctx.jid);
+    if (stopped) {
+      logger.info(
+        { group: ctx.group.name, sender: ctx.sender },
+        '/stop command executed',
+      );
+      await ctx.reply('⏹ Stopped. Next message continues the conversation.');
+    } else {
+      await ctx.reply('Nothing running to stop.');
+    }
+    return true;
+  }
+
   // --- Gated commands (require allowedHostCommands config) ---
 
   const allowed = ctx.group.containerConfig?.allowedHostCommands;
