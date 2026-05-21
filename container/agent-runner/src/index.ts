@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, AbortError } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 import { buildNudgePrompt } from './lib/nudge-prompt.js';
@@ -438,6 +438,7 @@ async function runQuery(
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const acceptIpc = options?.acceptIpc !== false; // default true
   const stream = new MessageStream();
+  const controller = new AbortController();
 
   // Build initial message: multimodal (images + text) or plain text
   const images = options?.images;
@@ -473,6 +474,7 @@ async function runQuery(
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
       stream.end();
+      controller.abort();
       ipcPolling = false;
       return;
     }
@@ -552,124 +554,134 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  for await (const message of query({
-    prompt: stream,
-    options: {
-      cwd: '/workspace/group',
-      additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
-      resume: sessionId,
-      resumeSessionAt: resumeAt,
-      systemPrompt: appendPrompt
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendPrompt }
-        : undefined,
-      allowedTools: tools,
-      disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
-      env: sdkEnv,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+  try {
+    for await (const message of query({
+      prompt: stream as any,
+      options: {
+        abortController: controller,
+        cwd: '/workspace/group',
+        additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
+        resume: sessionId,
+        resumeSessionAt: resumeAt,
+        systemPrompt: appendPrompt
+          ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendPrompt }
+          : undefined,
+        allowedTools: tools,
+        disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
+        env: sdkEnv,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        settingSources: ['project', 'user'],
+        mcpServers: {
+          nanoclaw: {
+            command: 'node',
+            args: [mcpServerPath],
+            env: {
+              NANOCLAW_CHAT_JID: containerInput.chatJid,
+              NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+              NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            },
           },
+          // Merge per-group MCP servers from containerConfig.
+          // nanoclaw is always present and cannot be overridden.
+          ...(containerInput.mcpServers || {}),
         },
-        // Merge per-group MCP servers from containerConfig.
-        // nanoclaw is always present and cannot be overridden.
-        ...(containerInput.mcpServers || {}),
-      },
-      hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-      },
-    }
-  })) {
-    messageCount++;
-    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
-
-    if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
-    }
-
-    // Token usage logging — deduplicate by message ID (SDK emits thinking + text
-    // as separate assistant events with the same msg_ ID). Last write wins so we
-    // capture the final emission which has accurate output_tokens.
-    if (message.type === 'assistant' && 'message' in message) {
-      const msg = (message as any).message;
-      const msgId = msg?.id;
-      const usage = msg?.usage;
-      const contentTypes = Array.isArray(msg?.content) ? msg.content.map((c: any) => c.type).join(',') : 'unknown';
-      log(`Token tracking: id=${msgId} content=[${contentTypes}] input=${usage?.input_tokens ?? '?'} output=${usage?.output_tokens ?? '?'}`);
-      if (msgId && usage) {
-        // Update module-level tracker — last write wins (final emission per msg_ ID is accurate)
-        if (usage.input_tokens) {
-          lastInputTokens = usage.input_tokens;
-        }
-        const entry = `[${new Date().toISOString()}] id=${msgId} type=${contentTypes} input=${usage.input_tokens ?? '?'} output=${usage.output_tokens ?? '?'}`;
-        const logPath = '/workspace/group/token-usage.log';
-        try {
-          const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-          // Replace previous entry for same msg ID, or prepend if new
-          const lines = existing.split('\n').filter(l => l.trim());
-          const filtered = lines.filter(l => !l.includes(`id=${msgId}`));
-          filtered.unshift(entry);
-          fs.writeFileSync(logPath, filtered.join('\n') + '\n');
-        } catch (e) {
-          log(`Token log write failed: ${(e as Error).message}`);
-        }
-      } else if (!msgId) {
-        log('Assistant message has no message ID');
+        hooks: {
+          PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        },
       }
-    }
+    })) {
+      messageCount++;
+      const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
+      log(`[msg #${messageCount}] type=${msgType}`);
 
-    if (message.type === 'system' && message.subtype === 'init') {
-      newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
-    }
+      if (message.type === 'assistant' && 'uuid' in message) {
+        lastAssistantUuid = (message as { uuid: string }).uuid;
+      }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
-      const tn = message as { task_id: string; status: string; summary: string };
-      log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
-    }
+      // Token usage logging — deduplicate by message ID (SDK emits thinking + text
+      // as separate assistant events with the same msg_ ID). Last write wins so we
+      // capture the final emission which has accurate output_tokens.
+      if (message.type === 'assistant' && 'message' in message) {
+        const msg = (message as any).message;
+        const msgId = msg?.id;
+        const usage = msg?.usage;
+        const contentTypes = Array.isArray(msg?.content) ? msg.content.map((c: any) => c.type).join(',') : 'unknown';
+        log(`Token tracking: id=${msgId} content=[${contentTypes}] input=${usage?.input_tokens ?? '?'} output=${usage?.output_tokens ?? '?'}`);
+        if (msgId && usage) {
+          // Update module-level tracker — last write wins (final emission per msg_ ID is accurate)
+          if (usage.input_tokens) {
+            lastInputTokens = usage.input_tokens;
+          }
+          const entry = `[${new Date().toISOString()}] id=${msgId} type=${contentTypes} input=${usage.input_tokens ?? '?'} output=${usage.output_tokens ?? '?'}`;
+          const logPath = '/workspace/group/token-usage.log';
+          try {
+            const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
+            // Replace previous entry for same msg ID, or prepend if new
+            const lines = existing.split('\n').filter(l => l.trim());
+            const filtered = lines.filter(l => !l.includes(`id=${msgId}`));
+            filtered.unshift(entry);
+            fs.writeFileSync(logPath, filtered.join('\n') + '\n');
+          } catch (e) {
+            log(`Token log write failed: ${(e as Error).message}`);
+          }
+        } else if (!msgId) {
+          log('Assistant message has no message ID');
+        }
+      }
 
-    if (message.type === 'result') {
-      resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
-      writeOutput({
-        status: 'success',
-        result: textResult || null,
-        newSessionId
-      });
+      if (message.type === 'system' && message.subtype === 'init') {
+        newSessionId = message.session_id;
+        log(`Session initialized: ${newSessionId}`);
+      }
 
-      // --- Periodic memory nudge (inside query loop) ---
-      // Count completed results as "turns" since messages are piped into
-      // the running query and the outer loop rarely iterates.
-      const nudgeInterval = options?.nudgeInterval || 0;
-      if (nudgeInterval > 0 && !containerInput.isScheduledTask) {
-        turnsSinceLastNudge++;
-        if (turnsSinceLastNudge >= nudgeInterval) {
-          log(`Periodic nudge triggered (turns since last: ${turnsSinceLastNudge})`);
-          turnsSinceLastNudge = 0;
-          const nudgePrompt = buildNudgePrompt({ reason: 'periodic' });
+      if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
+        const tn = message as { task_id: string; status: string; summary: string };
+        log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+      }
+
+      if (message.type === 'result') {
+        resultCount++;
+        const textResult = 'result' in message ? (message as { result?: string }).result : null;
+        log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+        writeOutput({
+          status: 'success',
+          result: textResult || null,
+          newSessionId
+        });
+
+        // --- Periodic memory nudge (inside query loop) ---
+        // Count completed results as "turns" since messages are piped into
+        // the running query and the outer loop rarely iterates.
+        const nudgeInterval = options?.nudgeInterval || 0;
+        if (nudgeInterval > 0 && !containerInput.isScheduledTask) {
+          turnsSinceLastNudge++;
+          if (turnsSinceLastNudge >= nudgeInterval) {
+            log(`Periodic nudge triggered (turns since last: ${turnsSinceLastNudge})`);
+            turnsSinceLastNudge = 0;
+            const nudgePrompt = buildNudgePrompt({ reason: 'periodic' });
+            stream.push(nudgePrompt);
+            log('Periodic memory nudge injected into stream');
+          }
+        }
+
+        // --- Memory threshold nudge check (inside query loop) ---
+        const ctxSize = options?.contextWindowSize || 0;
+        if (ctxSize > 0 && !thresholdNudgedThisSession && lastInputTokens > ctxSize * 0.8) {
+          log(`Token threshold crossed (${lastInputTokens}/${ctxSize}), injecting threshold memory nudge`);
+          thresholdNudgedThisSession = true;
+          const nudgePrompt = buildNudgePrompt({ reason: 'threshold' });
           stream.push(nudgePrompt);
-          log('Periodic memory nudge injected into stream');
+          log('Threshold memory nudge injected into stream');
         }
       }
-
-      // --- Memory threshold nudge check (inside query loop) ---
-      const ctxSize = options?.contextWindowSize || 0;
-      if (ctxSize > 0 && !thresholdNudgedThisSession && lastInputTokens > ctxSize * 0.8) {
-        log(`Token threshold crossed (${lastInputTokens}/${ctxSize}), injecting threshold memory nudge`);
-        thresholdNudgedThisSession = true;
-        const nudgePrompt = buildNudgePrompt({ reason: 'threshold' });
-        stream.push(nudgePrompt);
-        log('Threshold memory nudge injected into stream');
-      }
+    }
+  } catch (err) {
+    if (err instanceof AbortError || (err instanceof Error && err.name === 'AbortError')) {
+      log('Query aborted via AbortController (closedDuringQuery)');
+      closedDuringQuery = true;
+    } else {
+      throw err;
     }
   }
 
