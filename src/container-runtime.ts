@@ -7,6 +7,8 @@ import fs from 'fs';
 import os from 'os';
 
 import { logger } from './logger.js';
+import { CONTAINER_IMAGE_BASE, CONTAINER_IMAGE_OVERRIDE } from './config.js';
+import { ContainerChannel, isValidContainerChannel } from './types.js';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -128,5 +130,33 @@ export function cleanupOrphans(): void {
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
+  }
+}
+
+
+/**
+ * Resolve a group's container channel to a full image tag.
+ * If CONTAINER_IMAGE env override is set, it takes precedence (for local dev).
+ */
+export function resolveImageTag(channel?: string): string {
+  if (CONTAINER_IMAGE_OVERRIDE) return CONTAINER_IMAGE_OVERRIDE;
+  const resolved =
+    channel && isValidContainerChannel(channel) ? channel : 'stable';
+  return `${CONTAINER_IMAGE_BASE}:${resolved}`;
+}
+
+/**
+ * Check whether a Docker image tag exists locally.
+ * Returns true if the image is present, false otherwise.
+ */
+export function imageExists(imageTag: string): boolean {
+  try {
+    execSync(`${CONTAINER_RUNTIME_BIN} image inspect ${imageTag}`, {
+      stdio: 'pipe',
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
   }
 }

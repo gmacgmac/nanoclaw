@@ -7,7 +7,6 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
@@ -22,7 +21,9 @@ import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
+  imageExists,
   readonlyMountArgs,
+  resolveImageTag,
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
@@ -286,6 +287,7 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   group: RegisteredGroup,
+  imageTag: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -415,7 +417,7 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
+  args.push(imageTag);
 
   return args;
 }
@@ -428,13 +430,29 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
+  // Resolve channel → image tag
+  const imageTag = resolveImageTag(group.containerChannel);
+
+  // Pre-spawn check: ensure the image exists locally
+  if (!imageExists(imageTag)) {
+    logger.error(
+      { group: group.name, imageTag },
+      'Container image not found locally',
+    );
+    return {
+      status: 'error',
+      result: `Container image "${imageTag}" not found. Run \`/version stable\` to switch this group to stable, or have an admin build the image.`,
+      error: `Image not found: ${imageTag}`,
+    };
+  }
+
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, group);
+  const containerArgs = buildContainerArgs(mounts, containerName, group, imageTag);
 
   logger.debug(
     {
@@ -453,6 +471,7 @@ export async function runContainerAgent(
     {
       group: group.name,
       containerName,
+      imageTag,
       mountCount: mounts.length,
       isMain: input.isMain,
     },

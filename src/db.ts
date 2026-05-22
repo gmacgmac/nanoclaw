@@ -10,6 +10,7 @@ import {
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
+  isValidContainerChannel,
 } from './types.js';
 
 let db: Database.Database;
@@ -149,6 +150,16 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE registered_groups ADD COLUMN multi_agent_router INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add container_channel column if it doesn't exist (migration for existing DBs)
+  // All existing groups default to 'stable' — no behavioural change until opted in.
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN container_channel TEXT NOT NULL DEFAULT 'stable'`,
     );
   } catch {
     /* column already exists */
@@ -630,6 +641,7 @@ export function getRegisteredGroup(
         requires_trigger: number | null;
         is_main: number | null;
         multi_agent_router: number | null;
+        container_channel: string;
       }
     | undefined;
   if (!row) return undefined;
@@ -639,6 +651,13 @@ export function getRegisteredGroup(
       'Skipping registered group with invalid folder',
     );
     return undefined;
+  }
+  const channel = row.container_channel ?? 'stable';
+  if (!isValidContainerChannel(channel)) {
+    logger.warn(
+      { jid: row.jid, container_channel: channel },
+      'Invalid container_channel value, falling back to stable',
+    );
   }
   return {
     jid: row.jid,
@@ -653,6 +672,7 @@ export function getRegisteredGroup(
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
     multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
+    containerChannel: isValidContainerChannel(channel) ? channel : 'stable',
   };
 }
 
@@ -660,9 +680,15 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
+  const channel = group.containerChannel ?? 'stable';
+  if (!isValidContainerChannel(channel)) {
+    throw new Error(
+      `Invalid container_channel "${channel}" for JID ${jid}. Must be 'stable' or 'next'.`,
+    );
+  }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, multi_agent_router)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, multi_agent_router, container_channel)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -673,6 +699,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
     group.multiAgentRouter ? 1 : 0,
+    channel,
   );
 }
 
@@ -687,6 +714,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     requires_trigger: number | null;
     is_main: number | null;
     multi_agent_router: number | null;
+    container_channel: string;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -696,6 +724,13 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         'Skipping registered group with invalid folder',
       );
       continue;
+    }
+    const channel = row.container_channel ?? 'stable';
+    if (!isValidContainerChannel(channel)) {
+      logger.warn(
+        { jid: row.jid, container_channel: channel },
+        'Invalid container_channel value, falling back to stable',
+      );
     }
     result[row.jid] = {
       name: row.name,
@@ -709,6 +744,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
       multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
+      containerChannel: isValidContainerChannel(channel) ? channel : 'stable',
     };
   }
   return result;

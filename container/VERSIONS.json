@@ -1,0 +1,23 @@
+{
+  "channels": {
+    "stable": "v1.0.0",
+    "next": "v1.1.0"
+  },
+  "versions": {
+    "v1.0.0": {
+      "imageId": "sha256:00fdb436f75c56d49c5e90c0099d0473d518b8b166fce4f69ca20d71e4554b23",
+      "builtAt": "2026-05-21T22:03:32+01:00",
+      "sdkVersion": "0.2.76",
+      "cliVersion": "2.1.147",
+      "notes": "Baseline. Tagged from pre-existing nanoclaw-agent:latest at start of canary-channels work."
+    },
+    "v1.1.0": {
+      "imageId": "sha256:caba15d085871efbae41181825f4dd6d385d3d9fb4513f701757daa30073e6e3",
+      "builtAt": "2026-05-22T08:34:50",
+      "sdkVersion": "0.3.147",
+      "cliVersion": "2.1.147",
+      "notes": "Upgrade from v1.0.0. SDK 0.2.76 → 0.3.147. CLI pinned to 2.1.147 (was unpinned). Breaking changes: MCP_CONNECTION_NONBLOCKING=0 set (0.3.142 background MCP), session_id made optional in SDKUserMessage (0.2.86), @anthropic-ai/sdk added as explicit dep (0.3.143 peerDeps change). TodoWrite kept alongside Task tools for transition."
+    }
+  },
+  "history": []
+}

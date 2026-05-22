@@ -111,8 +111,16 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
+  const channelCounts = Object.values(registeredGroups).reduce(
+    (acc, g) => {
+      const ch = g.containerChannel ?? 'stable';
+      acc[ch] = (acc[ch] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
   logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
+    { groupCount: Object.keys(registeredGroups).length, channelCounts },
     'State loaded',
   );
 }

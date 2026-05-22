@@ -186,8 +186,10 @@ Patch `setup/container.ts` to pass the same proxy `--build-arg` flags as `build.
 
 ```bash
 npm run build
-bash container/build.sh
+bash container/scripts/container.sh build v1.0.0
 ```
+
+> **Note:** `container/build.sh` no longer accepts bare invocations. Use the `container.sh` wrapper with an explicit version tag. See [Image Versioning & Channels](#image-versioning--channels) below.
 
 ## Step 6: Add a Channel
 
@@ -316,8 +318,10 @@ npm config set strict-ssl false
 docker build \
   --build-arg http_proxy=$http_proxy \
   --build-arg https_proxy=$https_proxy \
-  -t nanoclaw-agent:latest container/
+  -t nanoclaw-agent:v1.0.0 container/
 ```
+
+> Use an explicit version tag — `:latest` is not used. See [Image Versioning & Channels](#image-versioning--channels).
 
 ### Agent containers fail with "path not shared"
 All bind-mounted paths must be under the workspace directory. Check:
@@ -357,3 +361,44 @@ docker sandbox run shell-nanoclaw-workspace
 # Then inside:
 npx tsx src/whatsapp-auth.ts
 ```
+
+## Image Versioning & Channels
+
+Agent containers use a channel-based image system instead of a single mutable `:latest` tag. Each group is assigned to a channel that determines which image version it runs.
+
+### Channels
+
+| Channel | Tag | Purpose |
+|---------|-----|---------|
+| `stable` | `nanoclaw-agent:stable` | Default. All groups use this unless explicitly switched. |
+| `next` | `nanoclaw-agent:next` | Canary. Test new SDK/CLI versions on select groups before promotion. |
+
+Both `:stable` and `:next` are mutable aliases pointing at immutable versioned tags (e.g., `nanoclaw-agent:v1.0.0`). Versioned tags are never overwritten.
+
+### Per-Group Channel Assignment
+
+Each group has a `container_channel` column in `registered_groups` (default: `'stable'`). The host resolves this to an image tag at container spawn time. To switch a group's channel:
+
+```
+/version next     — switch this group to the :next channel
+/version stable   — switch back to :stable
+/version          — show current channel, image SHA, and version info
+```
+
+Channel switches take effect on the next container spawn (existing running containers are unaffected until recycled).
+
+### Building and Promoting
+
+```bash
+./container/scripts/container.sh build v1.2.0    # Build (no channel change)
+./container/scripts/container.sh stage v1.2.0    # Point :next at v1.2.0
+./container/scripts/container.sh promote v1.2.0  # Point :stable at v1.2.0
+./container/scripts/container.sh rollback        # Revert :stable to previous
+./container/scripts/container.sh current         # Show current channel state
+```
+
+> **Full reference:** [`container/VERSIONING.md`](../container/VERSIONING.md) — covers the channel model, `VERSIONS.json` state file, promotion checklist, and rollback procedure.
+
+### Security Note
+
+The channel system is purely a routing layer. Sandboxing semantics (container isolation, mount security, network model) are identical between `:stable` and `:next`. The only difference is the SDK/CLI version inside the container.

@@ -10,6 +10,12 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+// Mock config
+vi.mock('./config.js', () => ({
+  CONTAINER_IMAGE_OVERRIDE: '',
+  CONTAINER_IMAGE_BASE: 'nanoclaw-agent',
+}));
+
 // Mock child_process — store the mock fn so tests can configure it
 const mockExecSync = vi.fn();
 vi.mock('child_process', () => ({
@@ -22,6 +28,8 @@ import {
   stopContainer,
   ensureContainerRuntimeRunning,
   cleanupOrphans,
+  resolveImageTag,
+  imageExists,
 } from './container-runtime.js';
 import { logger } from './logger.js';
 
@@ -158,5 +166,45 @@ describe('cleanupOrphans', () => {
       { count: 2, names: ['nanoclaw-a-1', 'nanoclaw-b-2'] },
       'Stopped orphaned containers',
     );
+  });
+});
+
+describe('resolveImageTag', () => {
+  it('returns nanoclaw-agent:stable for undefined channel', () => {
+    expect(resolveImageTag(undefined)).toBe('nanoclaw-agent:stable');
+  });
+
+  it('returns nanoclaw-agent:stable for "stable" channel', () => {
+    expect(resolveImageTag('stable')).toBe('nanoclaw-agent:stable');
+  });
+
+  it('returns nanoclaw-agent:next for "next" channel', () => {
+    expect(resolveImageTag('next')).toBe('nanoclaw-agent:next');
+  });
+
+  it('falls back to stable for invalid channel', () => {
+    expect(resolveImageTag('bogus')).toBe('nanoclaw-agent:stable');
+  });
+});
+
+describe('imageExists', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns true when docker image inspect succeeds', () => {
+    mockExecSync.mockReturnValueOnce('');
+    expect(imageExists('nanoclaw-agent:stable')).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      'docker image inspect nanoclaw-agent:stable',
+      { stdio: 'pipe', timeout: 5000 },
+    );
+  });
+
+  it('returns false when docker image inspect throws', () => {
+    mockExecSync.mockImplementationOnce(() => {
+      throw new Error('No such image');
+    });
+    expect(imageExists('nanoclaw-agent:next')).toBe(false);
   });
 });

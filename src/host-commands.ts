@@ -1,9 +1,16 @@
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
 import { getAvailablePresetNames, resolvePreset } from './presets.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
-import type { NewMessage, RegisteredGroup } from './types.js';
+import { isValidContainerChannel } from './types.js';
+import type { ContainerChannel, NewMessage, RegisteredGroup } from './types.js';
+import { imageExists, resolveImageTag, CONTAINER_RUNTIME_BIN } from './container-runtime.js';
 
 // Feature toggle: sanitize session JSONL when switching models
 // If this causes issues, set to false to disable entirely
@@ -94,6 +101,10 @@ export async function handleHostCommand(
 
   if (commandName === 'newsession') {
     return handleNewSessionCommand(ctx, closeStdin, clearSession);
+  }
+
+  if (commandName === 'version') {
+    return handleVersionCommand(parts.slice(1), ctx, closeStdin);
   }
 
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
@@ -196,5 +207,130 @@ async function handleNewSessionCommand(
     '/newsession command executed — session cleared',
   );
   await ctx.reply('Session cleared. Next message starts fresh.');
+  return true;
+}
+
+// --- /version command ---
+
+interface VersionsJson {
+  channels: Record<string, string>;
+  versions: Record<
+    string,
+    {
+      imageId: string;
+      sdkVersion: string;
+      cliVersion: string;
+    }
+  >;
+}
+
+/**
+ * Read VERSIONS.json fresh on every invocation (no caching).
+ * Returns null if the file is missing or malformed.
+ */
+function readVersionsJson(): VersionsJson | null {
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const versionsPath = path.join(__dirname, '..', 'container', 'VERSIONS.json');
+    const raw = fs.readFileSync(versionsPath, 'utf-8');
+    return JSON.parse(raw) as VersionsJson;
+  } catch {
+    return null;
+  }
+}
+
+async function handleVersionCommand(
+  args: string[],
+  ctx: HostCommandCtx,
+  closeStdin: (jid: string) => boolean,
+): Promise<boolean> {
+  const channel = ctx.group.containerChannel ?? 'stable';
+
+  // Form 1: /version (no args) — read-only info
+  if (args.length === 0) {
+    const imageTag = resolveImageTag(channel);
+    const versions = readVersionsJson();
+
+    if (!versions) {
+      await ctx.reply(
+        '⚠️ Could not read VERSIONS.json. Run `container.sh current` to inspect manually.',
+      );
+      return true;
+    }
+
+    const versionName = versions.channels[channel] ?? 'unknown';
+    const versionInfo = versions.versions[versionName];
+
+    const lines = [
+      `📦 Container channel for this group: ${channel}`,
+      `Image: ${imageTag} → ${versionName}`,
+    ];
+
+    if (versionInfo) {
+      lines.push(`SDK: @anthropic-ai/claude-agent-sdk@${versionInfo.sdkVersion}`);
+      lines.push(`CLI: @anthropic-ai/claude-code@${versionInfo.cliVersion}`);
+
+      // Drift detection: check if the actual image SHA matches VERSIONS.json
+      try {
+        const inspectOutput = execSync(
+          `${CONTAINER_RUNTIME_BIN} image inspect ${imageTag} --format '{{.Id}}'`,
+          { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 5000 },
+        ).trim();
+        if (inspectOutput && !inspectOutput.includes(versionInfo.imageId.replace('sha256:', ''))) {
+          lines.push(
+            `⚠️ Tag :${channel} does not match VERSIONS.json — run \`container.sh current\` to investigate.`,
+          );
+        }
+      } catch {
+        // Image not found locally or docker not available — skip drift check
+      }
+    } else {
+      lines.push(`(version details not found in VERSIONS.json for ${versionName})`);
+    }
+
+    await ctx.reply(lines.join('\n'));
+    return true;
+  }
+
+  // Form 2/3: /version <channel> — switch channel
+  const requestedChannel = args[0].toLowerCase();
+
+  if (!isValidContainerChannel(requestedChannel)) {
+    await ctx.reply(
+      `❌ Invalid channel: \`${args[0]}\`. Valid options: \`stable\`, \`next\`.`,
+    );
+    return true;
+  }
+
+  // Check image exists before updating DB
+  const targetTag = resolveImageTag(requestedChannel);
+  if (!imageExists(targetTag)) {
+    await ctx.reply(
+      `❌ Image ${targetTag} not found. Build it first with \`container.sh build vX.Y.Z\` and \`container.sh stage vX.Y.Z\`.`,
+    );
+    return true;
+  }
+
+  // Update DB
+  const updatedGroup: RegisteredGroup = {
+    ...ctx.group,
+    containerChannel: requestedChannel as ContainerChannel,
+  };
+  setRegisteredGroup(ctx.jid, updatedGroup);
+
+  // Sync in-memory cache
+  (ctx.group as RegisteredGroup).containerChannel = requestedChannel as ContainerChannel;
+
+  // Recycle container
+  closeStdin(ctx.jid);
+
+  logger.info(
+    { group: ctx.group.name, sender: ctx.sender, channel: requestedChannel },
+    '/version command — channel switched',
+  );
+
+  await ctx.reply(
+    `✅ Switched to channel: ${requestedChannel}. The next message will spawn a new container using ${targetTag}.`,
+  );
   return true;
 }

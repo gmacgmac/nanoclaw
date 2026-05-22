@@ -154,6 +154,19 @@ export interface ContainerConfig {
   learningLoop?: boolean | 'extract-only';
 }
 
+export type ContainerChannel = 'stable' | 'next';
+
+export const VALID_CONTAINER_CHANNELS: readonly ContainerChannel[] = [
+  'stable',
+  'next',
+] as const;
+
+export function isValidContainerChannel(
+  value: string,
+): value is ContainerChannel {
+  return (VALID_CONTAINER_CHANNELS as readonly string[]).includes(value);
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
@@ -163,6 +176,7 @@ export interface RegisteredGroup {
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   multiAgentRouter?: boolean; // When true (main groups only): scan incoming messages for other groups' triggers and auto-delegate
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  containerChannel?: ContainerChannel; // Which image channel this group uses (default: 'stable')
 }
 
 export interface NewMessage {

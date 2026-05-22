@@ -74,7 +74,7 @@ interface SDKUserMessage {
   type: 'user';
   message: { role: 'user'; content: string | Array<{ type: string; [key: string]: any }> };
   parent_tool_use_id: null;
-  session_id: string;
+  session_id?: string;
 }
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
@@ -135,7 +135,6 @@ class MessageStream {
       type: 'user',
       message: { role: 'user', content: text },
       parent_tool_use_id: null,
-      session_id: '',
     });
     this.waiting?.();
   }
@@ -146,7 +145,6 @@ class MessageStream {
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
-      session_id: '',
     });
     this.waiting?.();
   }
@@ -714,6 +712,10 @@ async function main(): Promise<void> {
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+
+  // SDK 0.3.142+: MCP servers connect in background by default. Restore blocking
+  // behaviour so the nanoclaw IPC server is ready on turn 1.
+  sdkEnv.MCP_CONNECTION_NONBLOCKING = '0';
 
   // Forward the group's endpoint name to the credential proxy via default headers.
   // The proxy uses X-Nanoclaw-Endpoint to route to the correct upstream.

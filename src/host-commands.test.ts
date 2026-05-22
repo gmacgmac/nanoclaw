@@ -31,6 +31,35 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/mock/data',
 }));
 
+const mockImageExists = vi.fn();
+const mockResolveImageTag = vi.fn();
+vi.mock('./container-runtime.js', () => ({
+  imageExists: (...args: unknown[]) => mockImageExists(...args),
+  resolveImageTag: (...args: unknown[]) => mockResolveImageTag(...args),
+  CONTAINER_RUNTIME_BIN: 'docker',
+}));
+
+// Mock fs and child_process for VERSIONS.json reading and docker inspect
+const mockReadFileSync = vi.fn();
+const mockExecSync = vi.fn();
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+    },
+  };
+});
+vi.mock('child_process', async () => {
+  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  return {
+    ...actual,
+    execSync: (...args: unknown[]) => mockExecSync(...args),
+  };
+});
+
 describe('handleHostCommand', () => {
   let replies: string[] = [];
   let closeStdinCalls: string[] = [];
@@ -499,5 +528,172 @@ describe('handleHostCommand', () => {
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
     expect(clearSessionCalls).toEqual(['test']);
+  });
+
+  // --- /version tests ---
+
+  it('/version is gated — returns false when not in allowedHostCommands', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/version'),
+      makeCtx({ allowedHostCommands: ['model'] }),
+      closeStdin,
+    );
+    expect(result).toBe(false);
+  });
+
+  it('/version (no args) returns channel info from VERSIONS.json', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({
+        channels: { stable: 'v1.0.0', next: 'v1.0.0' },
+        versions: {
+          'v1.0.0': {
+            imageId: 'sha256:abc123',
+            sdkVersion: '0.2.76',
+            cliVersion: '2.1.147',
+          },
+        },
+      }),
+    );
+    mockExecSync.mockReturnValue('sha256:abc123\n');
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Container channel for this group: stable');
+    expect(replies[0]).toContain('nanoclaw-agent:stable → v1.0.0');
+    expect(replies[0]).toContain('SDK: @anthropic-ai/claude-agent-sdk@0.2.76');
+    expect(replies[0]).toContain('CLI: @anthropic-ai/claude-code@2.1.147');
+  });
+
+  it('/version (no args) shows warning when VERSIONS.json is unreadable', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Could not read VERSIONS.json');
+  });
+
+  it('/version (no args) shows drift warning when image SHA mismatches', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({
+        channels: { stable: 'v1.0.0' },
+        versions: {
+          'v1.0.0': {
+            imageId: 'sha256:expected123',
+            sdkVersion: '0.2.76',
+            cliVersion: '2.1.147',
+          },
+        },
+      }),
+    );
+    mockExecSync.mockReturnValue('sha256:different456\n');
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('does not match VERSIONS.json');
+  });
+
+  it('/version invalid rejects with clear error', async () => {
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version beta'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Invalid channel');
+    expect(replies[0]).toContain('stable');
+    expect(replies[0]).toContain('next');
+    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+  });
+
+  it('/version next rejects when image does not exist', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
+    mockImageExists.mockReturnValue(false);
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version next'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies[0]).toContain('Image nanoclaw-agent:next not found');
+    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(closeStdinCalls).toEqual([]);
+  });
+
+  it('/version next updates DB and recycles container', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
+    mockImageExists.mockReturnValue(true);
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version next'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({ containerChannel: 'next' }),
+    );
+    expect(closeStdinCalls).toEqual(['tg:123']);
+    expect(replies[0]).toContain('Switched to channel: next');
+  });
+
+  it('/version stable updates DB and recycles container', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
+    mockImageExists.mockReturnValue(true);
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version stable'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({ containerChannel: 'stable' }),
+    );
+    expect(closeStdinCalls).toEqual(['tg:123']);
+    expect(replies[0]).toContain('Switched to channel: stable');
+  });
+
+  it('/version is case-insensitive for channel arg', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
+    mockImageExists.mockReturnValue(true);
+
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version NEXT'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({ containerChannel: 'next' }),
+    );
+  });
+
+  it('/version rejects unauthorized sender', async () => {
+    mockIsSenderAllowed.mockReturnValue(false);
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    const result = await handleHostCommand(
+      makeMsg('/version'),
+      ctx,
+      closeStdin,
+    );
+    expect(result).toBe(true);
+    expect(replies).toEqual(['Not authorised.']);
   });
 });

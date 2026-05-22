@@ -55,10 +55,11 @@ export const DATA_DIR = process.env.NANOCLAW_DATA_DIR
   ? path.resolve(process.env.NANOCLAW_DATA_DIR)
   : path.resolve(PROJECT_ROOT, 'data');
 
-export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE ||
-  envConfig.CONTAINER_IMAGE ||
-  'nanoclaw-agent:latest';
+// Base image name (without tag). Channel routing resolves the tag per-group.
+// CONTAINER_IMAGE env var is still respected as a full override (e.g., for local dev).
+export const CONTAINER_IMAGE_OVERRIDE =
+  process.env.CONTAINER_IMAGE || envConfig.CONTAINER_IMAGE || '';
+export const CONTAINER_IMAGE_BASE = 'nanoclaw-agent';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || envConfig.CONTAINER_TIMEOUT || '1800000',
   10,

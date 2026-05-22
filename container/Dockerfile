@@ -3,6 +3,8 @@
 
 FROM node:22-slim
 
+LABEL org.opencontainers.image.version="v1.1.0"
+
 # Install system dependencies for Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
@@ -30,8 +32,8 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install claude-code globally (agent-browser is mounted per-group at runtime)
-RUN npm install -g @anthropic-ai/claude-code
+# Install claude-code globally (pinned to match SDK 0.3.147 parity version)
+RUN npm install -g @anthropic-ai/claude-code@2.1.147
 
 # Create app directory
 WORKDIR /app

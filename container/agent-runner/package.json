@@ -9,13 +9,14 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.76",
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "cron-parser": "^5.0.0",
-    "zod": "^4.0.0"
+    "@anthropic-ai/claude-agent-sdk": "0.3.147",
+    "@anthropic-ai/sdk": "0.93.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "cron-parser": "5.0.0",
+    "zod": "4.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.7",
-    "typescript": "^5.7.3"
+    "@types/node": "22.10.7",
+    "typescript": "5.7.3"
   }
 }

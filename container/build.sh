@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 IMAGE_NAME="nanoclaw-agent"
-TAG="${1:-latest}"
+TAG="${1:?Tag is required (e.g. v1.1.0). Use container.sh build <version> instead.}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 
 echo "Building NanoClaw agent container image..."

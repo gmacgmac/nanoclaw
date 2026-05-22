@@ -340,3 +340,32 @@ Store persistent context here (not in `~/.claude/projects/` auto-memory). This f
 <!-- Pointers to external resources, dashboards, documentation -->
 
 <!-- END MEMORY -->
+
+---
+
+## Container Image Versioning
+
+All container image work goes through `container/scripts/container.sh`. Do not use `docker build` directly.
+
+Source of truth: [`container/VERSIONING.md`](container/VERSIONING.md)
+
+### Three Rules
+
+1. **Never run `docker build` directly on the agent image.** Always use `container/scripts/container.sh build <version>`.
+2. **Never re-tag `:stable` without explicit user confirmation.** Promotion is a manual decision point.
+3. **Always update `container/VERSIONS.json` through the script**, never by hand-editing.
+
+### Channel System
+
+| Channel | Purpose |
+|---------|---------|
+| `:stable` | Default. All groups use this unless explicitly switched. |
+| `:next` | Canary. Test new SDK/CLI versions on select groups before promotion. |
+
+Versioned tags (e.g. `v1.0.0`) are immutable — never overwritten. `:stable` and `:next` are mutable aliases managed by the script.
+
+There is no `:latest` tag. `build.sh` rejects no-arg invocations.
+
+### Host-Side Integration
+
+The host-side TypeScript code reads each group's channel from the `container_channel` column on `registered_groups` (default: `'stable'`). At container spawn, the channel is resolved to an image tag via `container/VERSIONS.json`. See `src/container-runner.ts` for the resolution logic.
