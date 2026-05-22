@@ -64,11 +64,15 @@ vi.mock('child_process', async () => {
 describe('handleHostCommand', () => {
   let replies: string[] = [];
   let closeStdinCalls: string[] = [];
+  let onAfterExitCallbacks: Array<{ jid: string; cb: () => Promise<void> | void }> = [];
+  let clearSessionStateCalls: string[] = [];
 
   beforeEach(() => {
     vi.resetAllMocks();
     replies = [];
     closeStdinCalls = [];
+    onAfterExitCallbacks = [];
+    clearSessionStateCalls = [];
     mockLoadSenderAllowlist.mockReturnValue({
       default: { allow: '*', mode: 'trigger' },
       chats: {},
@@ -126,11 +130,29 @@ describe('handleHostCommand', () => {
     return true;
   };
 
+  const onAfterExit = (jid: string, cb: () => Promise<void> | void): void => {
+    onAfterExitCallbacks.push({ jid, cb });
+  };
+
+  const clearSessionState = (groupFolder: string): void => {
+    clearSessionStateCalls.push(groupFolder);
+  };
+
+  /** Helper: invoke all captured onAfterExit callbacks */
+  async function drainAfterExit() {
+    for (const { cb } of onAfterExitCallbacks) {
+      await cb();
+    }
+    onAfterExitCallbacks = [];
+  }
+
   it('returns false for messages not starting with /', async () => {
     const result = await handleHostCommand(
       makeMsg('hello'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -141,6 +163,8 @@ describe('handleHostCommand', () => {
       makeMsg('/hi'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -151,6 +175,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -161,6 +187,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: [] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -173,6 +201,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
@@ -184,6 +214,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['No profiles configured.']);
@@ -205,7 +237,7 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
+    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
     expect(result).toBe(true);
     expect(replies.length).toBe(1);
     expect(replies[0]).toContain('Active: `ollama_k2.6`');
@@ -220,7 +252,7 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'deleted_preset' },
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
+    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: `deleted_preset` (unresolved)');
   });
@@ -232,12 +264,12 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: {},
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin);
+    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: none');
   });
 
-  it('/model <preset> updates DB with preset name only', async () => {
+  it('/model <preset> sends Reply 1 immediately and defers DB update + Reply 2 to onAfterExit', async () => {
     mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
     mockResolvePreset.mockImplementation((name: string) => {
       if (name === 'opus_4.7')
@@ -272,8 +304,21 @@ describe('handleHostCommand', () => {
       makeMsg('/model opus_4.7'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
+    // Reply 1 sent immediately
+    expect(replies).toEqual(['Switching to `opus_4.7`...']);
+    // DB not yet updated
+    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    // In-memory cache updated immediately
+    expect(group.containerConfig.preset).toBe('opus_4.7');
+    // onAfterExit registered
+    expect(onAfterExitCallbacks.length).toBe(1);
+
+    // Drain post-exit
+    await drainAfterExit();
     expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
       'tg:123',
       expect.objectContaining({
@@ -283,10 +328,8 @@ describe('handleHostCommand', () => {
         }),
       }),
     );
-    // Verify in-memory cache updated
-    expect(group.containerConfig.preset).toBe('opus_4.7');
-    expect(replies[0]).toContain('Switched to `opus_4.7`');
-    expect(replies[0]).toContain('anthropic / claude-opus-4-7');
+    expect(replies[1]).toContain('Switched to `opus_4.7`');
+    expect(replies[1]).toContain('anthropic / claude-opus-4-7');
   });
 
   it('/model <preset> recycles active container', async () => {
@@ -305,11 +348,11 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
+    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin, onAfterExit, clearSessionState);
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
 
-  it('/model <preset> calls sanitizeSessionJsonl on switch', async () => {
+  it('/model <preset> calls sanitizeSessionJsonl in post-exit callback', async () => {
     mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
     mockResolvePreset.mockImplementation((name: string) => {
       if (name === 'opus_4.7')
@@ -325,7 +368,11 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin);
+    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin, onAfterExit, clearSessionState);
+    // Not called yet
+    expect(mockSanitizeSessionJsonl).not.toHaveBeenCalled();
+    // Drain
+    await drainAfterExit();
     expect(mockSanitizeSessionJsonl).toHaveBeenCalledWith('test');
   });
 
@@ -352,9 +399,12 @@ describe('handleHostCommand', () => {
       makeMsg('/model opus_4.7'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
-    expect(replies[0]).toContain('Switched to `opus_4.7`');
+    await drainAfterExit();
+    expect(replies[1]).toContain('Switched to `opus_4.7`');
   });
 
   it('/model unknown_preset replies with rejection', async () => {
@@ -365,6 +415,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model unknown'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Unknown preset');
@@ -377,6 +429,8 @@ describe('handleHostCommand', () => {
       makeMsg('/hi'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -387,6 +441,8 @@ describe('handleHostCommand', () => {
       makeMsg('/model'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -394,14 +450,20 @@ describe('handleHostCommand', () => {
 
   // --- /shutdown tests ---
 
-  it('/shutdown stops a running container and replies confirmation', async () => {
+  it('/shutdown stops a running container and defers reply to onAfterExit', async () => {
     const result = await handleHostCommand(
       makeMsg('/shutdown'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
+    // No immediate reply — deferred
+    expect(replies).toEqual([]);
+    expect(onAfterExitCallbacks.length).toBe(1);
+    await drainAfterExit();
     expect(replies[0]).toContain('Container stopped');
   });
 
@@ -410,20 +472,25 @@ describe('handleHostCommand', () => {
       makeMsg('/shutdown'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
 
-  it('/shutdown replies "No container running" when no active container', async () => {
+  it('/shutdown replies "No container running" synchronously when no active container', async () => {
     const noopCloseStdin = (_jid: string): boolean => false;
     const result = await handleHostCommand(
       makeMsg('/shutdown'),
       makeCtx({ allowedHostCommands: undefined }),
       noopCloseStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toBe('No container running for this group.');
+    expect(onAfterExitCallbacks.length).toBe(0);
   });
 
   it('/shutdown rejects unauthorized sender', async () => {
@@ -432,6 +499,8 @@ describe('handleHostCommand', () => {
       makeMsg('/shutdown'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
@@ -443,9 +512,42 @@ describe('handleHostCommand', () => {
       makeMsg('/Shutdown'),
       makeCtx({ allowedHostCommands: undefined }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
+  });
+
+  // --- /stop tests ---
+
+  it('/stop defers reply to onAfterExit when container is running', async () => {
+    const result = await handleHostCommand(
+      makeMsg('/stop'),
+      makeCtx({ allowedHostCommands: undefined }),
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
+    expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']);
+    expect(replies).toEqual([]);
+    await drainAfterExit();
+    expect(replies[0]).toContain('Stopped');
+  });
+
+  it('/stop replies synchronously when no container running', async () => {
+    const noopCloseStdin = (_jid: string): boolean => false;
+    const result = await handleHostCommand(
+      makeMsg('/stop'),
+      makeCtx({ allowedHostCommands: undefined }),
+      noopCloseStdin,
+      onAfterExit,
+      clearSessionState,
+    );
+    expect(result).toBe(true);
+    expect(replies[0]).toBe('Nothing running to stop.');
+    expect(onAfterExitCallbacks.length).toBe(0);
   });
 
   // --- /newsession tests ---
@@ -455,80 +557,83 @@ describe('handleHostCommand', () => {
       makeMsg('/newsession'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
   });
 
-  it('/newsession stops container and clears session', async () => {
-    const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => {
-      clearSessionCalls.push(groupFolder);
-    };
-
+  it('/newsession sends Reply 1 immediately, defers clear + Reply 2 to onAfterExit', async () => {
     const result = await handleHostCommand(
       makeMsg('/newsession'),
       makeCtx({ allowedHostCommands: ['newsession'] }),
       closeStdin,
-      clearSession,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
-    expect(clearSessionCalls).toEqual(['test']);
-    expect(replies[0]).toContain('Session cleared');
+    // Reply 1 sent immediately
+    expect(replies).toEqual(['Clearing session...']);
+    // Session not yet cleared
+    expect(clearSessionStateCalls).toEqual([]);
+    // onAfterExit registered
+    expect(onAfterExitCallbacks.length).toBe(1);
+
+    // Drain post-exit
+    await drainAfterExit();
+    expect(clearSessionStateCalls).toEqual(['test']);
+    expect(replies[1]).toContain('Session cleared');
   });
 
-  it('/newsession clears session even when no container is running', async () => {
+  it('/newsession clears session even when no container is running (immediate execution path)', async () => {
+    // When closeStdin returns false, onAfterExit is still called.
+    // In real code, onAfterExit with no active container invokes immediately.
+    // In tests, we capture and drain manually.
     const noopCloseStdin = (_jid: string): boolean => false;
-    const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => {
-      clearSessionCalls.push(groupFolder);
-    };
 
     const result = await handleHostCommand(
       makeMsg('/newsession'),
       makeCtx({ allowedHostCommands: ['newsession'] }),
       noopCloseStdin,
-      clearSession,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
-    expect(clearSessionCalls).toEqual(['test']);
-    expect(replies[0]).toContain('Session cleared');
+    expect(replies).toEqual(['Clearing session...']);
+    await drainAfterExit();
+    expect(clearSessionStateCalls).toEqual(['test']);
+    expect(replies[1]).toContain('Session cleared');
   });
 
   it('/newsession rejects unauthorized sender', async () => {
     mockIsSenderAllowed.mockReturnValue(false);
-    const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => {
-      clearSessionCalls.push(groupFolder);
-    };
 
     const result = await handleHostCommand(
       makeMsg('/newsession'),
       makeCtx({ allowedHostCommands: ['newsession'] }),
       closeStdin,
-      clearSession,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
-    expect(clearSessionCalls).toEqual([]);
+    expect(clearSessionStateCalls).toEqual([]);
   });
 
   it('/newsession is case-insensitive', async () => {
-    const clearSessionCalls: string[] = [];
-    const clearSession = (groupFolder: string) => {
-      clearSessionCalls.push(groupFolder);
-    };
-
     const result = await handleHostCommand(
       makeMsg('/NewSession'),
       makeCtx({ allowedHostCommands: ['newsession'] }),
       closeStdin,
-      clearSession,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
-    expect(clearSessionCalls).toEqual(['test']);
+    await drainAfterExit();
+    expect(clearSessionStateCalls).toEqual(['test']);
   });
 
   // --- /version tests ---
@@ -538,6 +643,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version'),
       makeCtx({ allowedHostCommands: ['model'] }),
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(false);
   });
@@ -563,6 +670,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Container channel for this group: stable');
@@ -582,6 +691,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Could not read VERSIONS.json');
@@ -608,6 +719,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('does not match VERSIONS.json');
@@ -619,6 +732,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version beta'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Invalid channel');
@@ -636,6 +751,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version next'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Image nanoclaw-agent:next not found');
@@ -643,7 +760,7 @@ describe('handleHostCommand', () => {
     expect(closeStdinCalls).toEqual([]);
   });
 
-  it('/version next updates DB and recycles container', async () => {
+  it('/version next sends Reply 1 and defers DB update + Reply 2 to onAfterExit', async () => {
     mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
     mockImageExists.mockReturnValue(true);
 
@@ -652,17 +769,27 @@ describe('handleHostCommand', () => {
       makeMsg('/version next'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
+    expect(closeStdinCalls).toEqual(['tg:123']);
+    // Reply 1 sent immediately
+    expect(replies).toEqual(['Switching to channel `next`...']);
+    // DB not yet updated
+    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    // onAfterExit registered
+    expect(onAfterExitCallbacks.length).toBe(1);
+
+    await drainAfterExit();
     expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
       'tg:123',
       expect.objectContaining({ containerChannel: 'next' }),
     );
-    expect(closeStdinCalls).toEqual(['tg:123']);
-    expect(replies[0]).toContain('Switched to channel: next');
+    expect(replies[1]).toContain('Switched to channel: next');
   });
 
-  it('/version stable updates DB and recycles container', async () => {
+  it('/version stable updates DB via onAfterExit', async () => {
     mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
     mockImageExists.mockReturnValue(true);
 
@@ -671,14 +798,16 @@ describe('handleHostCommand', () => {
       makeMsg('/version stable'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
+    await drainAfterExit();
     expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
       'tg:123',
       expect.objectContaining({ containerChannel: 'stable' }),
     );
-    expect(closeStdinCalls).toEqual(['tg:123']);
-    expect(replies[0]).toContain('Switched to channel: stable');
+    expect(replies[1]).toContain('Switched to channel: stable');
   });
 
   it('/version is case-insensitive for channel arg', async () => {
@@ -690,8 +819,11 @@ describe('handleHostCommand', () => {
       makeMsg('/version NEXT'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
+    await drainAfterExit();
     expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
       'tg:123',
       expect.objectContaining({ containerChannel: 'next' }),
@@ -705,6 +837,8 @@ describe('handleHostCommand', () => {
       makeMsg('/version'),
       ctx,
       closeStdin,
+      onAfterExit,
+      clearSessionState,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);

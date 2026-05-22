@@ -433,6 +433,132 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  // --- onAfterExit tests ---
+
+  it('onAfterExit with no active container invokes callback immediately', async () => {
+    const cb = vi.fn();
+    queue.onAfterExit('group1@g.us', cb);
+    // Callback is scheduled via Promise.resolve().then(), so advance microtasks
+    await vi.advanceTimersByTimeAsync(10);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('onAfterExit with active container runs callback in finally after exit', async () => {
+    const executionOrder: string[] = [];
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      executionOrder.push('process-done');
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Register post-exit callback while container is active
+    queue.onAfterExit('group1@g.us', () => {
+      executionOrder.push('post-exit');
+    });
+
+    // Callback should NOT have run yet
+    await vi.advanceTimersByTimeAsync(10);
+    expect(executionOrder).toEqual([]);
+
+    // Release the container
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(executionOrder).toEqual(['process-done', 'post-exit']);
+  });
+
+  it('onAfterExit multiple callbacks drain in FIFO order', async () => {
+    const order: number[] = [];
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.onAfterExit('group1@g.us', () => { order.push(1); });
+    queue.onAfterExit('group1@g.us', () => { order.push(2); });
+    queue.onAfterExit('group1@g.us', () => { order.push(3); });
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(order).toEqual([1, 2, 3]);
+  });
+
+  it('onAfterExit callback that throws does not break drain or queue', async () => {
+    const order: string[] = [];
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.onAfterExit('group1@g.us', () => { order.push('first'); });
+    queue.onAfterExit('group1@g.us', () => { throw new Error('boom'); });
+    queue.onAfterExit('group1@g.us', () => { order.push('third'); });
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    // All callbacks attempted despite the throw
+    expect(order).toEqual(['first', 'third']);
+
+    // Queue still works — enqueue another message
+    let secondProcessed = false;
+    const processMessages2 = vi.fn(async () => {
+      secondProcessed = true;
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages2);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(secondProcessed).toBe(true);
+  });
+
+  it('onAfterExit works for runTask path', async () => {
+    const order: string[] = [];
+    let resolveTask: () => void;
+
+    const taskFn = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveTask = resolve;
+      });
+      order.push('task-done');
+    });
+
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.onAfterExit('group1@g.us', () => { order.push('post-exit'); });
+
+    resolveTask!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(order).toEqual(['task-done', 'post-exit']);
+  });
+
   it('preempts when idle arrives with pending tasks', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;

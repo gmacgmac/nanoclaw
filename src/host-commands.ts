@@ -31,7 +31,8 @@ export async function handleHostCommand(
   msg: NewMessage,
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
-  clearSession?: (groupFolder: string) => void,
+  onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
+  clearSessionState: (groupFolder: string) => void,
 ): Promise<boolean> {
   const text = msg.content.trim();
   if (!text.startsWith('/')) return false;
@@ -55,9 +56,11 @@ export async function handleHostCommand(
         { group: ctx.group.name, sender: ctx.sender },
         '/shutdown command executed',
       );
-      await ctx.reply(
-        'Container stopped. Next message will start a new container with the same session.',
-      );
+      onAfterExit(ctx.jid, async () => {
+        await ctx.reply(
+          'Container stopped. Next message will start a new container with the same session.',
+        );
+      });
     } else {
       await ctx.reply('No container running for this group.');
     }
@@ -78,7 +81,9 @@ export async function handleHostCommand(
         { group: ctx.group.name, sender: ctx.sender },
         '/stop command executed',
       );
-      await ctx.reply('⏹ Stopped. Next message continues the conversation.');
+      onAfterExit(ctx.jid, async () => {
+        await ctx.reply('⏹ Stopped. Next message continues the conversation.');
+      });
     } else {
       await ctx.reply('Nothing running to stop.');
     }
@@ -100,15 +105,15 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'model') {
-    return handleModelCommand(parts.slice(1), ctx, closeStdin);
+    return handleModelCommand(parts.slice(1), ctx, closeStdin, onAfterExit);
   }
 
   if (commandName === 'newsession') {
-    return handleNewSessionCommand(ctx, closeStdin, clearSession);
+    return handleNewSessionCommand(ctx, closeStdin, onAfterExit, clearSessionState);
   }
 
   if (commandName === 'version') {
-    return handleVersionCommand(parts.slice(1), ctx, closeStdin);
+    return handleVersionCommand(parts.slice(1), ctx, closeStdin, onAfterExit);
   }
 
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
@@ -121,6 +126,7 @@ async function handleModelCommand(
   args: string[],
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
+  onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
 ): Promise<boolean> {
   const presetNames = getAvailablePresetNames();
 
@@ -172,45 +178,52 @@ async function handleModelCommand(
     containerConfig: newConfig,
   };
 
-  setRegisteredGroup(ctx.jid, updatedGroup);
-
   // Sync in-memory cache
   (ctx.group as RegisteredGroup).containerConfig = newConfig;
 
-  // Recycle active container so next message picks up new config.
-  // settings.json is regenerated on spawn — no need to update it here.
+  await ctx.reply(`Switching to \`${presetName}\`...`);
   closeStdin(ctx.jid);
 
-  if (SANITIZE_SESSION_ON_SWITCH) {
-    try {
-      sanitizeSessionJsonl(ctx.group.folder);
-    } catch (err) {
-      logger.warn(
-        { err, folder: ctx.group.folder },
-        'Session sanitization failed — proceeding anyway',
-      );
-    }
-  }
+  onAfterExit(ctx.jid, async () => {
+    setRegisteredGroup(ctx.jid, updatedGroup);
 
-  await ctx.reply(
-    `Switched to \`${presetName}\` (${resolved.endpoint} / ${resolved.model}).`,
-  );
+    if (SANITIZE_SESSION_ON_SWITCH) {
+      try {
+        sanitizeSessionJsonl(ctx.group.folder);
+      } catch (err) {
+        logger.warn(
+          { err, folder: ctx.group.folder },
+          'Session sanitization failed — proceeding anyway',
+        );
+      }
+    }
+
+    await ctx.reply(
+      `Switched to \`${presetName}\` (${resolved.endpoint} / ${resolved.model}).`,
+    );
+  });
+
   return true;
 }
 
 async function handleNewSessionCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
-  clearSession?: (groupFolder: string) => void,
+  onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
+  clearSessionState: (groupFolder: string) => void,
 ): Promise<boolean> {
+  await ctx.reply('Clearing session...');
   closeStdin(ctx.jid);
-  clearSession?.(ctx.group.folder);
 
-  logger.info(
-    { group: ctx.group.name, sender: ctx.sender },
-    '/newsession command executed — session cleared',
-  );
-  await ctx.reply('Session cleared. Next message starts fresh.');
+  onAfterExit(ctx.jid, async () => {
+    clearSessionState(ctx.group.folder);
+    logger.info(
+      { group: ctx.group.name, sender: ctx.sender },
+      '/newsession command executed — session cleared',
+    );
+    await ctx.reply('Session cleared. Next message starts fresh.');
+  });
+
   return true;
 }
 
@@ -252,6 +265,7 @@ async function handleVersionCommand(
   args: string[],
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
+  onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
 ): Promise<boolean> {
   const channel = ctx.group.containerChannel ?? 'stable';
 
@@ -332,22 +346,24 @@ async function handleVersionCommand(
     ...ctx.group,
     containerChannel: requestedChannel as ContainerChannel,
   };
-  setRegisteredGroup(ctx.jid, updatedGroup);
 
   // Sync in-memory cache
   (ctx.group as RegisteredGroup).containerChannel =
     requestedChannel as ContainerChannel;
 
-  // Recycle container
+  await ctx.reply(`Switching to channel \`${requestedChannel}\`...`);
   closeStdin(ctx.jid);
 
-  logger.info(
-    { group: ctx.group.name, sender: ctx.sender, channel: requestedChannel },
-    '/version command — channel switched',
-  );
+  onAfterExit(ctx.jid, async () => {
+    setRegisteredGroup(ctx.jid, updatedGroup);
+    logger.info(
+      { group: ctx.group.name, sender: ctx.sender, channel: requestedChannel },
+      '/version command — channel switched',
+    );
+    await ctx.reply(
+      `✅ Switched to channel: ${requestedChannel}. The next message will spawn a new container using ${targetTag}.`,
+    );
+  });
 
-  await ctx.reply(
-    `✅ Switched to channel: ${requestedChannel}. The next message will spawn a new container using ${targetTag}.`,
-  );
   return true;
 }

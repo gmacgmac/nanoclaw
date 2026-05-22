@@ -21,6 +21,7 @@ interface GroupState {
   runningTaskId: string | null;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
+  pendingPostExitActions: Array<() => Promise<void> | void>;
   process: ChildProcess | null;
   containerName: string | null;
   groupFolder: string | null;
@@ -45,6 +46,7 @@ export class GroupQueue {
         runningTaskId: null,
         pendingMessages: false,
         pendingTasks: [],
+        pendingPostExitActions: [],
         process: null,
         containerName: null,
         groupFolder: null,
@@ -208,6 +210,24 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * Register a callback to run after the container exits.
+   * If no container is active, the callback runs immediately (async).
+   * Callbacks drain in FIFO order in the queue's finally block.
+   */
+  onAfterExit(groupJid: string, callback: () => Promise<void> | void): void {
+    const state = this.getGroup(groupJid);
+    if (!state.active) {
+      Promise.resolve()
+        .then(callback)
+        .catch((err) =>
+          logger.error({ groupJid, err }, 'Post-exit action failed (immediate)'),
+        );
+      return;
+    }
+    state.pendingPostExitActions.push(callback);
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',
@@ -242,6 +262,18 @@ export class GroupQueue {
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
+
+      // Drain post-exit actions in FIFO order
+      const actions = state.pendingPostExitActions;
+      state.pendingPostExitActions = [];
+      for (const action of actions) {
+        try {
+          await action();
+        } catch (err) {
+          logger.error({ groupJid, err }, 'Post-exit action failed');
+        }
+      }
+
       this.drainGroup(groupJid);
     }
   }
@@ -271,6 +303,18 @@ export class GroupQueue {
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
+
+      // Drain post-exit actions in FIFO order
+      const actions = state.pendingPostExitActions;
+      state.pendingPostExitActions = [];
+      for (const action of actions) {
+        try {
+          await action();
+        } catch (err) {
+          logger.error({ groupJid, err }, 'Post-exit action failed');
+        }
+      }
+
       this.drainGroup(groupJid);
     }
   }

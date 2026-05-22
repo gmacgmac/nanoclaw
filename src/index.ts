@@ -517,7 +517,9 @@ async function runAgent(
     registeredGroupsList,
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID from streamed results.
+  // Note: post-exit actions in the queue (e.g. /newsession clearSessionState) run AFTER
+  // runAgent returns, so the order guarantees correctness for session clearing.
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
@@ -665,7 +667,9 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    // Track session ID from final output
+    // Track session ID from final output.
+    // Post-exit actions in the queue drain AFTER this function returns,
+    // so /newsession's clearSessionState correctly overwrites this write.
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
@@ -1078,7 +1082,7 @@ async function main(): Promise<void> {
           const ch = findChannel(channels, chatJid);
           if (ch?.isConnected()) await ch.sendMessage(chatJid, text);
         };
-        const clearSession = (groupFolder: string) => {
+        const clearSessionState = (groupFolder: string) => {
           delete sessions[groupFolder];
           deleteSession(groupFolder);
         };
@@ -1092,7 +1096,8 @@ async function main(): Promise<void> {
               reply: sendReply,
             },
             queue.closeStdin.bind(queue),
-            clearSession,
+            queue.onAfterExit.bind(queue),
+            clearSessionState,
           )
         ) {
           return;
@@ -1217,7 +1222,8 @@ async function main(): Promise<void> {
                     group.folder,
                   ),
                 async (streamedOutput: ContainerOutput) => {
-                  // Track session ID from streamed results
+                  // Track session ID from streamed results.
+                  // Post-exit actions in the queue guarantee /newsession correctness.
                   if (streamedOutput.newSessionId) {
                     sessions[group.folder] = streamedOutput.newSessionId;
                     setSession(group.folder, streamedOutput.newSessionId);
