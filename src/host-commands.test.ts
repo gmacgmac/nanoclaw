@@ -64,7 +64,10 @@ vi.mock('child_process', async () => {
 describe('handleHostCommand', () => {
   let replies: string[] = [];
   let closeStdinCalls: string[] = [];
-  let onAfterExitCallbacks: Array<{ jid: string; cb: () => Promise<void> | void }> = [];
+  let onAfterExitCallbacks: Array<{
+    jid: string;
+    cb: () => Promise<void> | void;
+  }> = [];
   let clearSessionStateCalls: string[] = [];
 
   beforeEach(() => {
@@ -237,7 +240,13 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
     expect(result).toBe(true);
     expect(replies.length).toBe(1);
     expect(replies[0]).toContain('Active: `ollama_k2.6`');
@@ -252,7 +261,13 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'deleted_preset' },
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: `deleted_preset` (unresolved)');
   });
@@ -264,7 +279,13 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: {},
     });
-    const result = await handleHostCommand(makeMsg('/model'), ctx, closeStdin, onAfterExit, clearSessionState);
+    const result = await handleHostCommand(
+      makeMsg('/model'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: none');
   });
@@ -348,7 +369,13 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin, onAfterExit, clearSessionState);
+    await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
 
@@ -368,7 +395,13 @@ describe('handleHostCommand', () => {
       allowedHostCommands: ['model'],
       containerConfig: { preset: 'ollama_k2.6' },
     });
-    await handleHostCommand(makeMsg('/model opus_4.7'), ctx, closeStdin, onAfterExit, clearSessionState);
+    await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
     // Not called yet
     expect(mockSanitizeSessionJsonl).not.toHaveBeenCalled();
     // Drain

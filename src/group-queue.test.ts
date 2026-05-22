@@ -490,9 +490,15 @@ describe('GroupQueue', () => {
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
 
-    queue.onAfterExit('group1@g.us', () => { order.push(1); });
-    queue.onAfterExit('group1@g.us', () => { order.push(2); });
-    queue.onAfterExit('group1@g.us', () => { order.push(3); });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push(1);
+    });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push(2);
+    });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push(3);
+    });
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -515,9 +521,15 @@ describe('GroupQueue', () => {
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
 
-    queue.onAfterExit('group1@g.us', () => { order.push('first'); });
-    queue.onAfterExit('group1@g.us', () => { throw new Error('boom'); });
-    queue.onAfterExit('group1@g.us', () => { order.push('third'); });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push('first');
+    });
+    queue.onAfterExit('group1@g.us', () => {
+      throw new Error('boom');
+    });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push('third');
+    });
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -551,7 +563,9 @@ describe('GroupQueue', () => {
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
     await vi.advanceTimersByTimeAsync(10);
 
-    queue.onAfterExit('group1@g.us', () => { order.push('post-exit'); });
+    queue.onAfterExit('group1@g.us', () => {
+      order.push('post-exit');
+    });
 
     resolveTask!();
     await vi.advanceTimersByTimeAsync(10);

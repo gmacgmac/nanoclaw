@@ -221,7 +221,10 @@ export class GroupQueue {
       Promise.resolve()
         .then(callback)
         .catch((err) =>
-          logger.error({ groupJid, err }, 'Post-exit action failed (immediate)'),
+          logger.error(
+            { groupJid, err },
+            'Post-exit action failed (immediate)',
+          ),
         );
       return;
     }

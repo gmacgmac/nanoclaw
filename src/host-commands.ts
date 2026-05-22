@@ -109,7 +109,12 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'newsession') {
-    return handleNewSessionCommand(ctx, closeStdin, onAfterExit, clearSessionState);
+    return handleNewSessionCommand(
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
   }
 
   if (commandName === 'version') {
