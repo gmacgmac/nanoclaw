@@ -452,7 +452,12 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, group, imageTag);
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    group,
+    imageTag,
+  );
 
   logger.debug(
     {

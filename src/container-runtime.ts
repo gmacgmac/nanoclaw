@@ -133,7 +133,6 @@ export function cleanupOrphans(): void {
   }
 }
 
-
 /**
  * Resolve a group's container channel to a full image tag.
  * If CONTAINER_IMAGE env override is set, it takes precedence (for local dev).

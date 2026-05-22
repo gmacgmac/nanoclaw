@@ -625,6 +625,13 @@ export class TelegramChannel implements Channel {
       });
     }
 
+    if (allowedHostCommands.includes('version')) {
+      commands.push({
+        command: 'version',
+        description: 'Show container image version',
+      });
+    }
+
     try {
       await resolved.bot.api.setMyCommands(commands, {
         scope: { type: 'chat', chat_id: chatId },

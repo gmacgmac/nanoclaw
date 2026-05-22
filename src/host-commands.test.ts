@@ -53,7 +53,8 @@ vi.mock('fs', async () => {
   };
 });
 vi.mock('child_process', async () => {
-  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  const actual =
+    await vi.importActual<typeof import('child_process')>('child_process');
   return {
     ...actual,
     execSync: (...args: unknown[]) => mockExecSync(...args),
@@ -558,7 +559,11 @@ describe('handleHostCommand', () => {
     mockExecSync.mockReturnValue('sha256:abc123\n');
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
-    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/version'),
+      ctx,
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Container channel for this group: stable');
     expect(replies[0]).toContain('nanoclaw-agent:stable → v1.0.0');
@@ -573,7 +578,11 @@ describe('handleHostCommand', () => {
     });
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
-    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/version'),
+      ctx,
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Could not read VERSIONS.json');
   });
@@ -595,7 +604,11 @@ describe('handleHostCommand', () => {
     mockExecSync.mockReturnValue('sha256:different456\n');
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
-    const result = await handleHostCommand(makeMsg('/version'), ctx, closeStdin);
+    const result = await handleHostCommand(
+      makeMsg('/version'),
+      ctx,
+      closeStdin,
+    );
     expect(result).toBe(true);
     expect(replies[0]).toContain('does not match VERSIONS.json');
   });

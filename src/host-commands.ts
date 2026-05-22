@@ -10,7 +10,11 @@ import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isValidContainerChannel } from './types.js';
 import type { ContainerChannel, NewMessage, RegisteredGroup } from './types.js';
-import { imageExists, resolveImageTag, CONTAINER_RUNTIME_BIN } from './container-runtime.js';
+import {
+  imageExists,
+  resolveImageTag,
+  CONTAINER_RUNTIME_BIN,
+} from './container-runtime.js';
 
 // Feature toggle: sanitize session JSONL when switching models
 // If this causes issues, set to false to disable entirely
@@ -231,7 +235,12 @@ interface VersionsJson {
 function readVersionsJson(): VersionsJson | null {
   try {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const versionsPath = path.join(__dirname, '..', 'container', 'VERSIONS.json');
+    const versionsPath = path.join(
+      __dirname,
+      '..',
+      'container',
+      'VERSIONS.json',
+    );
     const raw = fs.readFileSync(versionsPath, 'utf-8');
     return JSON.parse(raw) as VersionsJson;
   } catch {
@@ -267,7 +276,9 @@ async function handleVersionCommand(
     ];
 
     if (versionInfo) {
-      lines.push(`SDK: @anthropic-ai/claude-agent-sdk@${versionInfo.sdkVersion}`);
+      lines.push(
+        `SDK: @anthropic-ai/claude-agent-sdk@${versionInfo.sdkVersion}`,
+      );
       lines.push(`CLI: @anthropic-ai/claude-code@${versionInfo.cliVersion}`);
 
       // Drift detection: check if the actual image SHA matches VERSIONS.json
@@ -276,7 +287,10 @@ async function handleVersionCommand(
           `${CONTAINER_RUNTIME_BIN} image inspect ${imageTag} --format '{{.Id}}'`,
           { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 5000 },
         ).trim();
-        if (inspectOutput && !inspectOutput.includes(versionInfo.imageId.replace('sha256:', ''))) {
+        if (
+          inspectOutput &&
+          !inspectOutput.includes(versionInfo.imageId.replace('sha256:', ''))
+        ) {
           lines.push(
             `⚠️ Tag :${channel} does not match VERSIONS.json — run \`container.sh current\` to investigate.`,
           );
@@ -285,7 +299,9 @@ async function handleVersionCommand(
         // Image not found locally or docker not available — skip drift check
       }
     } else {
-      lines.push(`(version details not found in VERSIONS.json for ${versionName})`);
+      lines.push(
+        `(version details not found in VERSIONS.json for ${versionName})`,
+      );
     }
 
     await ctx.reply(lines.join('\n'));
@@ -319,7 +335,8 @@ async function handleVersionCommand(
   setRegisteredGroup(ctx.jid, updatedGroup);
 
   // Sync in-memory cache
-  (ctx.group as RegisteredGroup).containerChannel = requestedChannel as ContainerChannel;
+  (ctx.group as RegisteredGroup).containerChannel =
+    requestedChannel as ContainerChannel;
 
   // Recycle container
   closeStdin(ctx.jid);
