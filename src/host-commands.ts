@@ -10,10 +10,7 @@ import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isValidContainerChannel } from './types.js';
 import type { ContainerChannel, NewMessage, RegisteredGroup } from './types.js';
-import {
-  resolveImageTag,
-  CONTAINER_RUNTIME_BIN,
-} from './container-runtime.js';
+import { resolveImageTag, CONTAINER_RUNTIME_BIN } from './container-runtime.js';
 
 // Feature toggle: sanitize session JSONL when switching models
 // If this causes issues, set to false to disable entirely
