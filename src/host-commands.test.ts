@@ -31,10 +31,8 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/mock/data',
 }));
 
-const mockImageExists = vi.fn();
 const mockResolveImageTag = vi.fn();
 vi.mock('./container-runtime.js', () => ({
-  imageExists: (...args: unknown[]) => mockImageExists(...args),
   resolveImageTag: (...args: unknown[]) => mockResolveImageTag(...args),
   CONTAINER_RUNTIME_BIN: 'docker',
 }));
@@ -775,27 +773,24 @@ describe('handleHostCommand', () => {
     expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
   });
 
-  it('/version next rejects when image does not exist', async () => {
-    mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
-    mockImageExists.mockReturnValue(false);
-
+  it('/version next rejects when channel name is invalid', async () => {
+    // (Image existence is no longer pre-checked — `docker run` handles missing images.)
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
     const result = await handleHostCommand(
-      makeMsg('/version next'),
+      makeMsg('/version bogus'),
       ctx,
       closeStdin,
       onAfterExit,
       clearSessionState,
     );
     expect(result).toBe(true);
-    expect(replies[0]).toContain('Image nanoclaw-agent:next not found');
+    expect(replies[0]).toContain('Invalid channel');
     expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
     expect(closeStdinCalls).toEqual([]);
   });
 
   it('/version next sends Reply 1 and defers DB update + Reply 2 to onAfterExit', async () => {
     mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
-    mockImageExists.mockReturnValue(true);
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
     const result = await handleHostCommand(
@@ -824,7 +819,6 @@ describe('handleHostCommand', () => {
 
   it('/version stable updates DB via onAfterExit', async () => {
     mockResolveImageTag.mockReturnValue('nanoclaw-agent:stable');
-    mockImageExists.mockReturnValue(true);
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
     const result = await handleHostCommand(
@@ -845,7 +839,6 @@ describe('handleHostCommand', () => {
 
   it('/version is case-insensitive for channel arg', async () => {
     mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
-    mockImageExists.mockReturnValue(true);
 
     const ctx = makeCtx({ allowedHostCommands: ['version'] });
     const result = await handleHostCommand(

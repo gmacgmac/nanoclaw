@@ -29,7 +29,6 @@ import {
   ensureContainerRuntimeRunning,
   cleanupOrphans,
   resolveImageTag,
-  imageExists,
 } from './container-runtime.js';
 import { logger } from './logger.js';
 
@@ -184,27 +183,5 @@ describe('resolveImageTag', () => {
 
   it('falls back to stable for invalid channel', () => {
     expect(resolveImageTag('bogus')).toBe('nanoclaw-agent:stable');
-  });
-});
-
-describe('imageExists', () => {
-  beforeEach(() => {
-    mockExecSync.mockReset();
-  });
-
-  it('returns true when docker image inspect succeeds', () => {
-    mockExecSync.mockReturnValueOnce('');
-    expect(imageExists('nanoclaw-agent:stable')).toBe(true);
-    expect(mockExecSync).toHaveBeenCalledWith(
-      'docker image inspect nanoclaw-agent:stable',
-      { stdio: 'pipe', timeout: 5000 },
-    );
-  });
-
-  it('returns false when docker image inspect throws', () => {
-    mockExecSync.mockImplementationOnce(() => {
-      throw new Error('No such image');
-    });
-    expect(imageExists('nanoclaw-agent:next')).toBe(false);
   });
 });

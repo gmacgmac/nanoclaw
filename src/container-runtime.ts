@@ -8,7 +8,7 @@ import os from 'os';
 
 import { logger } from './logger.js';
 import { CONTAINER_IMAGE_BASE, CONTAINER_IMAGE_OVERRIDE } from './config.js';
-import { ContainerChannel, isValidContainerChannel } from './types.js';
+import { isValidContainerChannel } from './types.js';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -142,20 +142,4 @@ export function resolveImageTag(channel?: string): string {
   const resolved =
     channel && isValidContainerChannel(channel) ? channel : 'stable';
   return `${CONTAINER_IMAGE_BASE}:${resolved}`;
-}
-
-/**
- * Check whether a Docker image tag exists locally.
- * Returns true if the image is present, false otherwise.
- */
-export function imageExists(imageTag: string): boolean {
-  try {
-    execSync(`${CONTAINER_RUNTIME_BIN} image inspect ${imageTag}`, {
-      stdio: 'pipe',
-      timeout: 5000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }

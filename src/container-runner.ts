@@ -21,7 +21,6 @@ import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
-  imageExists,
   readonlyMountArgs,
   resolveImageTag,
   stopContainer,
@@ -430,21 +429,12 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
-  // Resolve channel → image tag
+  // Resolve channel → image tag.
+  // Note: we no longer pre-check imageExists() here. `docker image inspect`
+  // proved unreliable on Docker Desktop (intermittent false negatives even
+  // when the tag is present), and `docker run` already produces a clear
+  // "Unable to find image … locally" error if the tag is genuinely missing.
   const imageTag = resolveImageTag(group.containerChannel);
-
-  // Pre-spawn check: ensure the image exists locally
-  if (!imageExists(imageTag)) {
-    logger.error(
-      { group: group.name, imageTag },
-      'Container image not found locally',
-    );
-    return {
-      status: 'error',
-      result: `Container image "${imageTag}" not found. Run \`/version stable\` to switch this group to stable, or have an admin build the image.`,
-      error: `Image not found: ${imageTag}`,
-    };
-  }
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });

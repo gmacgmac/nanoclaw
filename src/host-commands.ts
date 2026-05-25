@@ -11,7 +11,6 @@ import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isValidContainerChannel } from './types.js';
 import type { ContainerChannel, NewMessage, RegisteredGroup } from './types.js';
 import {
-  imageExists,
   resolveImageTag,
   CONTAINER_RUNTIME_BIN,
 } from './container-runtime.js';
@@ -337,14 +336,12 @@ async function handleVersionCommand(
     return true;
   }
 
-  // Check image exists before updating DB
+  // Resolve target tag for the user-facing reply.
+  // Note: we don't pre-check whether the image exists. `docker image inspect`
+  // is unreliable on Docker Desktop (intermittent false negatives), and the
+  // next message will fail loudly with a clear docker error if the tag is
+  // genuinely missing — at which point the user can switch back.
   const targetTag = resolveImageTag(requestedChannel);
-  if (!imageExists(targetTag)) {
-    await ctx.reply(
-      `❌ Image ${targetTag} not found. Build it first with \`container.sh build vX.Y.Z\` and \`container.sh stage vX.Y.Z\`.`,
-    );
-    return true;
-  }
 
   // Update DB
   const updatedGroup: RegisteredGroup = {
