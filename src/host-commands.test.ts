@@ -67,6 +67,7 @@ describe('handleHostCommand', () => {
     cb: () => Promise<void> | void;
   }> = [];
   let clearSessionStateCalls: string[] = [];
+  let updateGroupCalls: Array<{ jid: string; group: any }> = [];
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -74,6 +75,7 @@ describe('handleHostCommand', () => {
     closeStdinCalls = [];
     onAfterExitCallbacks = [];
     clearSessionStateCalls = [];
+    updateGroupCalls = [];
     mockLoadSenderAllowlist.mockReturnValue({
       default: { allow: '*', mode: 'trigger' },
       chats: {},
@@ -139,6 +141,10 @@ describe('handleHostCommand', () => {
     clearSessionStateCalls.push(groupFolder);
   };
 
+  const updateGroup = async (jid: string, group: any): Promise<void> => {
+    updateGroupCalls.push({ jid, group });
+  };
+
   /** Helper: invoke all captured onAfterExit callbacks */
   async function drainAfterExit() {
     for (const { cb } of onAfterExitCallbacks) {
@@ -154,6 +160,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -166,6 +173,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -178,6 +186,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -190,6 +199,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -204,6 +214,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
@@ -217,6 +228,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['No profiles configured.']);
@@ -244,6 +256,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies.length).toBe(1);
@@ -265,6 +278,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: `deleted_preset` (unresolved)');
@@ -283,6 +297,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Active: none');
@@ -325,12 +340,13 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     // Reply 1 sent immediately
     expect(replies).toEqual(['Switching to `opus_4.7`...']);
     // DB not yet updated
-    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(updateGroupCalls).toHaveLength(0);
     // In-memory cache updated immediately
     expect(group.containerConfig.preset).toBe('opus_4.7');
     // onAfterExit registered
@@ -338,8 +354,9 @@ describe('handleHostCommand', () => {
 
     // Drain post-exit
     await drainAfterExit();
-    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
-      'tg:123',
+    expect(updateGroupCalls).toHaveLength(1);
+    expect(updateGroupCalls[0].jid).toBe('tg:123');
+    expect(updateGroupCalls[0].group).toEqual(
       expect.objectContaining({
         containerConfig: expect.objectContaining({
           preset: 'opus_4.7',
@@ -373,6 +390,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(closeStdinCalls).toEqual(['tg:123']);
   });
@@ -399,6 +417,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     // Not called yet
     expect(mockSanitizeSessionJsonl).not.toHaveBeenCalled();
@@ -432,6 +451,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     await drainAfterExit();
@@ -448,10 +468,11 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Unknown preset');
-    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(updateGroupCalls).toHaveLength(0);
     expect(closeStdinCalls).toEqual([]);
   });
 
@@ -462,6 +483,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -474,6 +496,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -488,6 +511,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -505,6 +529,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -518,6 +543,7 @@ describe('handleHostCommand', () => {
       noopCloseStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toBe('No container running for this group.');
@@ -532,6 +558,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
@@ -545,6 +572,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -559,6 +587,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -575,6 +604,7 @@ describe('handleHostCommand', () => {
       noopCloseStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toBe('Nothing running to stop.');
@@ -590,6 +620,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
     expect(replies).toEqual([]);
@@ -602,6 +633,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -630,6 +662,7 @@ describe('handleHostCommand', () => {
       noopCloseStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Clearing session...']);
@@ -647,6 +680,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
@@ -660,6 +694,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
@@ -676,6 +711,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(false);
   });
@@ -703,6 +739,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Container channel for this group: stable');
@@ -724,6 +761,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Could not read VERSIONS.json');
@@ -752,6 +790,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('does not match VERSIONS.json');
@@ -765,12 +804,13 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Invalid channel');
     expect(replies[0]).toContain('stable');
     expect(replies[0]).toContain('next');
-    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(updateGroupCalls).toHaveLength(0);
   });
 
   it('/version next rejects when channel name is invalid', async () => {
@@ -782,10 +822,11 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies[0]).toContain('Invalid channel');
-    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(updateGroupCalls).toHaveLength(0);
     expect(closeStdinCalls).toEqual([]);
   });
 
@@ -799,19 +840,21 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(closeStdinCalls).toEqual(['tg:123']);
     // Reply 1 sent immediately
     expect(replies).toEqual(['Switching to channel `next`...']);
     // DB not yet updated
-    expect(mockSetRegisteredGroup).not.toHaveBeenCalled();
+    expect(updateGroupCalls).toHaveLength(0);
     // onAfterExit registered
     expect(onAfterExitCallbacks.length).toBe(1);
 
     await drainAfterExit();
-    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
-      'tg:123',
+    expect(updateGroupCalls).toHaveLength(1);
+    expect(updateGroupCalls[0].jid).toBe('tg:123');
+    expect(updateGroupCalls[0].group).toEqual(
       expect.objectContaining({ containerChannel: 'next' }),
     );
     expect(replies[1]).toContain('Switched to channel: next');
@@ -827,11 +870,13 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     await drainAfterExit();
-    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
-      'tg:123',
+    expect(updateGroupCalls).toHaveLength(1);
+    expect(updateGroupCalls[0].jid).toBe('tg:123');
+    expect(updateGroupCalls[0].group).toEqual(
       expect.objectContaining({ containerChannel: 'stable' }),
     );
     expect(replies[1]).toContain('Switched to channel: stable');
@@ -847,11 +892,13 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     await drainAfterExit();
-    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
-      'tg:123',
+    expect(updateGroupCalls).toHaveLength(1);
+    expect(updateGroupCalls[0].jid).toBe('tg:123');
+    expect(updateGroupCalls[0].group).toEqual(
       expect.objectContaining({ containerChannel: 'next' }),
     );
   });
@@ -865,6 +912,7 @@ describe('handleHostCommand', () => {
       closeStdin,
       onAfterExit,
       clearSessionState,
+      updateGroup,
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);

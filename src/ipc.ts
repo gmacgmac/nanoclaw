@@ -153,7 +153,13 @@ function isRequestFile(filename: string): boolean {
  * Returns a structured response written back to the caller's tasks directory.
  */
 export async function processTaskIpcRequest(
-  data: { type: string; correlationId: string; groupFolder?: string; isMain?: boolean; [key: string]: unknown },
+  data: {
+    type: string;
+    correlationId: string;
+    groupFolder?: string;
+    isMain?: boolean;
+    [key: string]: unknown;
+  },
   sourceGroup: string,
   isMain: boolean,
   deps: IpcDeps,
@@ -175,12 +181,18 @@ export async function processTaskIpcRequest(
     case 'get_task_request': {
       const taskId = data.taskId as string | undefined;
       if (!taskId) {
-        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Task not found' });
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
         break;
       }
       const task = getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
-        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Task not found' });
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
       } else {
         writeIpcResponse(sourceGroup, correlationId, { ok: true, data: task });
       }
@@ -191,13 +203,18 @@ export async function processTaskIpcRequest(
       const useRegex = data.regex === true;
 
       if (!query) {
-        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Missing query parameter' });
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Missing query parameter',
+        });
         break;
       }
 
       const tasks = getTasksForGroup(sourceGroup);
 
-      let matcher: (haystack: string) => { index: number; length: number } | null;
+      let matcher: (
+        haystack: string,
+      ) => { index: number; length: number } | null;
       if (useRegex) {
         let re: RegExp;
         try {
@@ -237,7 +254,10 @@ export async function processTaskIpcRequest(
         const match = matcher(haystack);
         if (match) {
           const start = Math.max(0, match.index - 40);
-          const end = Math.min(haystack.length, match.index + match.length + 40);
+          const end = Math.min(
+            haystack.length,
+            match.index + match.length + 40,
+          );
           let preview = haystack.slice(start, end).replace(/\n/g, ' ');
           if (start > 0) preview = `...${preview}`;
           if (end < haystack.length) preview = `${preview}...`;
@@ -260,7 +280,10 @@ export async function processTaskIpcRequest(
         ok: false,
         error: `Unknown request type: ${type}`,
       });
-      logger.warn({ type, correlationId, sourceGroup }, 'Unknown IPC request type');
+      logger.warn(
+        { type, correlationId, sourceGroup },
+        'Unknown IPC request type',
+      );
       break;
   }
 }
@@ -791,7 +814,8 @@ export async function processTaskIpc(
         }
 
         const updates: Parameters<typeof updateTask>[1] = {};
-        if (data.description !== undefined) updates.description = data.description;
+        if (data.description !== undefined)
+          updates.description = data.description;
         if (data.prompt !== undefined) updates.prompt = data.prompt;
         if (data.script !== undefined) updates.script = data.script || null;
         if (data.schedule_type !== undefined)

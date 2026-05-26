@@ -1248,6 +1248,41 @@ describe('TelegramChannel', () => {
     });
   });
 
+  // --- onGroupUpdated ---
+
+  describe('onGroupUpdated', () => {
+    it('delegates to syncCommandMenu and updates the command list', async () => {
+      const opts = createTestOpts();
+      opts.registeredGroups = vi.fn(() => ({
+        'tg:100200300': {
+          name: 'Main',
+          folder: 'telegram_main',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          containerConfig: { allowedHostCommands: ['model', 'newsession'] },
+        },
+      }));
+      const channel = new TelegramChannel(opts);
+      await channel.connect();
+
+      // Clear the setMyCommands calls from connect()
+      currentBot().api.setMyCommands.mockClear();
+
+      await channel.onGroupUpdated('tg:100200300');
+
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          { command: 'model', description: 'Switch model preset' },
+          {
+            command: 'newsession',
+            description: 'Write memories and start fresh session',
+          },
+        ]),
+        { scope: { type: 'chat', chat_id: '100200300' } },
+      );
+    });
+  });
+
   // --- Channel properties ---
 
   describe('channel properties', () => {

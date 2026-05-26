@@ -3,7 +3,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
 import { getAvailablePresetNames, resolvePreset } from './presets.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
@@ -29,6 +28,7 @@ export async function handleHostCommand(
   closeStdin: (jid: string) => boolean,
   onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
   clearSessionState: (groupFolder: string) => void,
+  updateGroup: (jid: string, group: RegisteredGroup) => Promise<void>,
 ): Promise<boolean> {
   const text = msg.content.trim();
   if (!text.startsWith('/')) return false;
@@ -103,7 +103,7 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'model') {
-    return handleModelCommand(parts.slice(1), ctx, closeStdin, onAfterExit);
+    return handleModelCommand(parts.slice(1), ctx, closeStdin, onAfterExit, updateGroup);
   }
 
   if (commandName === 'newsession') {
@@ -116,7 +116,7 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'version') {
-    return handleVersionCommand(parts.slice(1), ctx, closeStdin, onAfterExit);
+    return handleVersionCommand(parts.slice(1), ctx, closeStdin, onAfterExit, updateGroup);
   }
 
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
@@ -130,6 +130,7 @@ async function handleModelCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
   onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
+  updateGroup: (jid: string, group: RegisteredGroup) => Promise<void>,
 ): Promise<boolean> {
   const presetNames = getAvailablePresetNames();
 
@@ -188,7 +189,7 @@ async function handleModelCommand(
   closeStdin(ctx.jid);
 
   onAfterExit(ctx.jid, async () => {
-    setRegisteredGroup(ctx.jid, updatedGroup);
+    await updateGroup(ctx.jid, updatedGroup);
 
     if (SANITIZE_SESSION_ON_SWITCH) {
       try {
@@ -269,6 +270,7 @@ async function handleVersionCommand(
   ctx: HostCommandCtx,
   closeStdin: (jid: string) => boolean,
   onAfterExit: (groupJid: string, cb: () => Promise<void> | void) => void,
+  updateGroup: (jid: string, group: RegisteredGroup) => Promise<void>,
 ): Promise<boolean> {
   const channel = ctx.group.containerChannel ?? 'stable';
 
@@ -356,7 +358,7 @@ async function handleVersionCommand(
   closeStdin(ctx.jid);
 
   onAfterExit(ctx.jid, async () => {
-    setRegisteredGroup(ctx.jid, updatedGroup);
+    await updateGroup(ctx.jid, updatedGroup);
     logger.info(
       { group: ctx.group.name, sender: ctx.sender, channel: requestedChannel },
       '/version command — channel switched',

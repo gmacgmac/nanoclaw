@@ -235,6 +235,13 @@ export interface Channel {
     filePath: string,
     caption?: string,
   ): Promise<void>;
+  /**
+   * Optional. Fired after a runtime change to this group's registration.
+   * Channels that surface group config on their platform (e.g. Telegram slash
+   * commands) should re-sync here. No-op for channels with no platform-visible
+   * surface.
+   */
+  onGroupUpdated?(jid: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

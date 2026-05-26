@@ -218,6 +218,32 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 }
 
 /**
+ * Runtime entry point for mutating a registered group's persistence and
+ * propagating the change to the owning channel. Use this from runtime code
+ * paths (host commands, dashboard updates, registration callbacks). Setup CLI,
+ * migrations, and tests should keep using the raw `setRegisteredGroup` since
+ * channels are not connected at those points.
+ */
+export async function updateRegisteredGroup(
+  jid: string,
+  group: RegisteredGroup,
+): Promise<void> {
+  registeredGroups[jid] = group;
+  setRegisteredGroup(jid, group);
+
+  const channel = findChannel(channels, jid);
+  if (!channel) return;
+
+  if (channel.onGroupUpdated) {
+    try {
+      await channel.onGroupUpdated(jid);
+    } catch (err) {
+      logger.warn({ jid, channel: channel.name, err }, 'onGroupUpdated hook failed');
+    }
+  }
+}
+
+/**
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
@@ -1079,6 +1105,7 @@ async function main(): Promise<void> {
             queue.closeStdin.bind(queue),
             queue.onAfterExit.bind(queue),
             clearSessionState,
+            updateRegisteredGroup,
           )
         ) {
           return;

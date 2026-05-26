@@ -7,10 +7,7 @@ import {
   NightlyDependencies,
   runNightlyMaintenance,
 } from './nightly-maintenance.js';
-import {
-  ContainerOutput,
-  runContainerAgent,
-} from './container-runner.js';
+import { ContainerOutput, runContainerAgent } from './container-runner.js';
 import {
   getDueTasks,
   getTaskById,

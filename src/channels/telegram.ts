@@ -645,6 +645,10 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  async onGroupUpdated(jid: string): Promise<void> {
+    await this.syncCommandMenu(jid);
+  }
+
   async sendMessage(jid: string, text: string): Promise<void> {
     const resolved = this.getBotForJid(jid);
     if (!resolved) {
