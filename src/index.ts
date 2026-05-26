@@ -1,11 +1,8 @@
-import path from 'path';
-
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
-  GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   NUDGE_INTERVAL,
@@ -31,20 +28,24 @@ import {
 import {
   getAllRegisteredGroups,
   getAllSessions,
-  getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
-  getRouterState,
   initDatabase,
-  setRouterState,
   setSession,
   deleteSession,
   storeChatMetadata,
   storeMessage,
-  storeMessageDirect,
 } from './db.js';
+import {
+  getGlobalCursor,
+  getGroupCursor,
+  getOrRecoverGroupCursor,
+  loadCursors,
+  rollbackGroupCursor,
+  setGlobalCursor,
+  setGroupCursor,
+} from './cursor-state.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
 import {
   getAvailableGroups,
   getRegisteredGroup,
@@ -56,13 +57,12 @@ import {
 } from './group-registry.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
-import { scanContextFiles } from './lib/context-scanner.js';
 import { validateContainerConfig } from './lib/config-validator.js';
+import { runInjectionScan } from './lib/injection-scan-flow.js';
 import {
   findChannel,
   formatMessages,
   formatOutbound,
-  routeOutbound,
 } from './router.js';
 import {
   restoreRemoteControl,
@@ -77,8 +77,14 @@ import {
 } from './sender-allowlist.js';
 import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { logger, log } from './logger.js';
+import { logger } from './logger.js';
 import { handleHostCommand } from './host-commands.js';
+import {
+  delegateMessage,
+  findDelegationTarget,
+  getUnknownMentionNotice,
+  isHubMessage,
+} from './multi-agent-router.js';
 import { runPresetMigration } from './migrations/001-preset-migration.js';
 import {
   getAvailablePresetNames,
@@ -86,34 +92,22 @@ import {
   PRESETS_PATH,
   resolvePreset,
 } from './presets.js';
-import {
-  encodeImageForVision,
-  EncodedImage,
-  isSupportedImage,
-} from './image.js';
+import { EncodedImage } from './image.js';
+import { extractImagesFromMessages } from './lib/image-extraction.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 export { updateRegisteredGroup, getAvailableGroups } from './group-registry.js';
 export { setRegisteredGroups as _setRegisteredGroups } from './group-registry.js';
 
-let lastTimestamp = '';
 let sessions: Record<string, string> = {};
-let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
-  lastTimestamp = getRouterState('last_timestamp') || '';
-  const agentTs = getRouterState('last_agent_timestamp');
-  try {
-    lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
-  } catch {
-    logger.warn('Corrupted last_agent_timestamp in DB, resetting');
-    lastAgentTimestamp = {};
-  }
+  loadCursors();
   sessions = getAllSessions();
   setRegisteredGroups(getAllRegisteredGroups());
   const channelCounts = Object.values(getRegisteredGroups()).reduce(
@@ -128,32 +122,6 @@ function loadState(): void {
     { groupCount: Object.keys(getRegisteredGroups()).length, channelCounts },
     'State loaded',
   );
-}
-
-/**
- * Return the message cursor for a group, recovering from the last bot reply
- * if lastAgentTimestamp is missing (new group, corrupted state, restart).
- */
-function getOrRecoverCursor(chatJid: string): string {
-  const existing = lastAgentTimestamp[chatJid];
-  if (existing) return existing;
-
-  const botTs = getLastBotMessageTimestamp(chatJid, ASSISTANT_NAME);
-  if (botTs) {
-    logger.info(
-      { chatJid, recoveredFrom: botTs },
-      'Recovered message cursor from last bot reply',
-    );
-    lastAgentTimestamp[chatJid] = botTs;
-    saveState();
-    return botTs;
-  }
-  return '';
-}
-
-function saveState(): void {
-  setRouterState('last_timestamp', lastTimestamp);
-  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
 /**
@@ -174,7 +142,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const missedMessages = getMessagesSince(
     chatJid,
-    getOrRecoverCursor(chatJid),
+    getOrRecoverGroupCursor(chatJid),
     ASSISTANT_NAME,
     MAX_MESSAGES_PER_PROMPT,
   );
@@ -187,22 +155,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // if processGroupMessages is called via enqueueMessageCheck or recovery.
   let filteredMessages = missedMessages;
   if (group.multiAgentRouter && isMainGroup) {
-    filteredMessages = missedMessages.filter((msg) => {
-      if (msg.is_from_me) return true;
-      for (const [targetJid, targetGroup] of Object.entries(
-        getRegisteredGroups(),
-      )) {
-        if (targetJid === chatJid) continue;
-        if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim()))
-          return false;
-      }
-      return true;
-    });
+    filteredMessages = missedMessages.filter((msg) => isHubMessage(msg, chatJid));
     if (filteredMessages.length === 0) {
       // All messages were for sub-agents — advance cursor and skip
-      lastAgentTimestamp[chatJid] =
-        missedMessages[missedMessages.length - 1].timestamp;
-      saveState();
+      setGroupCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
       return true;
     }
   }
@@ -223,10 +179,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
+  const previousCursor = getGroupCursor(chatJid) || '';
+  setGroupCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
 
   logger.info(
     { group: group.name, messageCount: filteredMessages.length },
@@ -255,44 +209,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.sendMessage(chatJid, errorMsg);
 
     // Roll back cursor so messages remain pending for retry after user fixes preset
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
+    rollbackGroupCursor(chatJid, previousCursor);
     return true; // consumed from queue perspective — don't retry-spam
   }
 
   // Extract images from messages if vision is supported
-  const MAX_IMAGES_PAYLOAD = 10 * 1024 * 1024; // 10MB conservative limit
   let images: EncodedImage[] = [];
 
   if (resolved.capabilities.vision) {
-    let totalSize = 0;
-    for (const msg of filteredMessages) {
-      const photoMatch = msg.content.match(
-        /^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i,
+    const result = await extractImagesFromMessages(filteredMessages);
+    images = result.images;
+    if (result.truncated) {
+      logger.warn(
+        { group: group.name, imageCount: images.length },
+        'Image payload size limit reached, truncating',
       );
-      if (photoMatch) {
-        const filePath = photoMatch[1].trim();
-        const caption = photoMatch[2]?.trim();
-        if (isSupportedImage(filePath)) {
-          const encoded = await encodeImageForVision(filePath, caption);
-          if (encoded) {
-            const entrySize = encoded.base64.length;
-            if (totalSize + entrySize > MAX_IMAGES_PAYLOAD) {
-              logger.warn(
-                { group: group.name, imageCount: images.length },
-                'Image payload size limit reached, truncating',
-              );
-              break;
-            }
-            totalSize += entrySize;
-            images.push(encoded);
-          }
-        }
-      }
     }
     if (images.length > 0) {
       logger.info(
-        { group: group.name, imageCount: images.length, totalSize },
+        { group: group.name, imageCount: images.length, totalSize: result.totalSize },
         'Encoded images for vision',
       );
     }
@@ -363,8 +298,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
+    rollbackGroupCursor(chatJid, previousCursor);
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
@@ -430,82 +364,13 @@ async function runAgent(
   try {
     // --- Prompt injection scanning (BE_04) ---
     const scanMode = containerConfig.injectionScanMode ?? 'warn';
-    if (scanMode !== 'off') {
-      const groupFolderPath = resolveGroupFolderPath(group.folder);
-      const globalFolderPath = isMain
-        ? undefined
-        : path.join(GROUPS_DIR, 'global');
-
-      const scanResult = scanContextFiles(groupFolderPath, globalFolderPath);
-
-      if (!scanResult.clean) {
-        // Log all findings
-        for (const f of scanResult.findings) {
-          logger.warn(
-            {
-              group: group.name,
-              file: f.file,
-              severity: f.severity,
-              pattern: f.pattern,
-              line: f.line,
-            },
-            `[INJECTION SCAN] ${f.severity}: ${f.file} — ${f.description} (line ${f.line})`,
-          );
-        }
-
-        // Send alert to NANOCLAW_ALERT_JID if configured
-        const alertJid = process.env.NANOCLAW_ALERT_JID;
-        if (alertJid) {
-          const alertChannel = findChannel(channels, alertJid);
-          if (alertChannel?.isConnected()) {
-            for (const f of scanResult.findings) {
-              const alertMsg = `🛡️ [INJECTION SCAN] ${f.severity} in ${group.name}/${f.file}: ${f.description} (line ${f.line})`;
-              try {
-                await routeOutbound(channels, alertJid, alertMsg);
-              } catch (alertErr) {
-                logger.warn(
-                  { err: alertErr, jid: alertJid },
-                  'Failed to send injection scan alert',
-                );
-              }
-            }
-          } else {
-            logger.warn(
-              { jid: alertJid },
-              'NANOCLAW_ALERT_JID configured but no channel owns this JID — alert not sent',
-            );
-          }
-        }
-
-        // Block mode: abort on critical findings
-        if (scanMode === 'block' && scanResult.hasCritical) {
-          const criticals = scanResult.findings.filter(
-            (f) => f.severity === 'critical',
-          );
-          const summary = criticals
-            .map((f) => `${f.file}: ${f.description} (line ${f.line})`)
-            .join('; ');
-
-          log.error(
-            { group: group.name, findings: criticals.length },
-            `Injection scan blocked container launch: ${summary}`,
-          );
-
-          // Notify the group's chat channel
-          const groupChannel = findChannel(channels, chatJid);
-          if (groupChannel?.isConnected()) {
-            const blockMsg = `⚠️ Blocked: context files contain potential prompt injection. ${criticals.map((f) => `${f.file} — ${f.description}`).join('; ')}. Review the files manually.`;
-            try {
-              await groupChannel.sendMessage(chatJid, blockMsg);
-            } catch {
-              // Best-effort notification
-            }
-          }
-
-          return 'error';
-        }
-      }
-    }
+    const { proceed } = await runInjectionScan({
+      group,
+      chatJid,
+      scanMode,
+      isMain,
+    });
+    if (!proceed) return 'error';
 
     // Debug: log allowedTools being passed to container
     if (containerConfig.allowedTools) {
@@ -601,7 +466,7 @@ async function startMessageLoop(): Promise<void> {
       const jids = Object.keys(getRegisteredGroups());
       const { messages, newTimestamp } = getNewMessages(
         jids,
-        lastTimestamp,
+        getGlobalCursor(),
         ASSISTANT_NAME,
       );
 
@@ -609,8 +474,7 @@ async function startMessageLoop(): Promise<void> {
         logger.info({ count: messages.length }, 'New messages');
 
         // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
+        setGlobalCursor(newTimestamp);
 
         // Deduplicate by group
         const messagesByGroup = new Map<string, NewMessage[]>();
@@ -646,86 +510,31 @@ async function startMessageLoop(): Promise<void> {
               if (!isTriggerAllowed(chatJid, msg.sender, allowlistCfg))
                 continue;
 
-              // Check if message matches any other group's trigger
-              let delegated = false;
-              for (const [targetJid, targetGroup] of Object.entries(
-                getRegisteredGroups(),
-              )) {
-                if (targetJid === chatJid) continue; // skip self
-                const targetTrigger = getTriggerPattern(targetGroup.trigger);
-                if (targetTrigger.test(msg.content.trim())) {
-                  // Strip the trigger prefix from the prompt
-                  const strippedPrompt = msg.content
-                    .trim()
-                    .replace(targetTrigger, '')
-                    .trim();
-                  const now = new Date();
-
-                  // Flow 1: direct dispatch — no delegation record, no UUID.
-                  // Sub-agent responds directly to the user via send_message(target_jid).
-                  storeMessageDirect({
-                    id: `routed-${now.getTime()}-${targetJid}`,
-                    chat_jid: targetJid,
-                    sender: msg.sender,
-                    sender_name: msg.sender_name,
-                    content: `${strippedPrompt || msg.content.trim()}\n\n[Routed from ${group.name}. Reply using send_message with target_jid: "${chatJid}"]`,
-                    timestamp: now.toISOString(),
-                    is_from_me: false,
-                    is_bot_message: false,
-                  });
-                  queue.enqueueMessageCheck(targetJid);
-                  logger.info(
-                    {
-                      callerJid: chatJid,
-                      targetJid,
-                      trigger: targetGroup.trigger,
-                    },
-                    'Multi-agent router: routed message to sub-agent',
-                  );
-                  delegated = true;
-                  break;
+              const target = findDelegationTarget(msg, chatJid);
+              if (target) {
+                delegateMessage({
+                  hubGroup: group,
+                  hubJid: chatJid,
+                  msg,
+                  target,
+                  enqueueMessageCheck: (jid) => queue.enqueueMessageCheck(jid),
+                });
+              } else {
+                const notice = getUnknownMentionNotice(msg, chatJid);
+                if (notice) {
+                  await channel.sendMessage(chatJid, notice).catch(() => {});
                 }
-              }
-
-              // If message had an @mention but matched no registered group, notify user
-              if (!delegated && /^@\S+/.test(msg.content.trim())) {
-                const mentionedTrigger =
-                  msg.content.trim().match(/^(@\S+)/)?.[1] ?? '';
-                await channel
-                  .sendMessage(
-                    chatJid,
-                    `${mentionedTrigger} is not a registered agent.`,
-                  )
-                  .catch(() => {});
               }
             }
 
             // After routing, filter out any delegated messages so the hub
             // agent only sees messages that weren't claimed by a sub-agent
-            const isDelegatedMessage = (msg: NewMessage): boolean => {
-              if (msg.is_from_me) return false;
-              for (const [targetJid, targetGroup] of Object.entries(
-                getRegisteredGroups(),
-              )) {
-                if (targetJid === chatJid) continue;
-                if (
-                  getTriggerPattern(targetGroup.trigger).test(
-                    msg.content.trim(),
-                  )
-                )
-                  return true;
-              }
-              return false;
-            };
-            const unclaimedMessages = groupMessages.filter(
-              (msg) => !isDelegatedMessage(msg),
-            );
+            const unclaimedMessages = groupMessages.filter((msg) => isHubMessage(msg, chatJid));
             if (unclaimedMessages.length === 0) {
               // All messages were delegated — advance the hub's cursor past them
               // so processGroupMessages won't re-fetch and re-process them.
               const lastMsg = groupMessages[groupMessages.length - 1];
-              lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-              saveState();
+              setGroupCursor(chatJid, lastMsg.timestamp);
               continue;
             }
           }
@@ -745,11 +554,11 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger) continue;
           }
 
-          // Pull all messages since lastAgentTimestamp so non-trigger
+          // Pull all messages since group cursor so non-trigger
           // context that accumulated between triggers is included.
           const allPending = getMessagesSince(
             chatJid,
-            getOrRecoverCursor(chatJid),
+            getOrRecoverGroupCursor(chatJid),
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
@@ -760,11 +569,10 @@ async function startMessageLoop(): Promise<void> {
           if (allPending.length === 0) {
             // Advance global cursor past these messages to prevent re-seeing them
             for (const msg of groupMessages) {
-              if (msg.timestamp > lastTimestamp) {
-                lastTimestamp = msg.timestamp;
+              if (msg.timestamp > getGlobalCursor()) {
+                setGlobalCursor(msg.timestamp);
               }
             }
-            saveState();
             continue;
           }
 
@@ -773,21 +581,7 @@ async function startMessageLoop(): Promise<void> {
           // If multiAgentRouter is active, filter out delegated messages from
           // the DB re-fetch so the hub agent doesn't see them.
           if (group.multiAgentRouter && isMainGroup) {
-            messagesToSend = messagesToSend.filter((msg) => {
-              if (msg.is_from_me) return true;
-              for (const [targetJid, targetGroup] of Object.entries(
-                getRegisteredGroups(),
-              )) {
-                if (targetJid === chatJid) continue;
-                if (
-                  getTriggerPattern(targetGroup.trigger).test(
-                    msg.content.trim(),
-                  )
-                )
-                  return false;
-              }
-              return true;
-            });
+            messagesToSend = messagesToSend.filter((msg) => isHubMessage(msg, chatJid));
             if (messagesToSend.length === 0) continue;
           }
 
@@ -797,31 +591,11 @@ async function startMessageLoop(): Promise<void> {
           let pipedImages: EncodedImage[] | undefined;
           const resolved = resolvePreset(group.containerConfig?.preset);
           if (resolved?.capabilities.vision) {
-            const MAX_PIPED_IMAGES_PAYLOAD = 10 * 1024 * 1024;
-            let totalSize = 0;
-            const extracted: EncodedImage[] = [];
-            for (const msg of messagesToSend) {
-              const photoMatch = msg.content.match(
-                /^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i,
-              );
-              if (photoMatch) {
-                const filePath = photoMatch[1].trim();
-                const caption = photoMatch[2]?.trim();
-                if (isSupportedImage(filePath)) {
-                  const encoded = await encodeImageForVision(filePath, caption);
-                  if (encoded) {
-                    const entrySize = encoded.base64.length;
-                    if (totalSize + entrySize > MAX_PIPED_IMAGES_PAYLOAD) break;
-                    totalSize += entrySize;
-                    extracted.push(encoded);
-                  }
-                }
-              }
-            }
-            if (extracted.length > 0) {
-              pipedImages = extracted;
+            const result = await extractImagesFromMessages(messagesToSend);
+            if (result.images.length > 0) {
+              pipedImages = result.images;
               logger.debug(
-                { chatJid, imageCount: extracted.length },
+                { chatJid, imageCount: result.images.length },
                 'Encoded images for piped IPC message',
               );
             }
@@ -832,9 +606,7 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
+            setGroupCursor(chatJid, messagesToSend[messagesToSend.length - 1].timestamp);
             // Show typing indicator while the container processes the piped message
             channel
               .setTyping?.(chatJid, true)
@@ -856,13 +628,13 @@ async function startMessageLoop(): Promise<void> {
 
 /**
  * Startup recovery: check for unprocessed messages in registered groups.
- * Handles crash between advancing lastTimestamp and processing messages.
+ * Handles crash between advancing global cursor and processing messages.
  */
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(getRegisteredGroups())) {
     const pending = getMessagesSince(
       chatJid,
-      getOrRecoverCursor(chatJid),
+      getOrRecoverGroupCursor(chatJid),
       ASSISTANT_NAME,
       MAX_MESSAGES_PER_PROMPT,
     );
