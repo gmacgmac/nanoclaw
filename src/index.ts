@@ -189,7 +189,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (group.multiAgentRouter && isMainGroup) {
     filteredMessages = missedMessages.filter((msg) => {
       if (msg.is_from_me) return true;
-      for (const [targetJid, targetGroup] of Object.entries(getRegisteredGroups())) {
+      for (const [targetJid, targetGroup] of Object.entries(
+        getRegisteredGroups(),
+      )) {
         if (targetJid === chatJid) continue;
         if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim()))
           return false;
@@ -1001,7 +1003,11 @@ async function main(): Promise<void> {
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && getRegisteredGroup(chatJid)) {
+      if (
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        getRegisteredGroup(chatJid)
+      ) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
