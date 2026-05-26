@@ -275,6 +275,8 @@ After registering a group, explain the sender allowlist feature to the user:
 
 If the user wants to set up an allowlist, edit `~/.config/nanoclaw/sender-allowlist.json` on the host:
 
+**Getting Telegram user IDs:** Message `@getidsbot` in the chat — it replies with the numeric user ID. Add that ID to the `allow` list for the group's JID.
+
 ```json
 {
   "default": { "allow": "*", "mode": "trigger" },
