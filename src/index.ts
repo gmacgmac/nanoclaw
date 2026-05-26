@@ -238,7 +238,10 @@ export async function updateRegisteredGroup(
     try {
       await channel.onGroupUpdated(jid);
     } catch (err) {
-      logger.warn({ jid, channel: channel.name, err }, 'onGroupUpdated hook failed');
+      logger.warn(
+        { jid, channel: channel.name, err },
+        'onGroupUpdated hook failed',
+      );
     }
   }
 }

@@ -59,7 +59,10 @@ async function updateRegisteredGroup(
     try {
       await channel.onGroupUpdated(jid);
     } catch (err) {
-      (logger.warn as any)({ jid, channel: channel.name, err }, 'onGroupUpdated hook failed');
+      (logger.warn as any)(
+        { jid, channel: channel.name, err },
+        'onGroupUpdated hook failed',
+      );
     }
   }
 }
@@ -134,7 +137,9 @@ describe('updateRegisteredGroup', () => {
 
     // Should not throw
     await expect(
-      updateRegisteredGroup('tg:100200300', mockGroup, groups, [failingChannel]),
+      updateRegisteredGroup('tg:100200300', mockGroup, groups, [
+        failingChannel,
+      ]),
     ).resolves.toBeUndefined();
 
     // DB write still happened

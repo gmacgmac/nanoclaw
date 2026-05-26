@@ -103,7 +103,13 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'model') {
-    return handleModelCommand(parts.slice(1), ctx, closeStdin, onAfterExit, updateGroup);
+    return handleModelCommand(
+      parts.slice(1),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      updateGroup,
+    );
   }
 
   if (commandName === 'newsession') {
@@ -116,7 +122,13 @@ export async function handleHostCommand(
   }
 
   if (commandName === 'version') {
-    return handleVersionCommand(parts.slice(1), ctx, closeStdin, onAfterExit, updateGroup);
+    return handleVersionCommand(
+      parts.slice(1),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      updateGroup,
+    );
   }
 
   // Unknown host command that is in the allowlist — shouldn't happen in practice,
