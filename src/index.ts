@@ -59,11 +59,7 @@ import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { validateContainerConfig } from './lib/config-validator.js';
 import { runInjectionScan } from './lib/injection-scan-flow.js';
-import {
-  findChannel,
-  formatMessages,
-  formatOutbound,
-} from './router.js';
+import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -155,10 +151,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // if processGroupMessages is called via enqueueMessageCheck or recovery.
   let filteredMessages = missedMessages;
   if (group.multiAgentRouter && isMainGroup) {
-    filteredMessages = missedMessages.filter((msg) => isHubMessage(msg, chatJid));
+    filteredMessages = missedMessages.filter((msg) =>
+      isHubMessage(msg, chatJid),
+    );
     if (filteredMessages.length === 0) {
       // All messages were for sub-agents — advance cursor and skip
-      setGroupCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
+      setGroupCursor(
+        chatJid,
+        missedMessages[missedMessages.length - 1].timestamp,
+      );
       return true;
     }
   }
@@ -227,7 +228,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
     if (images.length > 0) {
       logger.info(
-        { group: group.name, imageCount: images.length, totalSize: result.totalSize },
+        {
+          group: group.name,
+          imageCount: images.length,
+          totalSize: result.totalSize,
+        },
         'Encoded images for vision',
       );
     }
@@ -529,7 +534,9 @@ async function startMessageLoop(): Promise<void> {
 
             // After routing, filter out any delegated messages so the hub
             // agent only sees messages that weren't claimed by a sub-agent
-            const unclaimedMessages = groupMessages.filter((msg) => isHubMessage(msg, chatJid));
+            const unclaimedMessages = groupMessages.filter((msg) =>
+              isHubMessage(msg, chatJid),
+            );
             if (unclaimedMessages.length === 0) {
               // All messages were delegated — advance the hub's cursor past them
               // so processGroupMessages won't re-fetch and re-process them.
@@ -581,7 +588,9 @@ async function startMessageLoop(): Promise<void> {
           // If multiAgentRouter is active, filter out delegated messages from
           // the DB re-fetch so the hub agent doesn't see them.
           if (group.multiAgentRouter && isMainGroup) {
-            messagesToSend = messagesToSend.filter((msg) => isHubMessage(msg, chatJid));
+            messagesToSend = messagesToSend.filter((msg) =>
+              isHubMessage(msg, chatJid),
+            );
             if (messagesToSend.length === 0) continue;
           }
 
@@ -606,7 +615,10 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            setGroupCursor(chatJid, messagesToSend[messagesToSend.length - 1].timestamp);
+            setGroupCursor(
+              chatJid,
+              messagesToSend[messagesToSend.length - 1].timestamp,
+            );
             // Show typing indicator while the container processes the piped message
             channel
               .setTyping?.(chatJid, true)

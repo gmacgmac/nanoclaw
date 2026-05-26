@@ -1,5 +1,9 @@
 import { ASSISTANT_NAME } from './config.js';
-import { getLastBotMessageTimestamp, getRouterState, setRouterState } from './db.js';
+import {
+  getLastBotMessageTimestamp,
+  getRouterState,
+  setRouterState,
+} from './db.js';
 import { logger } from './logger.js';
 
 // --- Private module state ---

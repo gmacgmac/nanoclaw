@@ -47,9 +47,7 @@ export async function runInjectionScan(
   }
 
   const groupFolderPath = resolveGroupFolderPath(group.folder);
-  const globalFolderPath = isMain
-    ? undefined
-    : path.join(GROUPS_DIR, 'global');
+  const globalFolderPath = isMain ? undefined : path.join(GROUPS_DIR, 'global');
 
   const scanResult = scanContextFiles(groupFolderPath, globalFolderPath);
 

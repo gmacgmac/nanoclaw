@@ -240,7 +240,10 @@ describe('runInjectionScan', () => {
       skippedFiles: [],
     });
 
-    const mockChannel = { isConnected: () => true, sendMessage: vi.fn().mockResolvedValue(undefined) };
+    const mockChannel = {
+      isConnected: () => true,
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+    };
     mockGetChannelList.mockReturnValue([mockChannel]);
     mockFindChannel.mockReturnValue(mockChannel);
 
