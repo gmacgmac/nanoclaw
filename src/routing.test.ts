@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { _initTestDatabase, storeChatMetadata } from './db.js';
-import { getAvailableGroups, _setRegisteredGroups } from './index.js';
+import { getAvailableGroups, setRegisteredGroups } from './group-registry.js';
 
 beforeEach(() => {
   _initTestDatabase();
-  _setRegisteredGroups({});
+  setRegisteredGroups({});
 });
 
 // --- JID ownership patterns ---
@@ -88,7 +88,7 @@ describe('getAvailableGroups', () => {
       true,
     );
 
-    _setRegisteredGroups({
+    setRegisteredGroups({
       'reg@g.us': {
         name: 'Registered',
         folder: 'registered',

@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 
 import {
@@ -30,7 +29,6 @@ import {
   PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
-  getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
   getLastBotMessageTimestamp,
@@ -38,7 +36,6 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
-  setRegisteredGroup,
   setRouterState,
   setSession,
   deleteSession,
@@ -48,6 +45,15 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import {
+  getAvailableGroups,
+  getRegisteredGroup,
+  getRegisteredGroups,
+  registerGroup,
+  setChannelList,
+  setRegisteredGroups,
+  updateRegisteredGroup,
+} from './group-registry.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { scanContextFiles } from './lib/context-scanner.js';
@@ -88,10 +94,11 @@ import {
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+export { updateRegisteredGroup, getAvailableGroups } from './group-registry.js';
+export { setRegisteredGroups as _setRegisteredGroups } from './group-registry.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
-let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
@@ -108,8 +115,8 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
-  registeredGroups = getAllRegisteredGroups();
-  const channelCounts = Object.values(registeredGroups).reduce(
+  setRegisteredGroups(getAllRegisteredGroups());
+  const channelCounts = Object.values(getRegisteredGroups()).reduce(
     (acc, g) => {
       const ch = g.containerChannel ?? 'stable';
       acc[ch] = (acc[ch] || 0) + 1;
@@ -118,7 +125,7 @@ function loadState(): void {
     {} as Record<string, number>,
   );
   logger.info(
-    { groupCount: Object.keys(registeredGroups).length, channelCounts },
+    { groupCount: Object.keys(getRegisteredGroups()).length, channelCounts },
     'State loaded',
   );
 }
@@ -149,134 +156,12 @@ function saveState(): void {
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
-function registerGroup(jid: string, group: RegisteredGroup): void {
-  let groupDir: string;
-  try {
-    groupDir = resolveGroupFolderPath(group.folder);
-  } catch (err) {
-    logger.warn(
-      { jid, folder: group.folder, err },
-      'Rejecting group registration with invalid folder',
-    );
-    return;
-  }
-
-  registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
-
-  // Create chats table row for internal groups (required for message processing)
-  if (jid.endsWith('@internal')) {
-    storeChatMetadata(
-      jid,
-      new Date().toISOString(),
-      group.name,
-      'dashboard',
-      false,
-    );
-  }
-
-  // Create group folder
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
-  fs.mkdirSync(path.join(groupDir, 'media'), { recursive: true });
-  fs.mkdirSync(path.join(groupDir, 'memory'), { recursive: true });
-  fs.mkdirSync(path.join(groupDir, 'extracted-skills'), { recursive: true });
-
-  // Copy CLAUDE.md template into the new group folder so agents have
-  // identity and instructions from the first run.  (Fixes #1391)
-  const groupMdFile = path.join(groupDir, 'CLAUDE.md');
-  if (!fs.existsSync(groupMdFile)) {
-    const templateFile = path.join(
-      GROUPS_DIR,
-      group.isMain ? 'main' : 'global',
-      'CLAUDE.md',
-    );
-    if (fs.existsSync(templateFile)) {
-      let content = fs.readFileSync(templateFile, 'utf-8');
-      if (ASSISTANT_NAME !== 'Andy') {
-        content = content.replace(/^# Andy$/m, `# ${ASSISTANT_NAME}`);
-        content = content.replace(/You are Andy/g, `You are ${ASSISTANT_NAME}`);
-      }
-      fs.writeFileSync(groupMdFile, content);
-      logger.info({ folder: group.folder }, 'Created CLAUDE.md from template');
-    }
-  }
-
-  // Seed memory file so @memory/MEMORY.md import works from first run
-  const memoryFile = path.join(groupDir, 'memory', 'MEMORY.md');
-  if (!fs.existsSync(memoryFile)) {
-    fs.writeFileSync(
-      memoryFile,
-      '# Memory\n\nDurable facts and preferences. Updated by the agent during conversations.\n\n<!-- Agent: append facts below this line. Keep concise — one line per fact. -->\n',
-    );
-    logger.info({ folder: group.folder }, 'Created memory/MEMORY.md seed');
-  }
-
-  logger.info(
-    { jid, name: group.name, folder: group.folder },
-    'Group registered',
-  );
-}
-
-/**
- * Runtime entry point for mutating a registered group's persistence and
- * propagating the change to the owning channel. Use this from runtime code
- * paths (host commands, dashboard updates, registration callbacks). Setup CLI,
- * migrations, and tests should keep using the raw `setRegisteredGroup` since
- * channels are not connected at those points.
- */
-export async function updateRegisteredGroup(
-  jid: string,
-  group: RegisteredGroup,
-): Promise<void> {
-  registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
-
-  const channel = findChannel(channels, jid);
-  if (!channel) return;
-
-  if (channel.onGroupUpdated) {
-    try {
-      await channel.onGroupUpdated(jid);
-    } catch (err) {
-      logger.warn(
-        { jid, channel: channel.name, err },
-        'onGroupUpdated hook failed',
-      );
-    }
-  }
-}
-
-/**
- * Get available groups list for the agent.
- * Returns groups ordered by most recent activity.
- */
-export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
-  const chats = getAllChats();
-  const registeredJids = new Set(Object.keys(registeredGroups));
-
-  return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.is_group)
-    .map((c) => ({
-      jid: c.jid,
-      name: c.name,
-      lastActivity: c.last_message_time,
-      isRegistered: registeredJids.has(c.jid),
-    }));
-}
-
-/** @internal - exported for testing */
-export function _setRegisteredGroups(
-  groups: Record<string, RegisteredGroup>,
-): void {
-  registeredGroups = groups;
-}
-
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  const group = getRegisteredGroup(chatJid);
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
@@ -304,7 +189,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (group.multiAgentRouter && isMainGroup) {
     filteredMessages = missedMessages.filter((msg) => {
       if (msg.is_from_me) return true;
-      for (const [targetJid, targetGroup] of Object.entries(registeredGroups)) {
+      for (const [targetJid, targetGroup] of Object.entries(getRegisteredGroups())) {
         if (targetJid === chatJid) continue;
         if (getTriggerPattern(targetGroup.trigger).test(msg.content.trim()))
           return false;
@@ -512,7 +397,7 @@ async function runAgent(
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
-  const registeredGroupsList = Object.entries(registeredGroups).map(
+  const registeredGroupsList = Object.entries(getRegisteredGroups()).map(
     ([jid, g]) => ({
       jid,
       name: g.name,
@@ -711,7 +596,7 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
+      const jids = Object.keys(getRegisteredGroups());
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -737,7 +622,7 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          const group = getRegisteredGroup(chatJid);
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);
@@ -762,7 +647,7 @@ async function startMessageLoop(): Promise<void> {
               // Check if message matches any other group's trigger
               let delegated = false;
               for (const [targetJid, targetGroup] of Object.entries(
-                registeredGroups,
+                getRegisteredGroups(),
               )) {
                 if (targetJid === chatJid) continue; // skip self
                 const targetTrigger = getTriggerPattern(targetGroup.trigger);
@@ -818,7 +703,7 @@ async function startMessageLoop(): Promise<void> {
             const isDelegatedMessage = (msg: NewMessage): boolean => {
               if (msg.is_from_me) return false;
               for (const [targetJid, targetGroup] of Object.entries(
-                registeredGroups,
+                getRegisteredGroups(),
               )) {
                 if (targetJid === chatJid) continue;
                 if (
@@ -889,7 +774,7 @@ async function startMessageLoop(): Promise<void> {
             messagesToSend = messagesToSend.filter((msg) => {
               if (msg.is_from_me) return true;
               for (const [targetJid, targetGroup] of Object.entries(
-                registeredGroups,
+                getRegisteredGroups(),
               )) {
                 if (targetJid === chatJid) continue;
                 if (
@@ -972,7 +857,7 @@ async function startMessageLoop(): Promise<void> {
  * Handles crash between advancing lastTimestamp and processing messages.
  */
 function recoverPendingMessages(): void {
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
+  for (const [chatJid, group] of Object.entries(getRegisteredGroups())) {
     const pending = getMessagesSince(
       chatJid,
       getOrRecoverCursor(chatJid),
@@ -1025,7 +910,7 @@ async function main(): Promise<void> {
     chatJid: string,
     msg: NewMessage,
   ): Promise<void> {
-    const group = registeredGroups[chatJid];
+    const group = getRegisteredGroup(chatJid);
     if (!group?.isMain) {
       logger.warn(
         { chatJid, sender: msg.sender },
@@ -1086,7 +971,7 @@ async function main(): Promise<void> {
 
       // Host commands — intercept before storage (ungated commands like /shutdown
       // must be reachable even without allowedHostCommands configured)
-      const group = registeredGroups[chatJid];
+      const group = getRegisteredGroup(chatJid);
       if (group && msg.content.trim().startsWith('/')) {
         const sendReply = async (text: string) => {
           const ch = findChannel(channels, chatJid);
@@ -1116,7 +1001,7 @@ async function main(): Promise<void> {
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      if (!msg.is_from_me && !msg.is_bot_message && getRegisteredGroup(chatJid)) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
@@ -1140,7 +1025,7 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
-    registeredGroups: () => registeredGroups,
+    registeredGroups: getRegisteredGroups,
   };
 
   // Create and connect all registered channels.
@@ -1164,9 +1049,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  setChannelList(channels);
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
+    registeredGroups: getRegisteredGroups,
     getSessions: () => sessions,
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
@@ -1274,7 +1161,7 @@ async function main(): Promise<void> {
         throw new Error(`Channel ${channel.name} does not support attachments`);
       await channel.sendAttachment(jid, filePath, caption);
     },
-    registeredGroups: () => registeredGroups,
+    registeredGroups: getRegisteredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {
       await Promise.all(

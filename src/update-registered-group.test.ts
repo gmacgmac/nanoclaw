@@ -31,41 +31,13 @@ vi.mock('./router.js', () => ({
 import { findChannel } from './router.js';
 import { setRegisteredGroup } from './db.js';
 import { logger } from './logger.js';
+import {
+  updateRegisteredGroup,
+  setChannelList,
+  setRegisteredGroups,
+  getRegisteredGroup,
+} from './group-registry.js';
 import type { Channel, RegisteredGroup } from './types.js';
-
-// We need to test updateRegisteredGroup in isolation.
-// Since it's defined in index.ts which has heavy side effects,
-// we'll test the logic by importing the function after mocking deps.
-// However, index.ts has too many side effects for unit testing.
-// Instead, we test the logic inline here by replicating the function shape.
-
-// Replicate the updateRegisteredGroup logic for unit testing
-// (the real function lives in index.ts and is hard to import in isolation)
-async function updateRegisteredGroup(
-  jid: string,
-  group: RegisteredGroup,
-  registeredGroups: Record<string, RegisteredGroup>,
-  channelsList: Channel[],
-): Promise<void> {
-  registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
-
-  const channel = (findChannel as ReturnType<typeof vi.fn>).mockImplementation
-    ? (findChannel as any)(channelsList, jid)
-    : channelsList.find((c) => c.ownsJid(jid));
-  if (!channel) return;
-
-  if (channel.onGroupUpdated) {
-    try {
-      await channel.onGroupUpdated(jid);
-    } catch (err) {
-      (logger.warn as any)(
-        { jid, channel: channel.name, err },
-        'onGroupUpdated hook failed',
-      );
-    }
-  }
-}
 
 describe('updateRegisteredGroup', () => {
   const mockGroup: RegisteredGroup = {
@@ -78,6 +50,8 @@ describe('updateRegisteredGroup', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setRegisteredGroups({});
+    setChannelList([]);
   });
 
   it('dispatches onGroupUpdated only to the channel that owns the JID', async () => {
@@ -103,16 +77,16 @@ describe('updateRegisteredGroup', () => {
     };
 
     const channels = [telegramChannel, whatsappChannel];
-    const groups: Record<string, RegisteredGroup> = {};
+    setChannelList(channels);
 
     (findChannel as ReturnType<typeof vi.fn>).mockImplementation(
       (chs: Channel[], jid: string) => chs.find((c) => c.ownsJid(jid)),
     );
 
-    await updateRegisteredGroup('tg:100200300', mockGroup, groups, channels);
+    await updateRegisteredGroup('tg:100200300', mockGroup);
 
     expect(setRegisteredGroup).toHaveBeenCalledWith('tg:100200300', mockGroup);
-    expect(groups['tg:100200300']).toBe(mockGroup);
+    expect(getRegisteredGroup('tg:100200300')).toBe(mockGroup);
     expect(telegramHook).toHaveBeenCalledWith('tg:100200300');
     expect(whatsappChannel.onGroupUpdated).not.toHaveBeenCalled();
   });
@@ -129,7 +103,7 @@ describe('updateRegisteredGroup', () => {
       onGroupUpdated: vi.fn().mockRejectedValue(hookError),
     };
 
-    const groups: Record<string, RegisteredGroup> = {};
+    setChannelList([failingChannel]);
 
     (findChannel as ReturnType<typeof vi.fn>).mockImplementation(
       (chs: Channel[], jid: string) => chs.find((c) => c.ownsJid(jid)),
@@ -137,14 +111,12 @@ describe('updateRegisteredGroup', () => {
 
     // Should not throw
     await expect(
-      updateRegisteredGroup('tg:100200300', mockGroup, groups, [
-        failingChannel,
-      ]),
+      updateRegisteredGroup('tg:100200300', mockGroup),
     ).resolves.toBeUndefined();
 
     // DB write still happened
     expect(setRegisteredGroup).toHaveBeenCalledWith('tg:100200300', mockGroup);
-    expect(groups['tg:100200300']).toBe(mockGroup);
+    expect(getRegisteredGroup('tg:100200300')).toBe(mockGroup);
 
     // Error was logged
     expect(logger.warn).toHaveBeenCalledWith(
@@ -164,14 +136,14 @@ describe('updateRegisteredGroup', () => {
       onGroupUpdated: vi.fn(),
     };
 
-    const groups: Record<string, RegisteredGroup> = {};
+    setChannelList([channel]);
 
     (findChannel as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
 
-    await updateRegisteredGroup('unknown:123', mockGroup, groups, [channel]);
+    await updateRegisteredGroup('unknown:123', mockGroup);
 
     expect(setRegisteredGroup).toHaveBeenCalledWith('unknown:123', mockGroup);
-    expect(groups['unknown:123']).toBe(mockGroup);
+    expect(getRegisteredGroup('unknown:123')).toBe(mockGroup);
     expect(channel.onGroupUpdated).not.toHaveBeenCalled();
   });
 });
