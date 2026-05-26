@@ -23,7 +23,6 @@ import {
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
-  writeTasksSnapshot,
 } from './container-runner.js';
 import {
   cleanupOrphans,
@@ -34,7 +33,6 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
-  getAllTasks,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
@@ -482,23 +480,6 @@ async function runAgent(
   }
   // Use validated config for the rest of this function
   const containerConfig = validatedConfig;
-
-  // Update tasks snapshot for container to read (filtered by group)
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      script: t.script || undefined,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
@@ -1276,20 +1257,7 @@ async function main(): Promise<void> {
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
     onTasksChanged: () => {
-      const tasks = getAllTasks();
-      const taskRows = tasks.map((t) => ({
-        id: t.id,
-        groupFolder: t.group_folder,
-        prompt: t.prompt,
-        script: t.script || undefined,
-        schedule_type: t.schedule_type,
-        schedule_value: t.schedule_value,
-        status: t.status,
-        next_run: t.next_run,
-      }));
-      for (const group of Object.values(registeredGroups)) {
-        writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
-      }
+      // Snapshot writes removed (BE_03) — will be replaced by request/response IPC in BE_05
     },
     enqueueMessageCheck: (jid: string) => queue.enqueueMessageCheck(jid),
   });

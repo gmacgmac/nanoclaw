@@ -116,8 +116,7 @@ Expected structure:
 ├── global/               # Global CLAUDE.md (non-main only)
 ├── ipc/                  # Inter-process communication
 │   ├── messages/         # Outgoing WhatsApp messages
-│   ├── tasks/            # Scheduled task commands
-│   ├── current_tasks.json    # Read-only: scheduled tasks visible to this group
+│   ├── tasks/            # Scheduled task commands + request/response IPC
 │   └── available_groups.json # Read-only: WhatsApp groups for activation (main only)
 └── extra/                # Additional custom mounts
 ```
@@ -295,15 +294,13 @@ cat data/ipc/messages/*.json
 
 # Check available groups (main channel only)
 cat data/ipc/main/available_groups.json
-
-# Check current tasks snapshot
-cat data/ipc/{groupFolder}/current_tasks.json
 ```
 
 **IPC file types:**
 - `messages/*.json` - Agent writes: outgoing WhatsApp messages
 - `tasks/*.json` - Agent writes: task operations (schedule, pause, resume, cancel, refresh_groups)
-- `current_tasks.json` - Host writes: read-only snapshot of scheduled tasks
+- `tasks/*.req.json` - Agent writes: task read requests (list, get, search)
+- `tasks/*.resp.json` - Host writes: task read responses
 - `available_groups.json` - Host writes: read-only list of WhatsApp groups (main only)
 
 ## Quick Diagnostic Script

@@ -10,10 +10,8 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
-  writeTasksSnapshot,
 } from './container-runner.js';
 import {
-  getAllTasks,
   getDueTasks,
   getTaskById,
   logTaskRun,
@@ -164,26 +162,10 @@ async function runTask(
     return;
   }
 
-  // Update tasks snapshot for container to read (filtered by group)
-  const isMain = group.isMain === true;
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    task.group_folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      script: t.script,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
-
   let result: string | null = null;
   let error: string | null = null;
+
+  const isMain = group.isMain === true;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();

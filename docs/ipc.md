@@ -175,6 +175,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
 {
   "type": "schedule_task",
   "targetJid": "120363xxxxxxxxx@g.us",
+  "description": "Daily build status check",
   "prompt": "Check the build status and report any failures",
   "schedule_type": "cron",
   "schedule_value": "0 9 * * 1-5",
@@ -187,6 +188,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
 |-------|------|----------|-------------|
 | `type` | string | yes | `"schedule_task"` |
 | `targetJid` | string | yes | Target chat JID (determines group folder) |
+| `description` | string | yes | Human-readable summary of the task |
 | `prompt` | string | yes | Prompt for the agent to execute |
 | `schedule_type` | string | yes | One of: `cron`, `interval`, `once` |
 | `schedule_value` | string | yes | See schedule formats below |
@@ -211,7 +213,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
 }
 ```
 
-**Authorization**: Main group can pause any task. Non-main groups can only pause their own tasks.
+**Authorization**: Own-group only. Tasks can only be paused by the group that owns them.
 
 ---
 
@@ -224,7 +226,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
 }
 ```
 
-**Authorization**: Same as pause.
+**Authorization**: Own-group only (same as pause).
 
 ---
 
@@ -239,7 +241,7 @@ Write to: `DATA_DIR/ipc/{group_folder}/tasks/{uuid}.json`
 
 Permanently deletes the task and its run logs.
 
-**Authorization**: Same as pause.
+**Authorization**: Own-group only (same as pause).
 
 ---
 
@@ -250,6 +252,7 @@ Permanently deletes the task and its run logs.
   "type": "update_task",
   "taskId": "task-12345-abc",
   "prompt": "Updated prompt text",
+  "description": "Updated description",
   "schedule_type": "cron",
   "schedule_value": "0 10 * * *"
 }
@@ -260,12 +263,13 @@ Permanently deletes the task and its run logs.
 | `type` | string | yes | `"update_task"` |
 | `taskId` | string | yes | Task to update |
 | `prompt` | string | no | New prompt |
+| `description` | string | no | New description |
 | `schedule_type` | string | no | New schedule type |
 | `schedule_value` | string | no | New schedule value |
 
 Note: Changing schedule values recalculates `next_run` automatically.
 
-**Authorization**: Same as pause.
+**Authorization**: Own-group only (same as pause).
 
 ---
 
@@ -412,27 +416,9 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 
 ---
 
-## Container Snapshot Files
+## Container Static Files
 
-The host writes snapshot files to `/workspace/ipc/` for containers to read:
-
-### `current_tasks.json`
-
-Scheduled tasks visible to the current group. Main group sees all tasks; other groups see only their own.
-
-```json
-[
-  {
-    "id": "task-123",
-    "groupFolder": "telegram_main",
-    "prompt": "...",
-    "schedule_type": "cron",
-    "schedule_value": "0 9 * * *",
-    "status": "active",
-    "next_run": "2026-03-30T09:00:00Z"
-  }
-]
-```
+The host writes static files to `/workspace/ipc/` for containers to read:
 
 ### `available_groups.json`
 

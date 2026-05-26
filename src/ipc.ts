@@ -12,6 +12,7 @@ import {
   fulfillDelegation,
   getDelegationByUuid,
   getTaskById,
+  getTasksForGroup,
   storeMessageDirect,
   updateTask,
 } from './db.js';
@@ -120,6 +121,150 @@ function cleanupExpiredApprovals(): void {
   }
 }
 
+// --- Request/Response IPC helpers ---
+
+/**
+ * Write a response file for a request/response IPC exchange.
+ * The response is written to the same tasks directory the request came from.
+ */
+function writeIpcResponse(
+  groupFolder: string,
+  correlationId: string,
+  data: { ok: true; data: unknown } | { ok: false; error: string },
+): void {
+  const tasksDir = path.join(DATA_DIR, 'ipc', groupFolder, 'tasks');
+  fs.mkdirSync(tasksDir, { recursive: true });
+  const respPath = path.join(tasksDir, `${correlationId}.resp.json`);
+  const tempPath = `${respPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify({ correlationId, ...data }));
+  fs.renameSync(tempPath, respPath);
+}
+
+/**
+ * Check if a filename is a request file (correlation-based request/response pattern).
+ */
+function isRequestFile(filename: string): boolean {
+  return filename.endsWith('.req.json');
+}
+
+/**
+ * Process a request/response IPC file.
+ * Dispatches to type-specific handlers (added in BE_05/BE_06/BE_08).
+ * Returns a structured response written back to the caller's tasks directory.
+ */
+export async function processTaskIpcRequest(
+  data: { type: string; correlationId: string; groupFolder?: string; isMain?: boolean; [key: string]: unknown },
+  sourceGroup: string,
+  isMain: boolean,
+  deps: IpcDeps,
+): Promise<void> {
+  const { type, correlationId } = data;
+
+  if (!correlationId) {
+    logger.warn({ type, sourceGroup }, 'IPC request missing correlationId');
+    return;
+  }
+
+  // Dispatch by request type — handlers added in subsequent tasks
+  switch (type) {
+    case 'list_tasks_request': {
+      const tasks = getTasksForGroup(sourceGroup);
+      writeIpcResponse(sourceGroup, correlationId, { ok: true, data: tasks });
+      break;
+    }
+    case 'get_task_request': {
+      const taskId = data.taskId as string | undefined;
+      if (!taskId) {
+        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Task not found' });
+        break;
+      }
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== sourceGroup) {
+        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Task not found' });
+      } else {
+        writeIpcResponse(sourceGroup, correlationId, { ok: true, data: task });
+      }
+      break;
+    }
+    case 'search_tasks_request': {
+      const query = data.query as string | undefined;
+      const useRegex = data.regex === true;
+
+      if (!query) {
+        writeIpcResponse(sourceGroup, correlationId, { ok: false, error: 'Missing query parameter' });
+        break;
+      }
+
+      const tasks = getTasksForGroup(sourceGroup);
+
+      let matcher: (haystack: string) => { index: number; length: number } | null;
+      if (useRegex) {
+        let re: RegExp;
+        try {
+          re = new RegExp(query, 'i');
+        } catch (e) {
+          writeIpcResponse(sourceGroup, correlationId, {
+            ok: false,
+            error: `Invalid regex: ${e instanceof Error ? e.message : String(e)}`,
+          });
+          break;
+        }
+        matcher = (haystack) => {
+          const m = re.exec(haystack);
+          return m ? { index: m.index, length: m[0].length } : null;
+        };
+      } else {
+        const lowerQuery = query.toLowerCase();
+        matcher = (haystack) => {
+          const idx = haystack.toLowerCase().indexOf(lowerQuery);
+          return idx >= 0 ? { index: idx, length: lowerQuery.length } : null;
+        };
+      }
+
+      const results: Array<{
+        id: string;
+        description: string | null;
+        schedule_type: string;
+        schedule_value: string;
+        contextPreview: string;
+      }> = [];
+      const MAX_RESULTS = 50;
+
+      for (const task of tasks) {
+        if (results.length >= MAX_RESULTS) break;
+
+        const haystack = `${task.description ?? ''}\n${task.prompt}\n${task.script ?? ''}`;
+        const match = matcher(haystack);
+        if (match) {
+          const start = Math.max(0, match.index - 40);
+          const end = Math.min(haystack.length, match.index + match.length + 40);
+          let preview = haystack.slice(start, end).replace(/\n/g, ' ');
+          if (start > 0) preview = `...${preview}`;
+          if (end < haystack.length) preview = `${preview}...`;
+
+          results.push({
+            id: task.id,
+            description: task.description ?? null,
+            schedule_type: task.schedule_type,
+            schedule_value: task.schedule_value,
+            contextPreview: preview,
+          });
+        }
+      }
+
+      writeIpcResponse(sourceGroup, correlationId, { ok: true, data: results });
+      break;
+    }
+    default:
+      writeIpcResponse(sourceGroup, correlationId, {
+        ok: false,
+        error: `Unknown request type: ${type}`,
+      });
+      logger.warn({ type, correlationId, sourceGroup }, 'Unknown IPC request type');
+      break;
+  }
+}
+
 let ipcWatcherRunning = false;
 
 export function startIpcWatcher(deps: IpcDeps): void {
@@ -197,14 +342,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
         if (fs.existsSync(tasksDir)) {
           const taskFiles = fs
             .readdirSync(tasksDir)
-            .filter((f) => f.endsWith('.json'));
+            .filter((f) => f.endsWith('.json') && !f.endsWith('.resp.json'));
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
-              fs.unlinkSync(filePath);
+              if (isRequestFile(file)) {
+                // Request/response pattern — handle and write response (don't delete; container cleans up)
+                await processTaskIpcRequest(data, sourceGroup, isMain, deps);
+                // Delete the request file after processing
+                fs.unlinkSync(filePath);
+              } else {
+                // Fire-and-forget pattern (existing behavior)
+                await processTaskIpc(data, sourceGroup, isMain, deps);
+                fs.unlinkSync(filePath);
+              }
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
@@ -432,6 +584,7 @@ export async function processTaskIpc(
     type: string;
     taskId?: string;
     prompt?: string;
+    description?: string;
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
@@ -541,6 +694,7 @@ export async function processTaskIpc(
           group_folder: targetFolder,
           chat_jid: targetJid,
           prompt: data.prompt,
+          description: data.description || null,
           script: data.script || null,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
@@ -560,7 +714,8 @@ export async function processTaskIpc(
     case 'pause_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
+        if (task && task.group_folder === sourceGroup) {
           updateTask(data.taskId, { status: 'paused' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -579,7 +734,8 @@ export async function processTaskIpc(
     case 'resume_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
+        if (task && task.group_folder === sourceGroup) {
           updateTask(data.taskId, { status: 'active' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -598,7 +754,8 @@ export async function processTaskIpc(
     case 'cancel_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
+        if (task && task.group_folder === sourceGroup) {
           deleteTask(data.taskId);
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -624,7 +781,8 @@ export async function processTaskIpc(
           );
           break;
         }
-        if (!isMain && task.group_folder !== sourceGroup) {
+        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
+        if (task.group_folder !== sourceGroup) {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task update attempt',
@@ -633,6 +791,7 @@ export async function processTaskIpc(
         }
 
         const updates: Parameters<typeof updateTask>[1] = {};
+        if (data.description !== undefined) updates.description = data.description;
         if (data.prompt !== undefined) updates.prompt = data.prompt;
         if (data.script !== undefined) updates.script = data.script || null;
         if (data.schedule_type !== undefined)

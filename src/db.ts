@@ -120,6 +120,13 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add description column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN description TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -440,14 +447,15 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, script)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, description, schedule_type, schedule_value, context_mode, next_run, status, created_at, script)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
     task.prompt,
+    task.description || null,
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
@@ -483,6 +491,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
+      | 'description'
       | 'prompt'
       | 'schedule_type'
       | 'schedule_value'
@@ -495,6 +504,10 @@ export function updateTask(
   const fields: string[] = [];
   const values: unknown[] = [];
 
+  if (updates.description !== undefined) {
+    fields.push('description = ?');
+    values.push(updates.description);
+  }
   if (updates.prompt !== undefined) {
     fields.push('prompt = ?');
     values.push(updates.prompt);

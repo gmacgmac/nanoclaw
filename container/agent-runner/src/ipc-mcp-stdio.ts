@@ -36,6 +36,58 @@ function writeIpcFile(dir: string, data: object): string {
   return filename;
 }
 
+/**
+ * Request/response IPC helper.
+ * Writes a .req.json file and polls for the host's .resp.json reply.
+ * Used by read-oriented MCP tools (list_tasks, get_task, search_tasks).
+ */
+async function requestResponse(type: string, payload: object, timeoutMs = 5000): Promise<unknown> {
+  const correlationId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const reqFilename = `${correlationId}.req.json`;
+  const respFilename = `${correlationId}.resp.json`;
+
+  const reqData = {
+    type,
+    correlationId,
+    groupFolder,
+    isMain,
+    ...payload,
+  };
+
+  // Write request file (atomic)
+  fs.mkdirSync(TASKS_DIR, { recursive: true });
+  const reqPath = path.join(TASKS_DIR, reqFilename);
+  const tempPath = `${reqPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(reqData, null, 2));
+  fs.renameSync(tempPath, reqPath);
+
+  // Poll for response
+  const respPath = path.join(TASKS_DIR, respFilename);
+  const pollInterval = 50;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (fs.existsSync(respPath)) {
+      const raw = fs.readFileSync(respPath, 'utf-8');
+      // Clean up response file
+      try { fs.unlinkSync(respPath); } catch { /* ignore */ }
+      // Clean up request file if still present
+      try { fs.unlinkSync(reqPath); } catch { /* ignore */ }
+
+      const resp = JSON.parse(raw);
+      if (!resp.ok) {
+        throw new Error(resp.error || 'Unknown IPC error');
+      }
+      return resp.data;
+    }
+    await new Promise((r) => setTimeout(r, pollInterval));
+  }
+
+  // Clean up request file on timeout
+  try { fs.unlinkSync(reqPath); } catch { /* ignore */ }
+  throw new Error(`IPC request timed out (correlationId: ${correlationId}, type: ${type})`);
+}
+
 const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
@@ -139,6 +191,7 @@ PROMPT PLACEHOLDERS - The following are substituted at runtime when the task exe
 \u2022 {{TIME}} \u2192 e.g. "20:05:00"
 \u2022 {{DAY_OF_WEEK}} \u2192 e.g. "Tuesday"`,
   {
+    description: z.string().min(1).describe('Short human-readable subject for the task — used in list views to identify it (e.g. "Daily HN summary")'),
     prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
@@ -188,6 +241,7 @@ PROMPT PLACEHOLDERS - The following are substituted at runtime when the task exe
     const data = {
       type: 'schedule_task',
       taskId,
+      description: args.description,
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
@@ -242,37 +296,125 @@ server.tool(
 
 server.tool(
   'list_tasks',
-  "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+  "List scheduled tasks for the current group. Each entry includes a description and a 50-char prompt preview. Use get_task to view full task detail.",
   {},
   async () => {
-    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
-
     try {
-      if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
-      }
+      const tasks = await requestResponse('list_tasks_request', {}) as Array<{
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        status: string;
+        next_run: string | null;
+      }>;
 
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-
-      const tasks = isMain
-        ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
-
-      if (tasks.length === 0) {
+      if (!tasks || tasks.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
       }
 
       const formatted = tasks
-        .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
-        )
+        .map((t) => {
+          const desc = t.description || '(no description)';
+          const promptPreview = t.prompt.length > 50 ? `${t.prompt.slice(0, 50)}...` : t.prompt;
+          return `- [${t.id}] ${desc} (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}\n  prompt: ${promptPreview}`;
+        })
         .join('\n');
 
       return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
     } catch (err) {
       return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [{ type: 'text' as const, text: `Error listing tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'get_task',
+  "Get the full detail of a single scheduled task by ID — including full prompt, schedule, status, last result. Only returns tasks owned by the current group.",
+  { task_id: z.string().describe('The task ID to fetch') },
+  async (args) => {
+    try {
+      const task = await requestResponse('get_task_request', { taskId: args.task_id }) as {
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        status: string;
+        next_run: string | null;
+        last_run: string | null;
+        last_result: string | null;
+        created_at: string;
+        script?: string | null;
+      };
+
+      const lines = [
+        `ID: ${task.id}`,
+        `Description: ${task.description || '(no description)'}`,
+        `Prompt: ${task.prompt}`,
+        `Schedule: ${task.schedule_type} ${task.schedule_value}`,
+        `Context Mode: ${task.context_mode}`,
+        `Status: ${task.status}`,
+        `Next Run: ${task.next_run || 'N/A'}`,
+        `Last Run: ${task.last_run || 'N/A'}`,
+        `Last Result: ${task.last_result || 'N/A'}`,
+        `Created: ${task.created_at}`,
+      ];
+      if (task.script) {
+        lines.push(`Script: ${task.script}`);
+      }
+
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'search_tasks',
+  "Search the current group's scheduled tasks for a keyword or regex. Searches description, prompt, and script. Returns matching task IDs with a short context preview.",
+  {
+    query: z.string().min(1).describe('Substring or regex pattern to search for'),
+    regex: z.boolean().optional().describe('Treat query as a regex (default: false — substring match)'),
+  },
+  async (args) => {
+    try {
+      const results = await requestResponse('search_tasks_request', {
+        query: args.query,
+        regex: args.regex ?? false,
+      }) as Array<{
+        id: string;
+        description: string | null;
+        schedule_type: string;
+        schedule_value: string;
+        contextPreview: string;
+      }>;
+
+      if (!results || results.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No matching tasks found.' }] };
+      }
+
+      const formatted = results
+        .map((r) => {
+          const desc = r.description || '(no description)';
+          return `- [${r.id}] ${desc} (${r.schedule_type}: ${r.schedule_value})\n  match: ${r.contextPreview}`;
+        })
+        .join('\n');
+
+      return { content: [{ type: 'text' as const, text: `Found ${results.length} matching task(s):\n${formatted}` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
       };
     }
   },
@@ -377,9 +519,10 @@ server.tool(
 
 server.tool(
   'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
+  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same. To append to or refine an existing prompt, call get_task first to read the current full prompt, then call update_task with the modified text.',
   {
     task_id: z.string().describe('The task ID to update'),
+    description: z.string().optional().describe('New description for the task'),
     prompt: z.string().optional().describe('New prompt for the task'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
     schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
@@ -415,6 +558,7 @@ server.tool(
       isMain: String(isMain),
       timestamp: new Date().toISOString(),
     };
+    if (args.description !== undefined) data.description = args.description;
     if (args.prompt !== undefined) data.prompt = args.prompt;
     if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;

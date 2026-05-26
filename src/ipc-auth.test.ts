@@ -219,14 +219,24 @@ describe('pause_task authorization', () => {
     });
   });
 
-  it('main group can pause any task', async () => {
+  it('main group cannot pause another groups task (own-group only)', async () => {
     await processTaskIpc(
       { type: 'pause_task', taskId: 'task-other' },
       'whatsapp_main',
       true,
       deps,
     );
-    expect(getTaskById('task-other')!.status).toBe('paused');
+    expect(getTaskById('task-other')!.status).toBe('active');
+  });
+
+  it('main group can pause its own task', async () => {
+    await processTaskIpc(
+      { type: 'pause_task', taskId: 'task-main' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-main')!.status).toBe('paused');
   });
 
   it('non-main group can pause its own task', async () => {
@@ -268,14 +278,14 @@ describe('resume_task authorization', () => {
     });
   });
 
-  it('main group can resume any task', async () => {
+  it('main group cannot resume another groups task (own-group only)', async () => {
     await processTaskIpc(
       { type: 'resume_task', taskId: 'task-paused' },
       'whatsapp_main',
       true,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('active');
+    expect(getTaskById('task-paused')!.status).toBe('paused');
   });
 
   it('non-main group can resume its own task', async () => {
@@ -302,7 +312,7 @@ describe('resume_task authorization', () => {
 // --- cancel_task authorization ---
 
 describe('cancel_task authorization', () => {
-  it('main group can cancel any task', async () => {
+  it('main group cannot cancel another groups task (own-group only)', async () => {
     createTask({
       id: 'task-to-cancel',
       group_folder: 'other-group',
@@ -322,7 +332,30 @@ describe('cancel_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-to-cancel')).toBeUndefined();
+    expect(getTaskById('task-to-cancel')).toBeDefined();
+  });
+
+  it('main group can cancel its own task', async () => {
+    createTask({
+      id: 'task-main-cancel',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'main@g.us',
+      prompt: 'my task to cancel',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      { type: 'cancel_task', taskId: 'task-main-cancel' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-main-cancel')).toBeUndefined();
   });
 
   it('non-main group can cancel its own task', async () => {

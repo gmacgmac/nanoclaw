@@ -34,7 +34,9 @@ export async function handleHostCommand(
   if (!text.startsWith('/')) return false;
 
   const parts = text.slice(1).split(/\s+/);
-  const commandName = parts[0].toLowerCase();
+  // Strip Telegram's `@<botname>` suffix appended in group chats
+  // (e.g. `/version@chocalotbot` → `version`). No-op for other channels.
+  const commandName = parts[0].toLowerCase().split('@')[0];
 
   // --- Ungated commands (available to all groups, no allowedHostCommands check) ---
 
