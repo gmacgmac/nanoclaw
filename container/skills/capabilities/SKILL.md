@@ -36,7 +36,7 @@ Each directory is an installed skill. The directory name is the skill name (e.g.
 
 Read the allowed tools from your SDK configuration. You always have access to:
 - **Core:** Read, Write, Edit, Glob, Grep
-- **Shell:** `execute_command` (MCP) — shell commands with approval checks for write-mounted paths. Core `Bash` is also available but bypasses approval entirely; use `allowedTools` to block it if enforcement is required.
+- **Shell:** `execute_command` (MCP) — shell commands with approval checks for write-mounted paths. Core `Bash` is automatically removed from `allowedTools` when approval mode is active (on by default); if you need shell access, use `execute_command` which routes through the approval gate.
 - **Web (MCP):** mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
 - **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit

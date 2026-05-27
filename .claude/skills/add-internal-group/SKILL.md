@@ -198,6 +198,8 @@ Run `/configure-group <folder>` to set the group's container configuration:
 - Additional mounts and MCP servers
 - Personality (system prompt, timeout)
 
+> **Note:** Approval mode is on by default — dangerous commands on write-mounted paths require confirmation. You'll be asked in `/configure-group` whether to disable it.
+
 See the `/configure-group` skill for full details.
 
 ## Phase 7: Restart Service

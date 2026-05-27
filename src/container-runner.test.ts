@@ -670,7 +670,7 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
     );
   });
 
-  it('does NOT pass approval env vars when approvalMode is absent', async () => {
+  it('passes approval env vars when approvalMode is absent (secure default)', async () => {
     const resultPromise = runContainerAgent(
       testGroup,
       testInput,
@@ -683,12 +683,9 @@ describe('NANOCLAW_APPROVAL_MODE env vars', () => {
 
     const spawnMock = vi.mocked(spawn);
     const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_APPROVAL_MODE='))).toBe(
-      -1,
-    );
-    expect(args.findIndex((a) => a.startsWith('NANOCLAW_WRITE_MOUNTS='))).toBe(
-      -1,
-    );
+    const modeIdx = args.findIndex((a) => a === 'NANOCLAW_APPROVAL_MODE=true');
+    expect(modeIdx).toBeGreaterThan(0);
+    expect(args[modeIdx - 1]).toBe('-e');
   });
 
   it('passes empty NANOCLAW_WRITE_MOUNTS when no write mounts exist', async () => {

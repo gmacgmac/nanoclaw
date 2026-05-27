@@ -328,7 +328,7 @@ For the full scheduler model and visibility rules see [README-SCHEDULED-TASKS.md
 |------|--------|---------|
 | `register_group` | Main only | Register a new chat/group (see [Group Creation Checklist](#group-creation-checklist)) |
 | `get_registered_groups` | Any group | List all registered groups and their JIDs (for `target_jid` discovery) |
-| `execute_command` | Any group | Run a shell command on the host (dangerous commands require user approval — see [Command Approval](#command-approval)) |
+| `execute_command` | Any group | Run a shell command on the host. Dangerous commands targeting write-mounted paths require user approval (on by default — see [Command Approval](#command-approval)). Disable per-group via `approvalMode: false`. |
 | `ping` | Any group | Diagnostic — returns pong |
 
 ---
@@ -1065,7 +1065,7 @@ NanoClaw's primary security boundary is container isolation — agents run in ep
 |------|------|---------|-------------|
 | `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection for outbound `web_fetch` requests |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files before container launch |
-| `approvalMode` | `boolean` | `false` | Dangerous command approval via messaging channel |
+| `approvalMode` | `boolean` | `true` | Dangerous command approval via messaging channel (set `false` to disable) |
 | `approvalTimeout` | `number` (10–600) | `120` | Seconds before an approval request auto-denies |
 | `commandAllowlist` | `string[]` | `[]` | Regex patterns for commands that skip approval |
 | `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge |
@@ -1154,10 +1154,10 @@ Scans context files on the host before container launch. Detects patterns that c
 
 Adds a human-in-the-loop gate for dangerous shell commands in groups with write-access to real host data.
 
-**When it applies:** Groups with `approvalMode: true` AND write-access `additionalMounts`. If a group has no write mounts, approval mode has no practical effect (all commands target container-internal paths, which are always allowed).
+**When it applies:** Groups with write-access `additionalMounts`. Approval mode is on by default; set `approvalMode: false` explicitly to disable. If a group has no write mounts, approval mode has no practical effect (all commands target container-internal paths, which are always allowed).
 
 **How it works:**
-1. When `approvalMode: true`, `Bash` is removed from `allowedTools` in `runAgent()` and replaced with `mcp__nanoclaw__execute_command` — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
+1. When approval mode is active (default), `Bash` is removed from `allowedTools` in `runAgent()` and replaced with `mcp__nanoclaw__execute_command` — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
 2. The agent uses `execute_command` instead of `Bash`. The tool runs `isDangerousCommand()` from `src/lib/command-approval.ts` against the command.
 3. If the command is dangerous AND targets a write-mounted path (under `/workspace/extra/`), the tool pauses and writes an `approval_request` to the IPC messages directory.
 4. The host's `processIpcMessageData()` picks up the request, formats it, and sends it to the user's messaging channel.

@@ -68,13 +68,13 @@ describe('validateContainerConfig', () => {
     ).toHaveLength(0);
   });
 
-  it('rejects non-boolean approvalMode and falls back to false', () => {
+  it('rejects non-boolean approvalMode and clears it (secure default takes over)', () => {
     const result = validateContainerConfig({
       approvalMode: 'manual' as any,
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0].field).toBe('approvalMode');
-    expect(result.config.approvalMode).toBe(false);
+    expect(result.config.approvalMode).toBeUndefined();
   });
 
   // --- approvalTimeout ---
@@ -286,7 +286,7 @@ describe('approval env var pipeline', () => {
     config: ContainerConfig,
   ): Record<string, string> {
     const envVars: Record<string, string> = {};
-    if (config.approvalMode !== true) return envVars;
+    if (config.approvalMode === false) return envVars;
 
     envVars['NANOCLAW_APPROVAL_MODE'] = 'true';
 

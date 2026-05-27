@@ -50,6 +50,10 @@ export function validateContainerConfig(
   }
 
   // --- approvalMode ---
+  // Default is "on" (absent / undefined → approval gate active). On invalid
+  // values we drop the field rather than fall back to `false`, so a typo
+  // in config doesn't silently disable the approval gate for a group with
+  // write mounts.
   if (
     config.approvalMode !== undefined &&
     typeof config.approvalMode !== 'boolean'
@@ -57,9 +61,9 @@ export function validateContainerConfig(
     warnings.push({
       field: 'approvalMode',
       message: `Invalid value "${config.approvalMode}", must be boolean`,
-      fallback: false,
+      fallback: undefined,
     });
-    config.approvalMode = false;
+    config.approvalMode = undefined;
   }
 
   // --- approvalTimeout ---

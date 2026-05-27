@@ -369,7 +369,7 @@ function buildContainerArgs(
   }
 
   // Command approval mode — pass config + write mount paths to container
-  if (group.containerConfig?.approvalMode === true) {
+  if (group.containerConfig?.approvalMode !== false) {
     args.push('-e', 'NANOCLAW_APPROVAL_MODE=true');
 
     // Pass approval timeout (validated, default 120s)

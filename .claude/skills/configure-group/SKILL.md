@@ -212,11 +212,13 @@ Store as `injectionScanMode`: warn / block / off.
 
 **Command Approval:**
 
-AskUserQuestion: "Enable command approval for dangerous operations on write-mounted paths?"
-- No (default — Bash available as normal)
-- Yes — require approval for dangerous commands
+AskUserQuestion: "Disable command approval for this group?"
+- No (default — keep approval gate active for write-mounted paths)
+- Yes — disable approval, allow raw Bash without confirmation
 
-If yes:
+> ⚠️ Disabling means dangerous commands targeting write-mounted paths run without confirmation. Recommended only for trusted/internal groups.
+
+If "No" (keep approval): do not set `approvalMode` (defaults to `true`). Optionally configure:
 - AskUserQuestion: "Approval timeout (seconds)?" → default 120, range 10–600 → store as `approvalTimeout`
 - AskUserQuestion (multiSelect): "Any commands that should skip approval? (regex patterns)"
   - `^git\\b`
@@ -225,7 +227,9 @@ If yes:
   - None
   Store as `commandAllowlist`.
 
-Store as `approvalMode`: true / false.
+If "Yes" (disable): store `approvalMode: false`.
+
+Store as `approvalMode`: true (or absent) / false.
 
 **Learning Loop:**
 
@@ -239,6 +243,8 @@ Store as `learningLoop`: true / false / "extract-only".
 ### 8. Category: Mounts & Filesystem
 
 **Additional Mounts:**
+
+> **Note:** Write mounts (`readonly: false`) are gated by `approvalMode` (on by default — see Security & Permissions category).
 
 AskUserQuestion: "Add extra host directories to this group's container?"
 - No (default)
@@ -359,7 +365,7 @@ docker ps --filter "name=nanoclaw-<folder>" --format "{{.Names}}" | xargs -r doc
 | `allowedHostCommands` | `string[]` | `undefined` = none | Gated host command allowlist (`'model'`, `'version'`, `'newsession'`) |
 | `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning |
-| `approvalMode` | `boolean` | `false` | Command approval gate |
+| `approvalMode` | `boolean` | `true` | Command approval gate |
 | `approvalTimeout` | `number` | `120` | Approval timeout in seconds |
 | `commandAllowlist` | `string[]` | `[]` | Pre-approved command patterns |
 | `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during flush |

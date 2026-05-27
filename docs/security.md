@@ -10,7 +10,7 @@
 | WhatsApp messages | User input | Potential prompt injection |
 | Context files (CLAUDE.md, memory) | Scanned | Injection scanner runs before container launch |
 | Outbound web requests | Validated | SSRF protection blocks internal/metadata targets |
-| Shell commands (write mounts) | Gated | Command approval required when `approvalMode` enabled |
+| Shell commands (write mounts) | Gated | Command approval on by default for groups with write mounts |
 
 ## Security Boundaries
 
@@ -132,10 +132,10 @@ Scans context files on the host **before** container launch. Detects patterns in
 
 Human-in-the-loop gate for dangerous shell commands in groups with write-access to real host data.
 
-**When it applies:** Groups with `approvalMode: true` AND write-access `additionalMounts`.
+**When it applies:** Groups with write-access `additionalMounts`. Approval mode is on by default; set `approvalMode: false` explicitly to disable.
 
 **How it works:**
-1. `Bash` is replaced with `mcp__nanoclaw__execute_command` MCP tool
+1. `Bash` is replaced with `mcp__nanoclaw__execute_command` MCP tool (when approval mode is active — the default)
 2. Dangerous commands targeting write-mounted paths (under `/workspace/extra/`) trigger an approval request via IPC → messaging channel
 3. User responds yes/no → command executes or is denied
 4. Timeout → auto-deny (fail-closed)
@@ -144,7 +144,7 @@ Human-in-the-loop gate for dangerous shell commands in groups with write-access 
 
 **Dangerous command categories:** file destruction (`rm -rf`, `find -delete`), permissions (`chmod 777`), data modification (`sed -i`, `mv`, redirects), SQL destructive (`DROP TABLE`, `DELETE FROM` without WHERE), remote code execution (`curl | bash`), shell eval (`bash -c`, `python -e`).
 
-**Configuration:** `containerConfig.approvalMode` (boolean), `approvalTimeout` (10–600s, default 120), `commandAllowlist` (regex patterns that skip approval).
+**Configuration:** `containerConfig.approvalMode` (boolean, default: `true`), `approvalTimeout` (10–600s, default 120), `commandAllowlist` (regex patterns that skip approval).
 
 ## Privilege Comparison
 
@@ -182,8 +182,8 @@ Human-in-the-loop gate for dangerous shell commands in groups with write-access 
 ┌──────────────────────────────────────────────────────────────────┐
 │                CONTAINER (ISOLATED/SANDBOXED)                     │
 │  • Agent execution                                                │
-│  • Bash commands (sandboxed) or execute_command (when approval    │
-│    mode enabled — dangerous commands on write mounts gated)       │
+│  • Bash commands (sandboxed) or execute_command (approval mode is    │
+│    on by default — dangerous commands on write mounts are gated)     │
 │  • File operations (limited to mounts)                            │
 │  • SSRF-validated outbound web requests (nanoclaw-web-search)    │
 │  • API calls routed through credential proxy                     │

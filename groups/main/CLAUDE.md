@@ -240,6 +240,8 @@ Folder naming convention — channel prefix with underscore separator:
 
 Groups can have extra directories mounted. Add `containerConfig` to their entry:
 
+> **Note:** Write mounts (`readonly: false`) default to `approvalMode: true` — dangerous commands require approval. Set `approvalMode: false` explicitly only for trusted internal groups (e.g. `fin`).
+
 ```json
 {
   "1234567890@g.us": {

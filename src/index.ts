@@ -385,14 +385,14 @@ async function runAgent(
       );
     }
 
-    // Tool swapping: when approvalMode is enabled, remove Bash so the agent
+    // Tool swapping: when approvalMode is active (default), remove Bash so the agent
     // uses mcp__nanoclaw__execute_command instead (which has approval checks).
     let effectiveAllowedTools = containerConfig.allowedTools;
-    if (containerConfig.approvalMode === true && effectiveAllowedTools) {
+    if (containerConfig.approvalMode !== false && effectiveAllowedTools) {
       effectiveAllowedTools = effectiveAllowedTools.filter((t) => t !== 'Bash');
       logger.info(
         { group: group.name },
-        'approvalMode enabled — Bash replaced with execute_command',
+        'approvalMode active — Bash replaced with execute_command',
       );
     }
 
