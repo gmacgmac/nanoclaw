@@ -26,10 +26,10 @@ DATA_DIR/ipc/
 
 Each directory maps to a registered group. Authorization depends on the `is_main` flag:
 
-| Source Group | Can Send To | Can Modify Tasks In |
-|--------------|-------------|---------------------|
-| `is_main=true` | Any registered group | Any group |
-| `is_main=false` | Only its own chat | Only its own group |
+| Source Group | Can Send To | Can Create Tasks In | Can Read/Modify Tasks In |
+|--------------|-------------|---------------------|--------------------------|
+| `is_main=true` | Any registered group | Any group (via `target_group_jid`) | Own group only |
+| `is_main=false` | Only its own chat | Only its own group | Own group only |
 
 **For dashboard access**: Register a group with `folder: "dashboard"` and `is_main: 1` in the `registered_groups` table, then write to `DATA_DIR/ipc/dashboard/tasks/`.
 
@@ -54,6 +54,33 @@ mcp__nanoclaw__send_message(
 | `text` | string | yes | Message content to send |
 | `sender` | string | no | Role/identity name (e.g., `"Researcher"`). When set, messages appear from a dedicated bot in Telegram. |
 | `target_jid` | string | no | (Main group only) JID of the target group. Defaults to the current group. |
+
+### Piped Images (Inbound)
+
+When images are sent to an active container via IPC, the JSON message includes an optional `images` array:
+
+```json
+{
+  "type": "message",
+  "text": "What's in this image?",
+  "images": [
+    {
+      "base64": "<base64-encoded JPEG>",
+      "mediaType": "image/jpeg",
+      "caption": "Photo from user"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `images` | `EncodedImage[]` | no | Array of base64-encoded images (only present when preset has `capabilities.vision: true`) |
+| `images[].base64` | string | yes | Base64-encoded image data |
+| `images[].mediaType` | string | yes | MIME type (always `image/jpeg` after normalization) |
+| `images[].caption` | string | no | Original caption from the user |
+
+Images are only piped when the group's resolved preset has `capabilities.vision: true`. The host encodes images via `src/image.ts` (resize to 1568px max, normalize to JPEG, base64).
 
 **Via raw IPC file** (from external tools like dashboards or scripts):
 
@@ -100,17 +127,19 @@ Agents inside containers access IPC through MCP tools (`mcp__nanoclaw__*`):
 | Tool | Description | Auth |
 |------|-------------|------|
 | `send_message` | Send message to user/group (main can use `target_jid` for other groups) | All groups |
+| `send_attachment` | Send a file (image, video, document) from the container to the user via the channel | All groups |
 | `schedule_task` | Schedule recurring or one-time task | Main: any group; Others: self only |
-| `list_tasks` | List scheduled tasks | Main: all; Others: own only |
-| `pause_task` | Pause a scheduled task | Main: any; Others: own only |
-| `resume_task` | Resume a paused task | Main: any; Others: own only |
-| `cancel_task` | Cancel and delete a task | Main: any; Others: own only |
-| `update_task` | Update existing task (prompt, schedule) | Main: any; Others: own only |
+| `list_tasks` | List scheduled tasks | Own group only |
+| `pause_task` | Pause a scheduled task | Own group only |
+| `resume_task` | Resume a paused task | Own group only |
+| `cancel_task` | Cancel and delete a task | Own group only |
+| `update_task` | Update existing task (prompt, schedule, description) | Own group only |
+| `get_task` | Get task details and run history | Own group only |
+| `search_tasks` | Search tasks by keyword | Own group only |
 | `get_registered_groups` | List registered groups (for `target_jid` discovery) | All groups |
 | `register_group` | Register a new chat/group | Main only |
 | `delegate_to_group` | Delegate task to another group's agent | Main only |
 | `respond_to_group` | Respond to a delegation request | All groups |
-| `manual_flush` | Trigger memory compaction (writes MEMORY.md, COMPACT.md, daily note, then resets session) | All groups |
 | `execute_command` | Execute a shell command (dangerous commands targeting write-mounted paths require user approval) | All groups |
 | `ping` | Test tool, returns pong | All groups |
 
@@ -137,15 +166,39 @@ mcp__nanoclaw__respond_to_group(
 )
 ```
 
-### manual_flush
+### send_attachment
 
-Triggers memory compaction mid-session. Writes durable facts to `MEMORY.md`, a session summary to `COMPACT.md`, and a daily note, then starts a fresh session. Internally writes a `_flush` sentinel to `/workspace/ipc/input/` which the host detects.
+Sends a file (image, video, document) from the container to the user via the channel. The file must exist within `/workspace/group/`.
 
 ```
-mcp__nanoclaw__manual_flush()
+mcp__nanoclaw__send_attachment(
+  file_path="/workspace/group/media/chart.png",
+  caption="Here's the chart"
+)
 ```
 
-No parameters. The flush prompt runs after the current response completes.
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file_path` | string | yes | Absolute path within `/workspace/group/` |
+| `caption` | string | no | Caption/description sent with the file |
+| `target_jid` | string | no | (Main group only) JID of the target group |
+
+**IPC payload written by the tool:**
+
+```json
+{
+  "type": "attachment",
+  "chatJid": "tg:123456789",
+  "filePath": "/workspace/group/media/chart.png",
+  "caption": "Here's the chart",
+  "groupFolder": "telegram_main",
+  "timestamp": "2026-05-20T12:00:00.000Z"
+}
+```
+
+**Host-side resolution**: The host IPC handler resolves the container path (`/workspace/group/media/chart.png`) to the host path (`groups/{folder}/media/chart.png`), validates the file exists and doesn't escape the group folder, then routes to `channel.sendAttachment()`.
+
+**Channel routing** (Telegram): Files are sent as photo (jpg/png/webp/gif), video (mp4/mov/avi/mkv), or document (everything else) based on file extension.
 
 ### execute_command
 
@@ -288,7 +341,7 @@ Note: Changing schedule values recalculates `next_run` automatically.
   "trigger": "!bot",
   "requiresTrigger": true,
   "containerConfig": {
-    "model": "claude-sonnet-4-6"
+    "preset": "sonnet_4.5"
   }
 }
 ```
@@ -348,6 +401,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `id` | TEXT PK | Task identifier |
 | `group_folder` | TEXT | Associated group |
 | `chat_jid` | TEXT | Target chat |
+| `description` | TEXT | Human-readable task summary (required on creation; nullable for legacy rows) |
 | `prompt` | TEXT | Agent prompt |
 | `schedule_type` | TEXT | `cron`, `interval`, `once` |
 | `schedule_value` | TEXT | Schedule definition |

@@ -170,8 +170,21 @@ interface Channel {
   disconnect(): Promise<void>;
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   syncGroups?(force: boolean): Promise<void>;
+  sendAttachment?(jid: string, filePath: string, caption?: string): Promise<void>;
+  onGroupUpdated?(jid: string): Promise<void>;
 }
 ```
+
+**Optional hooks:**
+
+| Method | Purpose |
+|--------|---------|
+| `setTyping` | Show/hide typing indicator on the platform |
+| `syncGroups` | Sync group/chat names from the platform |
+| `sendAttachment` | Send a file or image to the user |
+| `onGroupUpdated` | Fired after a runtime mutation to a group's registration (e.g. `/model` or `/version` switch). Channels that surface group config on their platform (e.g. Telegram slash command menu) re-sync here. Dispatched only to the channel that `ownsJid(jid)`. Errors are swallowed (`logger.warn`) — the DB write is the source of truth. Channels with no platform-visible surface simply omit this method. |
+
+**Runtime dispatch:** The `updateRegisteredGroup(jid, group)` helper in `src/index.ts` is the runtime entry point — it persists the group, then dispatches `onGroupUpdated` to the owning channel. Setup CLI, migrations, and tests use the raw `setRegisteredGroup` directly (channels are not connected at those points).
 
 ### Self-Registration Pattern
 
@@ -376,6 +389,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 
 ```json
 {
+  "preset": "sonnet_4.5",
   "skills": ["status", "browser"],
   "allowedTools": ["Read", "Grep", "WebSearch"],
   "mcpServers": {
@@ -384,7 +398,6 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
       "args": ["/app/mcp-servers/brave-search/dist/index.js"]
     }
   },
-  "model": "sonnet",
   "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
   "timeout": 3600000,
   "additionalMounts": [
@@ -397,16 +410,13 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
+| `preset` | `string` | `undefined` | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, webSearchVendor at runtime. |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
-| `model` | `string` | `undefined` = inherit | Per-group model override |
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
-| `endpoint` | `string` | `"anthropic"` | Named inference endpoint (vendor in secrets.env) |
-| `webSearchVendor` | `string` | `"ollama"` | Named web search vendor (in secrets.env) |
-| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
 
 #### `skills` — Per-Group Skill Selection
@@ -460,21 +470,41 @@ Full tool reference — use these names in `allowedTools`:
 
 > **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, review the tool list and update `ALL_KNOWN_TOOLS` in `container/agent-runner/src/index.ts` and this table.
 
-#### `model` — Per-Group Model Override
+#### `preset` — Per-Group Model Preset
 
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Inherit from `settings.json` (`ANTHROPIC_MODEL`) |
-| `"sonnet"` | Use Claude Sonnet |
-| `"haiku"` | Use Claude Haiku (faster, cheaper) |
+Groups select their model via a named preset from `~/.config/nanoclaw/model-presets.json`. The preset resolves `endpoint`, `model`, `capabilities`, `contextWindow`, and `webSearchVendor` at runtime via `resolvePreset()`.
 
-Model precedence (highest to lowest):
-1. `containerConfig.model` (database) — overrides everything
-2. `data/sessions/{folder}/.claude/settings.json` → `ANTHROPIC_MODEL`
-3. `.env` → `ANTHROPIC_MODEL`
-4. SDK default
+**Preset file schema** (`~/.config/nanoclaw/model-presets.json`):
 
-Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets defined in `~/.config/nanoclaw/model-presets.json`. This updates both the database config and `settings.json` atomically.
+```json
+{
+  "sonnet_4.5": {
+    "endpoint": "anthropic",
+    "model": "claude-sonnet-4-5-20250514",
+    "capabilities": { "vision": true, "tools": true },
+    "contextWindow": 200000,
+    "webSearchVendor": "ollama"
+  },
+  "ollama_k2.6": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud",
+    "capabilities": { "vision": false, "tools": true },
+    "contextWindow": 128000
+  }
+}
+```
+
+| Preset Field | Type | Required | Default |
+|--------------|------|----------|---------|
+| `endpoint` | `string` | yes | — |
+| `model` | `string` | yes | — |
+| `capabilities` | `{ vision: boolean, thinking?: boolean, tools?: boolean }` | yes | — |
+| `contextWindow` | `number` | no | `128000` |
+| `webSearchVendor` | `string` | no | `"ollama"` |
+
+**Runtime resolution**: `containerConfig.preset` → `resolvePreset(name)` → returns the full `ResolvedPreset` with endpoint, model, capabilities, contextWindow, webSearchVendor. All container spawn, IPC, and scheduling paths use this.
+
+Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets. This stores only the preset name in the database and recycles the active container so the next message spawns fresh with the new config.
 
 #### `systemPrompt` — Per-Group Persona
 
@@ -531,7 +561,7 @@ The `nanoclaw` server is always present and cannot be overridden — if a group 
 
 **Brave Search MCP**: A self-built MCP server at `container/mcp-servers/brave-search/` that wraps the Brave Search API. The API key (`BRAVE_SEARCH_API_KEY`) is read from `~/.config/nanoclaw/secrets.env` on the host and injected as a container env var — the container never sees the host secrets file.
 
-**NanoClaw Web Search MCP**: A self-built MCP server at `container/mcp-servers/nanoclaw-web-search/` that exposes `web_search` and `web_fetch` tools. Unlike brave-search (which injects an API key directly), web search routes through the credential proxy — the MCP server only needs the proxy host/port and vendor name. The proxy injects real API keys at request time. Configured via `webSearchVendor` in `containerConfig` (defaults to `"ollama"`). Requires `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY` in `secrets.env`. See [OLLAMA_WEB_SEARCH_INTEGRATION.md](OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
+**NanoClaw Web Search MCP**: A self-built MCP server at `container/mcp-servers/nanoclaw-web-search/` that exposes `web_search` and `web_fetch` tools. Unlike brave-search (which injects an API key directly), web search routes through the credential proxy — the MCP server only needs the proxy host/port and vendor name. The proxy injects real API keys at request time. Configured via the resolved preset's `webSearchVendor` field (defaults to `"ollama"`). Requires `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY` in `secrets.env`. See [OLLAMA_WEB_SEARCH_INTEGRATION.md](OLLAMA_WEB_SEARCH_INTEGRATION.md) for the full design.
 
 #### `allowedHostCommands` — Host Commands
 
@@ -548,16 +578,20 @@ Host commands are intercepted on the host process before reaching the agent cont
 {
   "ollama_k2.6": {
     "endpoint": "ollama",
-    "model": "kimi-k2.6:cloud"
+    "model": "kimi-k2.6:cloud",
+    "capabilities": { "vision": false, "tools": true },
+    "contextWindow": 128000
   },
   "opus_4.7": {
     "endpoint": "anthropic",
-    "model": "claude-opus-4-7"
+    "model": "claude-opus-4-7",
+    "capabilities": { "vision": true, "tools": true },
+    "contextWindow": 200000
   }
 }
 ```
 
-Send `/model` to list active preset and available choices. Send `/model <preset>` to switch. The active container is recycled on switch so the next message spawns a fresh container with the new config. Only `model` and `endpoint` are updated — all other `containerConfig` fields are preserved.
+Send `/model` to list the active preset and available choices. Send `/model <preset>` to switch. The active container is recycled on switch so the next message spawns a fresh container with the new config. Only the `preset` name is stored in `containerConfig` — all other fields are preserved.
 
 When switching models, NanoClaw automatically sanitizes the session `.jsonl` transcript: non-compliant `tool_use` IDs (e.g. from Ollama) are rewritten to match `^[a-zA-Z0-9-]+$`, and `thinking` blocks (which carry model-specific cryptographic signatures) are stripped so the new model can safely resume the session.
 
@@ -648,6 +682,26 @@ The `memory/` directory is created automatically during group registration, alon
    - Main can manage registered groups and schedule tasks for any group
    - Main can configure additional directory mounts for any group
    - All groups have Bash access (safe because it runs inside container)
+
+---
+
+### Image Vision
+
+When a group's resolved preset has `capabilities.vision: true`, agents can receive and understand image attachments sent by users.
+
+**Image extraction**: The message loop matches `[Photo]: /path caption` patterns in incoming messages. Images are processed only when the resolved preset supports vision.
+
+**Pipeline** (`src/image.ts`):
+1. Validate file exists and is a supported format (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`)
+2. Resize to fit within 1568×1568px (Claude's recommended max), maintaining aspect ratio
+3. Normalize to JPEG at 85% quality
+4. Base64 encode
+
+**Limits**: 10MB total payload limit per message batch (images are truncated if exceeded).
+
+**IPC piping**: When images are piped to an active container via IPC, the JSON message includes an `images` array. The agent-runner uses `pushMultimodal()` to build content blocks with both image and text.
+
+**Outbound attachments**: Agents can send files back to users via the `send_attachment` MCP tool. The tool validates the file exists within `/workspace/group/`, writes an IPC message with `type: 'attachment'`, and the host resolves the container path to the host path before routing to the channel's `sendAttachment()` method.
 
 ---
 
@@ -894,14 +948,15 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 | `schedule_task` | Schedule a recurring or one-time task |
 | `list_tasks` | Show tasks (group's tasks, or all if main) |
 | `get_task` | Get task details and run history |
+| `search_tasks` | Search tasks by keyword |
 | `update_task` | Modify task prompt or schedule |
 | `pause_task` | Pause a task |
 | `resume_task` | Resume a paused task |
 | `cancel_task` | Delete a task |
 | `send_message` | Send a message to the group via its channel |
+| `send_attachment` | Send a file (image, video, document) from the container to the user via the channel |
 | `delegate_to_group` | Send a task to a target group (main only), get a UUID for correlation |
 | `respond_to_group` | Respond to a pending delegation (validates UUID, caller identity) |
-| `manual_flush` | Trigger a memory flush mid-session |
 | `execute_command` | Execute a shell command on the host |
 | `register_group` | Register a new group |
 | `get_registered_groups` | List all registered groups |

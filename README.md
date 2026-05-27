@@ -6,9 +6,9 @@
 ---
 category: agentic-tools
 scope: nanoclaw
-last_updated: 2026-04-15
+last_updated: 2026-05-26
 status: active
-keywords: nanoclaw, agent, telegram, dashboard, claude-agent-sdk, sessions, memory, isolation, containerConfig, credential-proxy, multi-endpoint, context-management, flush, delegation, web-search
+keywords: nanoclaw, agent, telegram, dashboard, claude-agent-sdk, sessions, memory, isolation, containerConfig, credential-proxy, multi-endpoint, context-management, nudge, memory-nudge, delegation, web-search, presets, vision, image-vision, channels, versioning, canary, host-commands, scheduled-tasks
 ---
 
 # NanoClaw
@@ -64,13 +64,13 @@ This is the most important thing to understand about NanoClaw. Agents are NOT st
 | Layer | Mechanism | Survives Session Reset? | Primary Use |
 |-------|-----------|------------------------|-------------|
 | Session transcript (`.jsonl`) | SDK session resumption | No — tied to session ID | Full conversation continuity |
-| `MEMORY.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — persists across sessions | Durable facts, user preferences |
-| `COMPACT.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — overwritten on each flush | Session summary after compaction |
+| `MEMORY.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — persists across sessions | Durable facts, user preferences (5000 char cap) |
+| `YYYY-MM-DD.md` | `@import` or direct read | Yes — persists across sessions | Daily notes, observations, task progress |
 | CLAUDE.md (group folder) | SDK loads from `cwd` on startup | Yes — it's a file you control | Instructions, personality, skills |
 
-The session transcript is the primary memory mechanism — the agent gets full conversation replay on every message. `MEMORY.md` and `COMPACT.md` are loaded via `@import` directives in CLAUDE.md templates, so they're always available even after a session reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
+The session transcript is the primary memory mechanism — the agent gets full conversation replay on every message. `MEMORY.md` is loaded via `@import` directives in CLAUDE.md templates, so it's always available even after a session reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
 
-When a flush triggers (auto, manual, or nightly), the agent writes durable facts to `MEMORY.md` and a compact summary to `COMPACT.md`. The host then deletes the session so the next message starts fresh — but the `@import`ed files preserve essential context.
+Memory persistence is continuous: the agent writes durable facts to `MEMORY.md` throughout its session via periodic nudge prompts. There is no flush-and-reset cycle.
 
 ### Container Lifecycle
 
@@ -87,42 +87,39 @@ The `--rm` flag on `docker run` ensures containers are cleaned up after exit.
 
 ## Context Management
 
-Agents accumulate context over long conversations. Without intervention, they eventually hit the model's context window limit and degrade in quality. NanoClaw solves this with automatic memory flushing and session recycling.
+Agents accumulate context over long conversations. Claude Code's built-in auto-compact handles context window management — NanoClaw doesn't manage context size directly. Instead, NanoClaw uses a **nudge system** to continuously persist memories throughout the session. Sessions are long-running and are never automatically deleted.
 
-### How Flushing Works
+### Three Nudge Triggers
 
-When triggered (automatically or manually), the agent runs a structured **flush prompt** (`buildFlushPrompt()` in `src/lib/flush-prompt.ts`) that instructs it to:
+| Trigger | Condition | When | Session Deleted? |
+|---------|-----------|------|-----------------|
+| **Periodic** | Every 10 user messages | Live, mid-conversation | No |
+| **Threshold** | `lastInputTokens > contextWindowSize * 0.8` (once per session) | Live, mid-conversation | No |
+| **Nightly** | `lastInputTokens / contextWindowSize > 0.5` | Midnight daily (cron) | No |
 
-1. **Extract skills** (conditional) → `extracted-skills/[skill-name].md` — only when `containerConfig.learningLoop` is truthy. Cap of 2 skills per flush. See [Learning Loop](#learning-loop--skill-extraction).
-2. **Append durable facts** to `memory/MEMORY.md` — user preferences, corrections, long-term knowledge
-3. **Write a session summary** to `memory/COMPACT.md` — overwrite (not append), ~2000 word cap, key decisions and open items
-4. **Append a daily note** to `memory/YYYY-MM-DD.md` — contextual observations from this session
+All three triggers inject the same nudge prompt (with minor variations). None delete the session or stop the container.
 
-Skill extraction runs first because it needs the full uncompacted conversation context. The remaining steps are unchanged from the original flush flow.
+### What a Nudge Does
 
-Both `getFlushPrompt()` (agent-runner, context-window trigger) and `getNightlyFlushPrompt()` (host-side, nightly cron) delegate to `buildFlushPrompt()` — a single source of truth. A copy exists at `container/agent-runner/src/lib/flush-prompt.ts` (container boundary — cannot import from host `src/` at runtime).
+When triggered, the agent runs a structured **nudge prompt** (`buildNudgePrompt()` in `src/lib/nudge-prompt.ts`) wrapped in `<internal>` tags (invisible to the user). It instructs the agent to:
 
-After the flush completes:
+1. **Append durable facts** to `memory/MEMORY.md` — read current file, append new facts, remove superseded entries. One bullet per fact, no prose. **5000 character cap** — consolidate or prune if approaching limit.
+2. **Append a daily note** to `memory/YYYY-MM-DD.md` — observations and task progress. Create file if it doesn't exist.
+3. **Extract skills** (nightly only, when `learningLoop` enabled) → `extracted-skills/[skill-name].md` — up to 2 skills per nudge, only genuinely reusable patterns.
 
-- The agent emits `flushCompleted: true` to the host
-- The host deletes the session from SQLite and clears its in-memory cache
-- The next message starts a fresh session — but `MEMORY.md` and `COMPACT.md` are loaded via `@import` in CLAUDE.md, so the agent retains key context
+The agent continues normal work after the nudge — no announcement, no session interruption, no user-visible output.
 
-Status messages appear during flush: "Creating long term memories..." before, "Ready for next message" after. These are visible to the user.
+Both container-side and host-side use `buildNudgePrompt()` as the single source of truth. A copy exists at both locations (container boundary — cannot import from host `src/` at runtime):
+- `container/agent-runner/src/lib/nudge-prompt.ts` (container-side: periodic + threshold)
+- `src/lib/nudge-prompt.ts` (host-side: nightly maintenance)
 
-### Three Flush Triggers
+### Memory Size Cap
 
-| Trigger | Threshold | When | How It Fires |
-|---------|-----------|------|-------------|
-| **Auto-flush** | 80% of `contextWindowSize` | Live, mid-conversation | Agent-runner detects `input_tokens` from SDK usage data |
-| **Manual flush** | Any time | On demand | Agent calls `manual_flush` MCP tool (writes `_flush` sentinel to IPC) |
-| **Nightly cron** | 50% of `contextWindowSize` | Midnight (configurable) | `runNightlyMaintenance()` checks all groups with active sessions |
-
-All three use the same flush prompt and `flushCompleted` → session reset flow. A `flushedThisSession` guard prevents double-flush within a single container run.
+The nudge prompt instructs the agent to keep `MEMORY.md` under **5000 characters**. Enforcement is prompt-based only (no host-side validation). If approaching capacity, the agent should consolidate related facts, remove stale entries, and keep one bullet per fact.
 
 ### `contextWindowSize` — Per-Group Context Limit
 
-Controls when flushes trigger. Set in `containerConfig`:
+Controls when the threshold nudge fires. Set in `containerConfig`:
 
 ```json
 { "contextWindowSize": 128000 }
@@ -131,8 +128,8 @@ Controls when flushes trigger. Set in `containerConfig`:
 | Value | Behaviour |
 |-------|-----------|
 | `undefined` / absent | Default: 128000 tokens |
-| `64000` | Smaller model — flush sooner |
-| `200000` | Larger context model — flush later |
+| `64000` | Smaller model — nudge sooner |
+| `200000` | Larger context model — nudge later |
 
 To set per-group:
 
@@ -142,7 +139,7 @@ sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_
 
 ### Token Usage Logging
 
-The agent-runner logs `input_tokens` and `output_tokens` from every SDK response to `groups/{folder}/token-usage.log`. This file drives the nightly cron's threshold calculation (`parseLastInputTokens()`).
+The agent-runner logs `input_tokens` and `output_tokens` from every SDK response to `groups/{folder}/token-usage.log`. This file drives the nightly cron's threshold calculation.
 
 Log format:
 
@@ -158,11 +155,12 @@ A built-in cron job (`startNightlyCron` in `src/task-scheduler.ts`) runs at midn
 
 For each registered group with an active session:
 
-1. Reads `input_tokens` from `token-usage.log` (via `parseLastInputTokens()`)
+1. Reads `input_tokens` from `token-usage.log`
 2. Computes usage ratio: `input_tokens / contextWindowSize`
-3. If >= 50%, runs the flush prompt, then clears the session
+3. If >= 50%, enqueues a nudge via the group queue (respects one-container-at-a-time)
+4. Container stays alive after nudge completes (normal idle timeout applies)
 
-Groups below 50% or without active sessions are skipped. Results are logged: `{ groupsChecked, groupsFlushed }`.
+Groups below 50% or without active sessions are skipped. Nightly nudge includes skill extraction when `learningLoop` is enabled.
 
 ---
 
@@ -204,17 +202,16 @@ Each group has a `CLAUDE.md` file at `groups/<group>/CLAUDE.md`. The Claude Agen
 
 - "Remember this: ..." → agent may write to `MEMORY.md` or `CLAUDE.md`
 - You can edit CLAUDE.md directly — it's plain markdown
-- CLAUDE.md templates include `@import` directives for `@memory/MEMORY.md` and `@memory/COMPACT.md`, which the SDK expands at container spawn time
+- CLAUDE.md templates include an `@import` directive for `@memory/MEMORY.md`, which the SDK expands at container spawn time
 
 ### Memory Protocol
 
-Agents manage three memory files inside `groups/{folder}/memory/`:
+Agents manage two memory files inside `groups/{folder}/memory/`:
 
 | File | Behaviour | Purpose |
 |------|-----------|---------|
-| `MEMORY.md` | Read, append, remove superseded entries. No duplicates. | Durable facts — user preferences, corrections, long-term knowledge |
-| `COMPACT.md` | Overwrite on flush (~2000 word cap). | Session summary — key decisions and open items after compaction |
-| `YYYY-MM-DD.md` | Append daily. | Session-specific observations and daily notes |
+| `MEMORY.md` | Read, append, remove superseded entries. No duplicates. 5000 char cap. | Durable facts — user preferences, corrections, long-term knowledge |
+| `YYYY-MM-DD.md` | Append daily. | Daily observations, task progress, session notes |
 
 The `memory/` directory is created automatically during group registration, along with a seed `MEMORY.md` if one doesn't exist.
 
@@ -222,8 +219,22 @@ The `memory/` directory is created automatically during group registration, alon
 
 1. Claude Code built-in system prompt (`claude_code` preset)
 2. `containerConfig.systemPrompt` (appended to preset prompt)
-3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md` and `COMPACT.md`
+3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md`
 4. Session transcript (if resuming an existing session)
+
+### Image Vision
+
+When a group's resolved preset has `capabilities.vision: true`, agents can receive and understand image attachments.
+
+**Inbound pipeline:**
+1. Message loop matches `[Photo]: /path caption` patterns in incoming messages
+2. Vision gate: images only processed when resolved preset's `capabilities.vision` is `true`
+3. Encoding (`src/image.ts`): resize to 1568px max, normalize to JPEG@85%, base64 encode
+4. 10MB total payload limit per message batch
+5. Passed to container via `ContainerInput.images`; agent-runner builds multimodal content blocks
+
+**Outbound attachments:**
+Agents send files back via the `send_attachment` MCP tool. Validates path within `/workspace/group/`, writes IPC with `type: 'attachment'`, host resolves container→host path, routes to channel. Telegram routes by extension: photo (jpg/png/webp/gif), video (mp4/mov/avi/mkv), or document (all else).
 
 ---
 
@@ -288,7 +299,15 @@ Agents can delegate tasks to other registered groups and receive responses back.
 |------|-------------|---------|
 | `delegate_to_group` | Main group only | Send a task to a target group, get a UUID for correlation |
 | `respond_to_group` | Any group | Respond to a pending delegation (validates UUID, caller identity) |
-| `manual_flush` | Any group | Trigger a memory flush mid-session (see [Context Management](#context-management)) |
+| `send_attachment` | Any group | Send a file (image, video, document) from the container back to the user via the channel. Validates path within `/workspace/group/`. |
+| `schedule_task` | Any group | Create a scheduled task. Can target own group or another group. `description` required. |
+| `list_tasks` | Any group | List own group's tasks. Shows description + prompt preview. |
+| `get_task` | Any group | Fetch full task record by ID (own group only). |
+| `search_tasks` | Any group | Substring or regex search of own group's tasks. |
+| `update_task` | Any group | Modify own group's task (prompt, description, schedule, etc.). |
+| `pause_task` / `resume_task` / `cancel_task` | Any group | Lifecycle control of own group's tasks. |
+
+For the full scheduler model, tool reference, and visibility rules see [README-SCHEDULED-TASKS.md](./README-SCHEDULED-TASKS.md).
 
 **`delegate_to_group`** parameters:
 - `target_jid` — the JID of the target group (e.g. `tg:12345@internal`)
@@ -337,7 +356,7 @@ The database serves the application layer — message routing, group registratio
 | `sessions` | Maps group folder → current Claude session UUID |
 | `registered_groups` | Group config (name, folder, trigger, containerConfig, `multi_agent_router`) |
 | `delegations` | Inter-group task delegations (UUID, caller, target, status, expiry) |
-| `scheduled_tasks` | Cron/interval tasks with prompts |
+| `scheduled_tasks` | Cron/interval tasks with prompts and human-readable descriptions |
 | `task_run_logs` | Execution history for scheduled tasks |
 | `router_state` | Internal state (timestamps, cursors) |
 | `error_log` | Structured error logging |
@@ -433,7 +452,7 @@ Configure group behaviour via the `containerConfig` JSON column in the `register
 
 ```json
 {
-  "endpoint": "ollama",
+  "preset": "sonnet_4.5",
   "skills": ["status", "browser"],
   "allowedTools": ["Read", "Grep", "WebSearch"],
   "mcpServers": {
@@ -442,27 +461,49 @@ Configure group behaviour via the `containerConfig` JSON column in the `register
       "args": ["/app/mcp-servers/brave-search/dist/index.js"]
     }
   },
-  "model": "sonnet",
   "contextWindowSize": 128000,
-  "webSearchVendor": "ollama",
   "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
   "timeout": 3600000,
+  "allowedHostCommands": ["model", "version", "newsession"],
   "additionalMounts": [
     { "hostPath": "~/Documents/finance", "containerPath": "finance", "readonly": true }
   ]
 }
 ```
 
-#### `endpoint` — Per-Group Upstream Vendor
+#### `preset` — Per-Group Model Preset
 
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Routes to `anthropic` (default) |
-| `"ollama"` | Routes to the Ollama upstream defined in `secrets.env` |
-| `"zai"` | Routes to the Z.ai upstream defined in `secrets.env` |
-| `"anthropic"` | Explicit default — same as absent |
+Groups select their model via a named preset from `~/.config/nanoclaw/model-presets.json`. The preset resolves `endpoint`, `model`, `capabilities`, `contextWindow`, and `webSearchVendor` at runtime via `resolvePreset()`.
 
-The value must match a vendor prefix defined in `secrets.env` (case-insensitive). If the vendor is not found in the routing table, the proxy falls back to `anthropic`. API keys are never exposed to the group config — only the vendor name is stored here.
+**Preset file schema** (`~/.config/nanoclaw/model-presets.json`):
+
+```json
+{
+  "sonnet_4.5": {
+    "endpoint": "anthropic",
+    "model": "claude-sonnet-4-5-20250514",
+    "capabilities": { "vision": true, "tools": true },
+    "contextWindow": 200000,
+    "webSearchVendor": "ollama"
+  },
+  "ollama_k2.6": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud",
+    "capabilities": { "vision": false, "tools": true },
+    "contextWindow": 128000
+  }
+}
+```
+
+| Preset Field | Type | Required | Default |
+|--------------|------|----------|---------|
+| `endpoint` | `string` | yes | — |
+| `model` | `string` | yes | — |
+| `capabilities` | `{ vision: boolean, thinking?: boolean, tools?: boolean }` | yes | — |
+| `contextWindow` | `number` | no | `128000` |
+| `webSearchVendor` | `string` | no | `"ollama"` |
+
+Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets at runtime. Only the preset name is stored in `containerConfig.preset`; the container is recycled on switch.
 
 #### `skills` — Per-Group Skill Selection
 
@@ -563,59 +604,26 @@ The `nanoclaw` server is always present and cannot be overridden — if a group 
 
 **Brave Search MCP**: A self-built MCP server at `container/mcp-servers/brave-search/` that wraps the Brave Search API. Provides the `mcp__brave-search__brave_search` tool. The API key (`BRAVE_SEARCH_API_KEY`) is read from `~/.config/nanoclaw/secrets.env` on the host and injected as a container env var — the container never sees the host secrets file. Brave API calls go directly from the container to `api.search.brave.com`, not through the credential proxy.
 
-#### `model` — Per-Group Model Override
-
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Inherit from `settings.json` (`ANTHROPIC_MODEL`) |
-| `"sonnet"` | Use Claude Sonnet |
-| `"haiku"` | Use Claude Haiku (faster, cheaper) |
-
-The default model is set in `data/sessions/<folder>/.claude/settings.json` (currently `glm-5:cloud`). Per-group `model` overrides this at the SDK level.
-
-**`settings.json` format:**
-
-```json
-{
-  "env": {
-    "ANTHROPIC_MODEL": "claude-sonnet-4-6",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"
-  }
-}
-```
-
-Values live inside the `env` object — the SDK reads `settings.json` as a nested `{ env: { ... } }` structure. Do not write keys at the top level (e.g. `{ "ANTHROPIC_MODEL": "..." }`) — the SDK will ignore them.
-
 #### `systemPrompt` — Per-Group Persona
 
 | Value | Behaviour |
 |-------|-----------|
 | `undefined` / absent | Preset prompt only |
-| `"You are X..."` | Append to claude_code preset prompt |
+| `"You are X..."` | Appended to preset prompt |
 
-#### `contextWindowSize` — Context Flush Threshold
+#### `contextWindowSize` — Per-Group Context Threshold
 
 | Value | Behaviour |
 |-------|-----------|
 | `undefined` / absent | Default: 128000 tokens |
-| `64000` | Smaller context model — flush sooner |
-| `200000` | Larger context model — flush later |
+| `64000` | Smaller context model — nudge sooner |
+| `200000` | Larger context model — nudge later |
 
-Controls when automatic context flushing triggers. Auto-flush fires at 80% of this value during live conversations. Nightly maintenance flushes at 50%. See [Context Management](#context-management) for details.
+Controls when the threshold nudge fires. The threshold nudge triggers at 80% of this value during live conversations. Nightly maintenance nudges at 50%. See [Context Management](#context-management) for details.
 
 ```bash
 sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.contextWindowSize', 200000) WHERE folder = 'mygroup'"
 ```
-
-#### `webSearchVendor` — Web Search Upstream
-
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | No web search vendor configured (built-in `WebSearch`/`WebFetch` used if Anthropic endpoint; silently fails otherwise) |
-| `"ollama"` | Route web search traffic through the Ollama web search upstream |
-
-Must match a `{VENDOR}_WEB_SEARCH_BASE_URL` / `{VENDOR}_WEB_SEARCH_API_KEY` pair in `secrets.env`. Requires `nanoclaw-web-search` in `mcpServers` to actually expose the tools to the agent. See [Web Search Proxy](#web-search-proxy) for setup details.
 
 #### `telegramBot` — Per-Group Named Telegram Bot
 
@@ -663,43 +671,95 @@ Default is `requiresTrigger: undefined` which behaves as `true`.
 
 ## Host Commands
 
-Host commands are intercepted on the host process before reaching the agent container. They work across all channels (Telegram, WhatsApp, Slack, etc.) and are gated per-group via an explicit allowlist.
+Host commands are intercepted on the host process before reaching the agent container. They work across all channels (Telegram, WhatsApp, Slack, Dashboard, etc.) and split into ungated and gated groups. All commands require the sender to be on the sender allowlist (`~/.config/nanoclaw/sender-allowlist.json`).
+
+**Ungated** (always available, sender allowlist still applies):
+- `/stop` — abort the in-flight model request, keep the session
+- `/shutdown` — stop the container, keep the session
+
+**Gated** (require `allowedHostCommands` entry on the group's `containerConfig`):
+- `/model [<preset>]` — show or switch the active model preset
+- `/version [info|stable|next]` — show or switch the container channel
+- `/newsession` — stop the container, delete the session, start fresh
+
+### Enabling Gated Commands
+
+Gated commands require the group's `containerConfig.allowedHostCommands` array to include the command name:
+
+```bash
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.allowedHostCommands', json('[\"model\", \"version\", \"newsession\"]')) WHERE folder = '<folder>'"
+```
+
+Only senders on the sender allowlist can invoke any host command (gated or ungated).
+
+### `/stop` — Abort In-Flight Request
+
+Aborts the in-flight model API request via `AbortController`. The container exits cleanly — no partial response is written to the session JSONL. Session is preserved; the next message resumes the same conversation.
+
+Reply (single, deferred until container exits): `"⏹ Stopped. Next message continues the conversation."`
+
+If no container is running: `"Nothing running to stop."`
+
+### `/shutdown` — Stop Container
+
+Writes the `_close` sentinel via `closeStdin()`. The container exits gracefully. Session is preserved — the next message starts a new container with the same session.
+
+Reply (single, deferred until container exits): `"Container stopped. Next message will start a new container with the same session."`
+
+If no container is running: `"No container running for this group."`
 
 ### `/model` — Switch Model Preset
 
-Enable it for a group by adding `allowedHostCommands: ['model']` to the group's `containerConfig`:
+**Usage:**
+- `/model` — show active preset and list available presets
+- `/model <preset>` — switch to the named preset
 
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.allowedHostCommands', json_array('model')) WHERE folder = 'mygroup'"
-```
+Presets are defined in `~/.config/nanoclaw/model-presets.json`. Each preset specifies endpoint, model, capabilities (vision, tools), contextWindow, and webSearchVendor. Only the preset *name* is stored in `containerConfig` — resolution happens at container spawn time.
 
-Then send `/model` in the group to see the active preset and available choices, or `/model <preset>` to switch.
+On switch: the container is recycled, the DB is updated with the new preset name, and the session JSONL is sanitized for cross-provider safety (removes provider-specific content blocks that would cause errors on the new endpoint).
 
-Define presets in `~/.config/nanoclaw/model-presets.json`:
+**Two-message UX:**
+1. Reply 1 (immediate): `"Switching to <preset>..."`
+2. Reply 2 (after container exits): `"Switched to <preset> (endpoint / model)."`
 
-```json
-{
-  "ollama_k2.6": {
-    "endpoint": "ollama",
-    "model": "kimi-k2.6:cloud"
-  },
-  "opus_4.7": {
-    "endpoint": "anthropic",
-    "model": "claude-opus-4-7"
-  }
-}
-```
+### `/version` — Switch Container Channel
 
-Only `model` and `endpoint` are updated — all other `containerConfig` fields (skills, allowedTools, systemPrompt, etc.) are preserved. The active container is recycled on switch so the next message spawns a fresh container with the new config.
+**Usage:**
+- `/version` — show current channel, image tag, SDK version, CLI version (with drift detection)
+- `/version stable` — switch to the `:stable` channel
+- `/version next` — switch to the `:next` channel
 
-**Session sanitization on switch:** When switching models, NanoClaw automatically sanitizes the session `.jsonl` transcript in two ways:
+On switch: the container is recycled and the group's `container_channel` column is updated. The next message spawns a container using the new channel's image tag.
 
-1. **Tool ID sanitization:** Non-compliant `tool_use` IDs (e.g. `functions.Bash:1` from Ollama) are rewritten to match `^[a-zA-Z0-9-]+$` so Anthropic can resume the session.
-2. **Thinking block stripping:** `thinking` and `redacted_thinking` blocks (which carry model-specific cryptographic signatures) are removed so the new model can safely resume the session without signature validation errors.
+**Two-message UX:**
+1. Reply 1 (immediate): `"Switching to channel <ch>..."`
+2. Reply 2 (after container exits): `"✅ Switched to channel: <ch>. The next message will spawn a new container using nanoclaw-agent:<ch>."`
 
-This preserves conversation history while making cross-model session resumption safe.
+See the **Container Image Channels** section for what `:stable` and `:next` mean.
 
-**Security:** `allowedHostCommands` is `undefined` by default, which means no host commands are allowed. Senders must also pass the sender allowlist check.
+### `/newsession` — Reset Session
+
+Stops the container and deletes the session from both the in-memory cache and SQLite. The JSONL transcript file is left on disk by design (auto-prune is a separate manual step). The next message starts a completely fresh session with a new ID.
+
+**Two-message UX:**
+1. Reply 1 (immediate): `"Clearing session..."`
+2. Reply 2 (after container exits): `"Session cleared. Next message starts fresh."`
+
+Works whether or not a container is currently running. If no container is active, the session is still cleared and the deferred reply fires immediately.
+
+### How the Two-Message UX Works
+
+Commands that do post-shutdown work (`/model`, `/version`, `/newsession`) use an `onAfterExit` queue pattern:
+
+1. **Reply 1** ("Working...") arrives immediately — confirms the command was received
+2. `closeStdin()` writes the `_close` sentinel — the container begins shutting down
+3. The queue's `finally` block fires after the container process actually exits
+4. The registered `onAfterExit` callback runs (DB update, session clear, sanitization, etc.)
+5. **Reply 2** ("Done") arrives — confirms the work completed
+
+This eliminates a race condition where post-shutdown work (e.g. clearing a session) would fight the dying container's final output that re-writes the session ID.
+
+For `/stop` and `/shutdown`, there is no Reply 1 — only a single deferred message after exit. They don't do additional work; the deferred reply just ensures truthful timing (the user sees "stopped" only after the container is actually gone).
 
 ---
 
@@ -711,14 +771,64 @@ The agent-runner inside each container uses the Claude Agent SDK (`@anthropic-ai
 |--------|--------|---------|------------|
 | `allowedTools` | `containerConfig.allowedTools` | Full tool list | Yes |
 | `disallowedTools` | Auto-computed as complement of `allowedTools` | Empty (all allowed) | Yes |
-| `model` | `containerConfig.model` → `settings.json` env | `glm-5:cloud` | Yes |
-| `contextWindowSize` | `containerConfig.contextWindowSize` | 128000 | Yes |
+| `model` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.model` | (from preset) | Yes |
+| `contextWindow` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.contextWindow` (default: 128000) | 128000 | Yes |
 | `systemPrompt` | `claude_code` preset + `containerConfig.systemPrompt` | Preset only | Yes |
 | `resume` | `sessionId` from SQLite | None (new session) | Per-group |
 | `permissionMode` | Hardcoded | `bypassPermissions` | No |
 | `mcpServers` | `nanoclaw` (hardcoded) + `containerConfig.mcpServers` | NanoClaw IPC server only | Yes |
 | `cwd` | Hardcoded | `/workspace/group` | Per-group folder |
 | `settingSources` | Hardcoded | `['project', 'user']` | No |
+
+---
+
+## Container Image Channels
+
+Agent containers use a channel-based image system instead of a single mutable `:latest` tag. Each group is assigned to a channel that determines which image version it runs.
+
+### Channels
+
+| Channel | Tag | Purpose |
+|---------|-----|---------|
+| `stable` | `nanoclaw-agent:stable` | Default. All groups use this unless explicitly switched. |
+| `next` | `nanoclaw-agent:next` | Canary. Test new SDK/CLI versions on select groups before promotion. |
+
+Both `:stable` and `:next` are mutable aliases pointing at immutable versioned tags (e.g., `nanoclaw-agent:v1.0.0`). Versioned tags are never overwritten. The `:latest` tag is not used.
+
+Per-group channel assignment is stored in the `container_channel` column on `registered_groups` (default: `'stable'`). The host resolves this to an image tag at container spawn time via `resolveImageTag(channel)` in `src/container-runtime.ts`.
+
+### Tooling
+
+All container versioning operations go through a single script:
+
+```bash
+./container/scripts/container.sh <subcommand> [args]
+```
+
+| Subcommand | Effect |
+|------------|--------|
+| `build <version>` | Build a new immutable image tag (does NOT change any channel) |
+| `stage <version>` | Point `:next` at a built version (canary) |
+| `promote <version>` | Point `:stable` at a built version (affects all default groups) |
+| `rollback` | Revert `:stable` to the previous version |
+| `list` | List all known built versions |
+| `current` | Show what each channel currently points at |
+
+State is tracked in `container/VERSIONS.json` (git-tracked, machine-managed). Full reference: `container/VERSIONING.md`.
+
+### Per-Group Channel via `/version`
+
+The `/version` host command has three forms:
+
+| Form | Effect |
+|------|--------|
+| `/version` | Show current channel, image tag, SDK/CLI versions, drift detection |
+| `/version stable` | Switch this group to the `:stable` channel |
+| `/version next` | Switch this group to the `:next` channel |
+
+Channel switches take effect on the next container spawn (running containers are unaffected until recycled). Gated via `allowedHostCommands: ['version']`.
+
+> **Session compatibility:** When switching between channels that cross an SDK major boundary (e.g., 0.2.x → 0.3.x), run `/newsession` after the switch to avoid session format pollution. See `container/VERSIONING.md` for details.
 
 ---
 
@@ -804,7 +914,7 @@ ZAI_API_KEY=...
 
 Each request from a container includes an `X-Nanoclaw-Endpoint` header with the vendor name. The proxy reads this header, selects the matching upstream URL and API key, strips the header before forwarding, and injects the real credential. If the header is absent or the vendor is unknown, it falls back to `anthropic`.
 
-Groups select their vendor via `containerConfig.endpoint` (see below). The container-facing `ANTHROPIC_BASE_URL` always points to the proxy — groups never need to know the real upstream URL.
+Groups select preset via `containerConfig.preset`; the resolved preset's `endpoint` field then routes to the matching `{VENDOR}_BASE_URL`/`{VENDOR}_API_KEY` pair in `secrets.env`. The container-facing `ANTHROPIC_BASE_URL` always points to the proxy — groups never need to know the real upstream URL.
 
 > The routing table is built once at proxy startup and held in memory only. Vendor names are lowercased to prevent case-based bypass. The `X-Nanoclaw-Endpoint` header is stripped before forwarding to prevent leakage.
 
@@ -878,9 +988,11 @@ Claude's built-in `WebSearch` and `WebFetch` tools are Anthropic server-side too
 > **Critical for non-Anthropic groups:** You MUST:
 > 1. Remove `WebSearch` and `WebFetch` from `allowedTools` (or explicitly exclude them)
 > 2. Add the `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
-> 3. Set `webSearchVendor` in `containerConfig`
+> 3. Ensure the resolved preset's `webSearchVendor` field is set
 >
 > If you don't do this, agents will attempt to use the built-in tools, get no results, and silently degrade.
+
+The resolved preset's `webSearchVendor` field (default: `"ollama"`) determines which vendor credentials the proxy injects.
 
 A dedicated MCP server (`nanoclaw-web-search`) provides `mcp__nanoclaw-web-search__web_search` and `mcp__nanoclaw-web-search__web_fetch` tools as replacements. Requests are routed through the credential proxy so API keys never reach the container.
 
@@ -894,11 +1006,10 @@ OLLAMA_WEB_SEARCH_BASE_URL=https://ollama.com/api
 OLLAMA_WEB_SEARCH_API_KEY=your-ollama-web-key
 ```
 
-2. Enable for a group via `containerConfig`:
+2. Enable for a group via preset (`webSearchVendor` on the preset) and `containerConfig.mcpServers`:
 
 ```json
 {
-  "webSearchVendor": "ollama",
   "mcpServers": {
     "nanoclaw-web-search": {
       "command": "node",
@@ -908,7 +1019,7 @@ OLLAMA_WEB_SEARCH_API_KEY=your-ollama-web-key
 }
 ```
 
-3. The agent-runner automatically sets `NANOCLAW_WEB_SEARCH_VENDOR` and `X-Nanoclaw-Web-Search-Vendor` header when `webSearchVendor` is configured.
+3. The agent-runner automatically sets `NANOCLAW_WEB_SEARCH_VENDOR` and `X-Nanoclaw-Web-Search-Vendor` header when `webSearchVendor` is configured on the resolved preset.
 
 **Routing:** The credential proxy intercepts `/web_search` and `/web_fetch` paths, resolves the vendor from the `X-Nanoclaw-Web-Search-Vendor` header, injects credentials, and forwards to the upstream. If the header is absent, falls back to `ollama`.
 
@@ -927,11 +1038,10 @@ NanoClaw's primary security boundary is container isolation — agents run in ep
 | `approvalMode` | `boolean` | `false` | Dangerous command approval via messaging channel |
 | `approvalTimeout` | `number` (10–600) | `120` | Seconds before an approval request auto-denies |
 | `commandAllowlist` | `string[]` | `[]` | Regex patterns for commands that skip approval |
-| `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory flush |
-| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
-| `webSearchVendor` | `string` | `undefined` | Routes web search through named vendor's proxy endpoint |
+| `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge |
+| `contextWindowSize` | `number` | `128000` | Token threshold for nudge (80% live, 50% nightly) |
 | `telegramBot` | `string` | `undefined` | Named Telegram bot instance for this group's outbound replies |
-| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model', 'version', 'newsession']` enables gated commands |
 
 Example with all security flags:
 
@@ -982,7 +1092,7 @@ Config pipeline: `containerConfig.ssrfProtection` → `buildContainerArgs()` ser
 
 Scans context files on the host before container launch. Detects patterns that could manipulate agent behaviour via poisoned memory or CLAUDE.md files.
 
-**What it scans:** `CLAUDE.md`, `memory/*.md` (MEMORY.md, COMPACT.md, daily notes), and `global/CLAUDE.md` — discovered by `discoverContextFiles()` in `src/lib/context-scanner.ts`. Files are truncated at 100KB for scanning.
+**What it scans:** `CLAUDE.md`, `memory/*.md` (MEMORY.md, daily notes), and `global/CLAUDE.md` — discovered by `discoverContextFiles()` in `src/lib/context-scanner.ts`. Files are truncated at 100KB for scanning.
 
 **Detection patterns (critical):**
 - Instruction override attempts ("ignore previous instructions", "you are now", "new instructions")
@@ -1065,30 +1175,30 @@ The `default.allow` field can also be an array: `["123456789", "9876543210"]`.
 **How it works:**
 - `trigger` mode: allowed senders can trigger the bot with the group's trigger word. Non-allowed senders' messages are stored but not processed.
 - `drop` mode: messages from non-allowed senders are silently discarded before storage (no DB row, no processing).
-- Host commands (`/model`, etc.) also require sender allowlist approval.
+- Host commands (`/model`, `/stop`, `/shutdown`, `/version`, `/newsession`) also require sender allowlist approval.
 
 ### Learning Loop (Skill Extraction)
 
 Enables agents to extract reusable patterns from successful sessions and persist them as skill files for future use.
 
 **How it works:**
-1. When `containerConfig.learningLoop` is truthy, the flush prompt (`buildFlushPrompt()`) includes a skill extraction step as step 1 (before memory/compact/daily-note).
+1. When `containerConfig.learningLoop` is truthy, the nudge prompt (`buildNudgePrompt()`) includes a skill extraction step (nightly only). Cap of 2 skills per nudge.
 2. The agent reviews the session for reusable patterns and writes up to 2 skill files to `extracted-skills/[skill-name].md` in the group folder.
 3. Each skill file has YAML frontmatter (`name`, `extracted`, `source_group`, `confidence`) and sections: When to Use, Pattern, Example, Notes.
-4. After flush, the host sends a notification to the group channel listing any skills extracted today.
+4. After nudge, the host sends a notification to the group channel listing any skills extracted today.
 
 **Skill loading at next session:**
 - `registerGroup()` creates `extracted-skills/` in the group folder.
 - `buildVolumeMounts()` copies valid extracted skill files into `skills/extracted/` (inside the session's `.claude/skills/` directory) when `learningLoop === true` (strict equality).
-- `false`, `undefined`, and `'extract-only'` all skip loading — `'extract-only'` extracts skills during flush but does not load them into future sessions.
+- `false`, `undefined`, and `'extract-only'` all skip loading — `'extract-only'` extracts skills during nudge but does not load them into future sessions.
 
 **Skill quality guide:** `container/skills/learning-loop/SKILL.md` defines the format, quality criteria, and confidence levels. Loaded when `learningLoop` is enabled.
 
 **File locations:**
 - Extracted skills: `groups/{folder}/extracted-skills/*.md`
 - Skill reader: `src/lib/skill-manager.ts` (`getExtractedSkills()`)
-- Flush prompt builder: `src/lib/flush-prompt.ts` (`buildFlushPrompt()`)
-- Container copy: `container/agent-runner/src/lib/flush-prompt.ts`
+- Nudge prompt builder: `src/lib/nudge-prompt.ts` (`buildNudgePrompt()`)
+- Container copy: `container/agent-runner/src/lib/nudge-prompt.ts`
 - Skill format guide: `container/skills/learning-loop/SKILL.md`
 
 ---
@@ -1105,8 +1215,7 @@ $NANOCLAW_ROOT/
 │   └── telegram_main/
 │       ├── CLAUDE.md                ← group personality (includes @import for memory)
 │       ├── memory/                  ← persistent agent memory
-│       │   ├── MEMORY.md            ← durable facts (survives session reset)
-│       │   ├── COMPACT.md           ← session summary (overwritten on flush)
+│       │   ├── MEMORY.md            ← durable facts (survives session reset, 5000 char cap)
 │       │   └── YYYY-MM-DD.md        ← daily notes
 │       ├── extracted-skills/        ← skills extracted by learning loop (when enabled)
 │       └── token-usage.log          ← input/output token counts per message
@@ -1122,6 +1231,12 @@ $NANOCLAW_ROOT/
 │   │   └── agent-runner-src/         ← per-group agent-runner copy
 │   └── ipc/<folder>/                 ← per-group IPC namespace
 ├── container/
+│   ├── Dockerfile
+│   ├── VERSIONING.md              ← Channel system reference
+│   ├── VERSIONS.json              ← Machine-managed version state
+│   ├── scripts/
+│   │   └── container.sh           ← Build, stage, promote, rollback, list, current
+│   ├── agent-runner/                 ← runs inside containers
 │   ├── skills/                       ← filesystem skills (copied per-group)
 │   │   ├── agent-browser/
 │   │   ├── capabilities/
@@ -1131,11 +1246,9 @@ $NANOCLAW_ROOT/
 │   │   └── status/
 │   ├── binaries/                     ← host-stored binaries (NOT in Docker image)
 │   │   └── agent-browser/            ← MUST be committed to git (51MB) — runtime source
-│   ├── mcp-servers/                  ← self-built MCP servers (built into Docker image)
-│   │   ├── brave-search/             ← Brave Search API wrapper
-│   │   └── nanoclaw-web-search/      ← Web search via credential proxy (any vendor)
-│   ├── agent-runner/                 ← runs inside containers
-│   └── Dockerfile
+│   └── mcp-servers/                  ← self-built MCP servers (built into Docker image)
+│       ├── brave-search/             ← Brave Search API wrapper
+│       └── nanoclaw-web-search/      ← Web search via credential proxy (any vendor)
 ├── store/
 │   └── messages.db                   ← SQLite (messages, groups, sessions, tasks)
 ├── logs/                             ← service logs (stdout.log)
@@ -1150,7 +1263,6 @@ Inside a running container:
 │   ├── CLAUDE.md    ← group personality (includes @import for memory)
 │   ├── memory/      ← persistent agent memory
 │   │   ├── MEMORY.md    ← durable facts
-│   │   ├── COMPACT.md   ← session summary
 │   │   └── YYYY-MM-DD.md ← daily notes
 │   └── token-usage.log  ← token counts per message
 ├── ipc/             ← per-group IPC (messages, tasks, input)
@@ -1192,23 +1304,22 @@ Use the global template (`groups/global/CLAUDE.md`) as the base for non-main gro
 - Routed messages handling
 - Delegated tasks handling (if the group participates in delegation)
 - `<internal>` tag usage
-- **Memory Protocol** — with `@import` directives:
+- **Memory Protocol** — with `@import` directive:
 
 ```markdown
 ## Memory Protocol
 
 @memory/MEMORY.md
-@memory/COMPACT.md
 
 You have a persistent memory system at `memory/`.
 
-- `memory/MEMORY.md` — durable facts (preferences, names, decisions). Write here immediately when you learn something lasting. Keep it concise — one line per fact.
+- `memory/MEMORY.md` — durable facts (preferences, names, decisions). Write here immediately when you learn something lasting. Keep it concise — one line per fact. 5000 character cap.
 - `memory/YYYY-MM-DD.md` — daily running notes (task state, observations, context from today's conversations). Create the file if it doesn't exist. Append, don't overwrite.
 
 Before ending any response where something important was discussed, check: should this be written to memory?
 ```
 
-The `@memory/MEMORY.md` and `@memory/COMPACT.md` lines are `@import` directives — the SDK expands them at container spawn time. If the files don't exist, the import silently resolves to empty content (no error, but no memory either).
+The `@memory/MEMORY.md` line is an `@import` directive — the SDK expands it at container spawn time. If the file doesn't exist, the import silently resolves to empty content (no error, but no memory either).
 
 - Channel-specific formatting rules (or reference to the formatting skill)
 
@@ -1221,15 +1332,7 @@ mkdir -p groups/{folder}/memory
 echo "# Memory" > groups/{folder}/memory/MEMORY.md
 ```
 
-This file is where the agent writes durable facts. Without it, the first flush will create it, but the agent won't have memory context until then.
-
-#### 3. `groups/{folder}/memory/COMPACT.md` (optional)
-
-```bash
-echo "# Compact" > groups/{folder}/memory/COMPACT.md
-```
-
-This is overwritten on each flush. Creating it upfront avoids a missing-file warning on the first `@import` expansion, though the SDK handles missing imports gracefully.
+This file is where the agent writes durable facts. Without it, the first nudge will create it, but the agent won't have memory context until then.
 
 ### Quick Setup Script
 
@@ -1240,18 +1343,17 @@ FOLDER="telegram_mygroup"
 mkdir -p groups/$FOLDER/memory
 cp groups/global/CLAUDE.md groups/$FOLDER/CLAUDE.md
 echo "# Memory" > groups/$FOLDER/memory/MEMORY.md
-echo "# Compact" > groups/$FOLDER/memory/COMPACT.md
 ```
 
 Then edit `groups/$FOLDER/CLAUDE.md` to customise the agent's identity and add any group-specific instructions.
 
 ### Non-Anthropic Groups — Additional Setup
 
-For groups using a non-Anthropic endpoint (e.g. `containerConfig.endpoint = "ollama"`), you must also configure web search correctly. See [Web Search Proxy](#web-search-proxy) for the full setup. Summary:
+For groups using a non-Anthropic endpoint (e.g. preset with `endpoint: "ollama"`), you must also configure web search correctly. See [Web Search Proxy](#web-search-proxy) for the full setup. Summary:
 
 1. Ensure `ANTHROPIC_API_KEY=placeholder` is in `secrets.env` (see [Auth Modes](#auth-modes-api-key-vs-oauth))
 2. Add `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
-3. Set `containerConfig.webSearchVendor`
+3. Ensure the preset's `webSearchVendor` field is set
 4. Remove `WebSearch` and `WebFetch` from `allowedTools` if you're using a custom tool list — or if using the default tool list, the built-in tools will be present but non-functional (they'll silently return nothing). The MCP tools (`mcp__nanoclaw-web-search__web_search`, `mcp__nanoclaw-web-search__web_fetch`) work regardless.
 
 ---
@@ -1277,6 +1379,25 @@ tail -f $NANOCLAW_ROOT/logs/stdout.log
 
 # Open Claude Code for NanoClaw config
 cd $NANOCLAW_ROOT && claude
+```
+
+### Container Channels
+
+```bash
+# Show what each channel currently points at
+./container/scripts/container.sh current
+
+# List all built versions
+./container/scripts/container.sh list
+
+# Stage a version on :next (canary)
+./container/scripts/container.sh stage v1.2.0
+
+# Promote a version to :stable
+./container/scripts/container.sh promote v1.2.0
+
+# Rollback :stable to previous version
+./container/scripts/container.sh rollback
 ```
 
 ### Clearing Chat History for a Group
@@ -1316,12 +1437,14 @@ NanoClaw has two build targets — the host process and the container image.
 | What changed | Action needed |
 |-------------|---------------|
 | `src/` (host code) | `npm run build` + restart service |
-| `container/agent-runner/` (code inside containers) | `./container/build.sh` |
-| `container/skills/` (skills loaded into containers) | `./container/build.sh` |
-| `container/mcp-servers/` (MCP servers built into image) | `./container/build.sh` |
-| `container/Dockerfile` | `./container/build.sh` |
+| `container/agent-runner/` (code inside containers) | `./container/scripts/container.sh build <version>` |
+| `container/skills/` | `./container/scripts/container.sh build <version>` |
+| `container/mcp-servers/` | `./container/scripts/container.sh build <version>` |
+| `container/Dockerfile` | `./container/scripts/container.sh build <version>` |
 | `container/binaries/agent-browser/` | No rebuild needed — mounted at runtime |
-| Both `src/` and `container/` | `npm run build` + `./container/build.sh` + restart service |
+| Both `src/` and `container/` | `npm run build` + `./container/scripts/container.sh build <version>` + restart service |
+
+Builds produce immutable versioned tags. To make a new build the default, promote it explicitly: `./container/scripts/container.sh promote <version>`. See `container/VERSIONING.md` for full reference.
 
 If you only change host code, you do NOT need to rebuild the container image. If you only change container code, you do NOT need to restart the service (new containers pick up the new image automatically).
 
@@ -1332,7 +1455,7 @@ If you only change host code, you do NOT need to rebuild the container image. If
 When working on NanoClaw tasks:
 
 - NanoClaw codebase lives at `$NANOCLAW_ROOT/`
-- Mount configuration is in `src/container-runner.ts` (`buildVolumeMounts()`)
+- Mount configuration is in `src/container-runtime.ts` (`buildVolumeMounts()`)
 - Group registration and `containerConfig` are in the `registered_groups` SQLite table
 - The agent-runner at `container/agent-runner/src/index.ts` controls SDK invocation
 - Session IDs flow: container output → `src/index.ts` → SQLite `sessions` table → next container input
@@ -1340,12 +1463,15 @@ When working on NanoClaw tasks:
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 - Tests: `npm test` (vitest, currently ~360 tests)
 - Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup
-- Context flush: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, 50% nightly); `src/nightly-maintenance.ts` orchestrates nightly cron
+- Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, 50% nightly); `src/nightly-maintenance.ts` orchestrates nightly cron; `buildNudgePrompt()` in `src/lib/nudge-prompt.ts` is the single source of truth
+- Model presets: `src/presets.ts` (`loadPresets`, `resolvePreset`, `getAvailablePresetNames`); preset file at `~/.config/nanoclaw/model-presets.json`; only `containerConfig.preset` stored in DB
 - Delegation: `delegations` table + `delegate_to_group`/`respond_to_group` MCP tools; `multi_agent_router` flag enables hub routing
-- Web search: `nanoclaw-web-search` MCP server + `{VENDOR}_WEB_SEARCH_BASE_URL`/`{VENDOR}_WEB_SEARCH_API_KEY` in secrets.env
+- Web search: `nanoclaw-web-search` MCP server + `{VENDOR}_WEB_SEARCH_BASE_URL`/`{VENDOR}_WEB_SEARCH_API_KEY` in secrets.env; vendor resolved from preset's `webSearchVendor` field
 - Auth mode: `detectAuthMode()` in `src/credential-proxy.ts` checks for `ANTHROPIC_API_KEY` — must be present (even as `placeholder`) for non-Anthropic endpoints to avoid OAuth login prompt
 - Endpoint URLs: LLM base URLs must NOT include `/v1` (SDK adds it); web search base URLs SHOULD include the API path prefix (MCP server adds `/web_search` or `/web_fetch`)
 - Group creation: `register_group` does NOT create `CLAUDE.md` or `memory/` — these must be created manually using the global/main template
 - Skills: `container/skills/capabilities/SKILL.md` and `container/skills/status/SKILL.md` list web search tools as `mcp__nanoclaw-web-search__*` — these are only available when the group has the MCP server configured via `containerConfig.mcpServers`
 - Security features: SSRF (`src/lib/ssrf-validator.ts`), injection scanning (`src/lib/context-scanner.ts` + `src/lib/injection-scanner.ts`), command approval (`src/lib/command-approval.ts`), config validation (`src/lib/config-validator.ts`) — all behind `containerConfig` flags
-- Learning loop: `src/lib/flush-prompt.ts` (`buildFlushPrompt()`), `src/lib/skill-manager.ts` (`getExtractedSkills()`), `container/skills/learning-loop/SKILL.md` — enabled via `containerConfig.learningLoop`
+- Learning loop: `src/lib/nudge-prompt.ts` (`buildNudgePrompt()`), `src/lib/skill-manager.ts` (`getExtractedSkills()`), `container/skills/learning-loop/SKILL.md` — enabled via `containerConfig.learningLoop`
+- Host commands: `repo/src/host-commands.ts` defines all handlers. Ungated (`/stop`, `/shutdown`) only check sender allowlist. Gated (`/model`, `/version`, `/newsession`) also check `containerConfig.allowedHostCommands`. Post-exit work uses `queue.onAfterExit(jid, cb)` so the work runs after the container actually exits, not before.
+- Container channel routing: `:stable`/`:next` aliases over immutable versioned tags. `resolveImageTag(channel)` in `src/container-runtime.ts` resolves the tag at spawn time. Per-group via `registered_groups.container_channel`. Manage via `./container/scripts/container.sh`. See `container/VERSIONING.md`.

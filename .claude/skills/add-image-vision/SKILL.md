@@ -1,94 +1,86 @@
 ---
 name: add-image-vision
-description: Add image vision to NanoClaw agents. Resizes and processes WhatsApp image attachments, then sends them to Claude as multimodal content blocks.
+description: Image vision support for NanoClaw agents. When a group's preset has capabilities.vision enabled, agents receive images as multimodal content blocks and can send attachments back via the send_attachment MCP tool.
 ---
 
-# Image Vision Skill
+# Image Vision
 
-Adds the ability for NanoClaw agents to see and understand images sent via WhatsApp. Images are downloaded, resized with sharp, saved to the group workspace, and passed to the agent as base64-encoded multimodal content blocks.
+NanoClaw agents can see and understand images sent by users when the group's resolved preset has `capabilities.vision: true`. Images are resized, normalized, and passed to the agent as base64-encoded multimodal content blocks.
 
-## Phase 1: Pre-flight
+## Prerequisites
 
-1. Check if `src/image.ts` exists — skip to Phase 3 if already applied
-2. Confirm `sharp` is installable (native bindings require build tools)
+- The group must use a preset with `"capabilities": { "vision": true }` in `~/.config/nanoclaw/model-presets.json`
+- `sharp` must be installed (`npm ls sharp` to verify)
 
-**Prerequisite:** WhatsApp must be installed first (`skill/whatsapp` merged). This skill modifies WhatsApp channel files.
+## How It Works
 
-## Phase 2: Apply Code Changes
+### Inbound Images (User → Agent)
 
-### Ensure WhatsApp fork remote
+1. **Image extraction**: The message loop matches `[Photo]: /path caption` patterns in incoming messages
+2. **Vision gate**: Images are only processed when the resolved preset's `capabilities.vision` is `true`
+3. **Encoding pipeline** (`src/image.ts`):
+   - Validates file exists and is a supported format (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`)
+   - Resizes to fit within 1568×1568px (Claude's recommended max), maintaining aspect ratio, without upscaling
+   - Normalizes to JPEG at 85% quality
+   - Base64 encodes the result
+4. **Payload limit**: 10MB total per message batch — images are truncated if exceeded
+5. **Delivery**: Images are passed via `ContainerInput.images` to the container, where the agent-runner builds multimodal content blocks using `pushMultimodal()`
 
-```bash
-git remote -v
+### IPC Piped Images
+
+When images arrive while a container is already running, they are piped via IPC JSON with an `images` array field. The agent-runner uses `pushMultimodal()` to inject them into the active conversation.
+
+### Outbound Attachments (Agent → User)
+
+Agents can send files back to users via the `send_attachment` MCP tool:
+
+```
+mcp__nanoclaw__send_attachment(
+  file_path="/workspace/group/media/chart.png",
+  caption="Here's the chart you requested"
+)
 ```
 
-If `whatsapp` is missing, add it:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file_path` | string | yes | Absolute path within `/workspace/group/` |
+| `caption` | string | no | Caption/description sent with the file |
+| `target_jid` | string | no | (Main group only) Target group JID |
 
-```bash
-git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git
-```
+**Security**: The file must exist within `/workspace/group/`. Path traversal is blocked.
 
-### Merge the skill branch
+**Host resolution**: The container path (`/workspace/group/media/file.jpg`) is resolved to the host path (`groups/{folder}/media/file.jpg`) by the IPC handler before routing to the channel.
 
-```bash
-git fetch whatsapp skill/image-vision
-git merge whatsapp/skill/image-vision || {
-  git checkout --theirs package-lock.json
-  git add package-lock.json
-  git merge --continue
-}
-```
+**Channel routing** (Telegram): Files are sent as photo (jpg/png/webp/gif), video (mp4/mov/avi/mkv), or document (everything else) based on extension.
 
-This merges in:
-- `src/image.ts` (image download, resize via sharp, base64 encoding)
-- `src/image.test.ts` (8 unit tests)
-- Image attachment handling in `src/channels/whatsapp.ts`
-- Image passing to agent in `src/index.ts` and `src/container-runner.ts`
-- Image content block support in `container/agent-runner/src/index.ts`
-- `sharp` npm dependency in `package.json`
+## Enabling Vision for a Group
 
-If the merge reports conflicts, resolve them by reading the conflicted files and understanding the intent of both sides.
-
-### Validate code changes
-
-```bash
-npm install
-npm run build
-npx vitest run src/image.test.ts
-```
-
-All tests must pass and build must be clean before proceeding.
-
-## Phase 3: Configure
-
-1. Rebuild the container (agent-runner changes need a rebuild):
-   ```bash
-   ./container/build.sh
+1. Ensure the group's preset has vision enabled:
+   ```json
+   {
+     "sonnet_4.5": {
+       "endpoint": "anthropic",
+       "model": "claude-sonnet-4-5-20250514",
+       "capabilities": { "vision": true, "tools": true },
+       "contextWindow": 200000
+     }
+   }
    ```
 
-2. Sync agent-runner source to group caches:
-   ```bash
-   for dir in data/sessions/*/agent-runner-src/; do
-     cp container/agent-runner/src/*.ts "$dir"
-   done
-   ```
-
-3. Restart the service:
-   ```bash
-   launchctl kickstart -k gui/$(id -u)/com.nanoclaw
-   ```
-
-## Phase 4: Verify
-
-1. Send an image in a registered WhatsApp group
-2. Check the agent responds with understanding of the image content
-3. Check logs for "Processed image attachment":
-   ```bash
-   tail -50 groups/*/logs/container-*.log
-   ```
+2. Assign the preset to the group via `/model sonnet_4.5` or by setting `containerConfig.preset` directly.
 
 ## Troubleshooting
 
-- **"Image - download failed"**: Check WhatsApp connection stability. The download may timeout on slow connections.
+- **Agent doesn't mention image content**: Check that the group's preset has `capabilities.vision: true`. Check container logs for "Loaded image" messages.
 - **"Image - processing failed"**: Sharp may not be installed correctly. Run `npm ls sharp` to verify.
-- **Agent doesn't mention image content**: Check container logs for "Loaded image" messages. If missing, ensure agent-runner source was synced to group caches.
+- **send_attachment fails**: Ensure the file path is absolute and within `/workspace/group/`. Check that the file exists in the container.
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/image.ts` | Image encoding pipeline (resize, normalize, base64) |
+| `src/presets.ts` | Preset resolution — `capabilities.vision` gate |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | `send_attachment` MCP tool registration |
+| `src/ipc.ts` | Host-side attachment IPC handling |
+| `src/types.ts` | `ContainerInput.images`, `Channel.sendAttachment` |

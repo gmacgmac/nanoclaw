@@ -46,7 +46,7 @@ Read the allowed tools from your SDK configuration. You always have access to:
 
 NanoClaw exposes tools via the `mcp__nanoclaw__*` prefix. Use them as needed — full descriptions, parameters, and usage guidance are built into the tool definitions.
 
-- `send_message`, `schedule_task`, `list_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `execute_command`, `ping`
+- `send_message`, `send_attachment`, `schedule_task`, `list_tasks`, `get_task`, `search_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `execute_command`, `ping`
 
 ### 4. Container skills (Bash tools)
 

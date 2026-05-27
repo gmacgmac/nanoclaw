@@ -42,52 +42,35 @@ Current containerConfig for '<folder>':
 AskUserQuestion (multiSelect): "What would you like to configure?"
 
 Options:
-- Model & Endpoint (model, endpoint, contextWindowSize)
+- Model Preset (preset selection via model-presets.json)
 - Tools & Skills (allowedTools, skills)
 - Host Commands (allowedHostCommands)
 - Security & Permissions (ssrfProtection, injectionScanMode, approvalMode, approvalTimeout, commandAllowlist, learningLoop)
 - Mounts & Filesystem (additionalMounts)
-- MCP Servers (mcpServers, webSearchVendor)
+- MCP Servers (mcpServers)
 - Personality (systemPrompt, timeout)
 
 For each selected category, ask the questions below. Use current values as defaults.
 
-### 4. Category: Model & Endpoint
+### 4. Category: Model Preset
 
-**Endpoint:**
+**Preset Selection:**
 
-Read available vendors from `~/.config/nanoclaw/secrets.env`:
+Read available presets from `~/.config/nanoclaw/model-presets.json`:
 
 ```bash
-grep "_BASE_URL=" ~/.config/nanoclaw/secrets.env | sed 's/_BASE_URL=.*//' | tr '[:upper:]' '[:lower:]'
+cat ~/.config/nanoclaw/model-presets.json | python3 -c "import sys,json; [print(f'  {k}: {v[\"endpoint\"]}/{v[\"model\"]}') for k,v in json.load(sys.stdin).items()]"
 ```
 
-AskUserQuestion: "Which endpoint should this group use?"
-- anthropic (default)
-- ollama
-- zai
-- ... (any vendors found in secrets.env)
+AskUserQuestion: "Which preset should this group use?"
+- List all available preset names with their endpoint/model
+- (current preset shown as default)
 
-Store as `endpoint`.
+Store as `preset`.
 
-**Model:**
+> **Note:** Presets define endpoint, model, capabilities (vision, tools), contextWindow, and webSearchVendor. These fields are no longer stored directly in containerConfig — they are resolved at runtime from the preset name via `resolvePreset()`.
 
-AskUserQuestion: "Set a specific model for this group?"
-- Use preset / inherit from settings.json (recommended)
-- Set custom model (e.g. claude-opus-4-7, glm-5:cloud, sonnet, haiku)
-
-If custom: AskUserQuestion (free text): "Enter model name:" → store as `model`.
-If inherit: AskUserQuestion: "Remove database override so group uses settings.json?" → if yes, record `model` for removal.
-
-**Context Window Size:**
-
-AskUserQuestion: "Context window size (tokens)?"
-- 128000 (default)
-- 64000
-- 200000
-- Custom (free text)
-
-Store as `contextWindowSize`.
+**Switching presets at runtime:** Users can also switch presets via the `/model <preset>` host command (requires `allowedHostCommands: ['model']`). The container is recycled on switch.
 
 ### 5. Category: Tools & Skills
 
@@ -156,15 +139,53 @@ If specific skills selected: set `skills` to the selected array.
 
 ### 6. Category: Host Commands
 
-**Allowed Host Commands:**
+Host commands are intercepted on the host process before reaching the agent container. They split into **ungated** (always available) and **gated** (require `allowedHostCommands` entry).
+
+All host commands require the sender to be on the sender allowlist (`~/.config/nanoclaw/sender-allowlist.json`).
+
+#### Ungated Commands (always available)
+
+| Command | Behaviour | Reply Pattern |
+|---------|-----------|---------------|
+| `/stop` | Aborts the in-flight model request via AbortController. Session preserved — next message resumes the same conversation. | Single deferred reply after container exits: `"⏹ Stopped. Next message continues the conversation."` |
+| `/shutdown` | Stops the container. Session preserved — next message starts a new container with the same session. | Single deferred reply after container exits: `"Container stopped. Next message will start a new container with the same session."` |
+
+#### Gated Commands (require `allowedHostCommands` config)
+
+| Command | Behaviour | Reply Pattern |
+|---------|-----------|---------------|
+| `/model [<preset>]` | No args: shows active preset + available list. With arg: switches to the named preset, recycles container, sanitizes session JSONL for cross-provider safety. | Two-message UX: Reply 1 `"Switching to <preset>..."` (immediate), Reply 2 `"Switched to <preset> (endpoint / model)."` (after container exits) |
+| `/version [info\|stable\|next]` | No args: shows current channel, image tag, SDK/CLI versions, drift detection. With arg: switches the group's container channel, recycles container. | Two-message UX: Reply 1 `"Switching to channel <ch>..."` (immediate), Reply 2 `"✅ Switched to channel: <ch>."` (after container exits) |
+| `/newsession` | Stops container, deletes session from memory + SQLite. JSONL transcript left on disk. Next message starts a completely fresh session. | Two-message UX: Reply 1 `"Clearing session..."` (immediate), Reply 2 `"Session cleared. Next message starts fresh."` (after container exits) |
+
+#### How the Two-Message UX Works
+
+Gated commands that do post-shutdown work use an `onAfterExit` queue pattern:
+1. **Reply 1** arrives immediately — confirms the command was received
+2. The container is told to shut down (`closeStdin` writes `_close` sentinel)
+3. After the container actually exits, the post-exit callback runs (DB update, session clear, etc.)
+4. **Reply 2** arrives — confirms the work is done
+
+For `/stop` and `/shutdown` (ungated), there is no Reply 1 — only a single deferred message after the container exits. This is because they don't do additional work; the reply just confirms truthful timing.
+
+#### Enabling Gated Commands
 
 AskUserQuestion (multiSelect): "Which host commands should be enabled for this group?"
 
 Options:
 - model (enables `/model` to switch model presets)
+- version (enables `/version` to show/switch container channel)
+- newsession (enables `/newsession` to reset the session)
 - None (secure default)
 
 Store as `allowedHostCommands`. If "None" selected, set to `[]` or undefined.
+
+Example:
+```json
+{
+  "allowedHostCommands": ["model", "version", "newsession"]
+}
+```
 
 ### 7. Category: Security & Permissions
 
@@ -241,8 +262,7 @@ AskUserQuestion: "Enable web search for this group?"
 - Yes — use nanoclaw-web-search MCP server
 
 If yes:
-- Read web search vendors from `secrets.env` (`*_WEB_SEARCH_BASE_URL`)
-- AskUserQuestion: "Which web search vendor?" → store as `webSearchVendor`
+- The web search vendor is determined by the group's resolved preset (`webSearchVendor` field). Ensure the preset has the correct vendor configured.
 - Add `nanoclaw-web-search` to `mcpServers`
 
 **Brave Search:**
@@ -279,11 +299,9 @@ After collecting changes, show a summary:
 
 ```
 Changes for '<folder>':
-  endpoint: "ollama"
-  + allowedHostCommands: ["model"]
+  ~ preset: "ollama_k2.6"
+  + allowedHostCommands: ["model", "version", "newsession"]
   ~ allowedTools: ["Read", "Write", "Grep", "Bash"]
-  - model (removed)
-  ~ contextWindowSize: 128000
 ```
 
 Use `+` for additions, `~` for changes, `-` for removals.
@@ -293,14 +311,14 @@ AskUserQuestion: "Apply these changes?"
 If yes, build `json_set` / `json_remove` commands:
 
 ```bash
-# Example: set endpoint and allowedHostCommands, remove model
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(json_remove(container_config, '$.model'), '$.endpoint', 'ollama'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
+# Example: set preset and allowedHostCommands
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(container_config, '$.preset', 'ollama_k2.6'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
 ```
 
 **Important:** Chain multiple operations into a single UPDATE statement. SQLite's JSON functions are composable:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(json_remove(container_config, '$.model'), '$.endpoint', 'ollama'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(container_config, '$.preset', 'ollama_k2.6'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
 ```
 
 Verify:
@@ -313,9 +331,9 @@ Show the updated config and confirm success.
 
 ### 12. Post-Configuration
 
-If `endpoint` or `model` was changed:
+If `preset` was changed:
 
-> **Note:** The next message to this group will spawn a fresh container with the new config. You do not need to restart NanoClaw for containerConfig changes to take effect.
+> **Note:** The next message to this group will spawn a fresh container with the new preset. You do not need to restart NanoClaw for containerConfig changes to take effect.
 
 If the group is currently active (has a running container), you may want to recycle it:
 
@@ -324,28 +342,21 @@ If the group is currently active (has a running container), you may want to recy
 docker ps --filter "name=nanoclaw-<folder>" --format "{{.Names}}" | xargs -r docker stop
 ```
 
-If `settings.json` was involved (model override removed), mention:
-
-> The group will now use `data/sessions/<folder>/.claude/settings.json` for its model. If that file doesn't exist, the SDK falls back to `.env` → `ANTHROPIC_MODEL`.
-
 ---
 
 ## Full containerConfig Reference
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `endpoint` | `string` | `"anthropic"` | Named vendor from `secrets.env` (e.g. `"ollama"`, `"zai"`) |
+| `preset` | `string` | `undefined` | Named model preset from `~/.config/nanoclaw/model-presets.json` — resolves endpoint, model, capabilities, contextWindow, webSearchVendor |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none |
 | `allowedTools` | `string[]` | `undefined` = default | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
-| `model` | `string` | `undefined` = inherit | Per-group model override |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
-| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush |
-| `webSearchVendor` | `string` | `undefined` | Web search vendor routing |
 | `telegramBot` | `string` | `undefined` | Named Telegram bot instance |
-| `allowedHostCommands` | `string[]` | `undefined` = none | Host command allowlist |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Gated host command allowlist (`'model'`, `'version'`, `'newsession'`) |
 | `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning |
 | `approvalMode` | `boolean` | `false` | Command approval gate |

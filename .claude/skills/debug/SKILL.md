@@ -105,7 +105,7 @@ grep "Credential proxy" logs/nanoclaw.log | tail -3
 
 To check what's mounted inside a container:
 ```bash
-docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c 'ls -la /workspace/'
+docker run --rm --entrypoint /bin/bash nanoclaw-agent:stable -c 'ls -la /workspace/'
 ```
 
 Expected structure:
@@ -125,7 +125,7 @@ Expected structure:
 
 The container runs as user `node` (uid 1000). Check ownership:
 ```bash
-docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c '
+docker run --rm --entrypoint /bin/bash nanoclaw-agent:stable -c '
   whoami
   ls -la /workspace/
   ls -la /app/
@@ -150,7 +150,7 @@ grep -A3 "Claude sessions" src/container-runner.ts
 ```bash
 docker run --rm --entrypoint /bin/bash \
   -v ~/.claude:/home/node/.claude \
-  nanoclaw-agent:latest -c '
+  nanoclaw-agent:stable -c '
 echo "HOME=$HOME"
 ls -la $HOME/.claude/projects/ 2>&1 | head -5
 '
@@ -189,12 +189,12 @@ echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMai
   -v $(pwd)/data/ipc:/workspace/ipc \
   -e ANTHROPIC_BASE_URL=http://host.docker.internal:3001 \
   -e ANTHROPIC_API_KEY=placeholder \
-  nanoclaw-agent:latest
+  nanoclaw-agent:stable
 ```
 
 ### Interactive shell in container:
 ```bash
-docker run --rm -it --entrypoint /bin/bash nanoclaw-agent:latest
+docker run --rm -it --entrypoint /bin/bash nanoclaw-agent:stable
 ```
 
 ## SDK Options Reference
@@ -223,13 +223,15 @@ query({
 # Rebuild main app
 npm run build
 
-# Rebuild container (use --no-cache for clean rebuild)
-./container/build.sh
+# Rebuild container with explicit version tag
+./container/scripts/container.sh build v1.x.0
 
-# Or force full rebuild
+# Or force full rebuild (prune cache first)
 docker builder prune -af
-./container/build.sh
+./container/scripts/container.sh build v1.x.0
 ```
+
+> **Note:** Direct `./container/build.sh` invocations without a version arg are rejected. Always use `container.sh build <version>`. See `container/VERSIONING.md` for the full channel system.
 
 ## Checking Container Image
 
@@ -237,8 +239,8 @@ docker builder prune -af
 # List images
 docker images
 
-# Check what's in the image
-docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c '
+# Check what's in the image (use :stable or a specific version tag)
+docker run --rm --entrypoint /bin/bash nanoclaw-agent:stable -c '
   echo "=== Node version ==="
   node --version
 
@@ -248,6 +250,9 @@ docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c '
   echo "=== Installed packages ==="
   ls /app/node_modules/
 '
+
+# Check current channel state
+./container/scripts/container.sh current
 ```
 
 ## Session Persistence
@@ -320,7 +325,7 @@ echo -e "\n3. Container runtime running?"
 docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker Desktop (macOS) or sudo systemctl start docker (Linux)"
 
 echo -e "\n4. Container image exists?"
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
+echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:stable "OK" 2>/dev/null || echo "MISSING - run ./container/scripts/container.sh build <version>"
 
 echo -e "\n5. Session mount path correct?"
 grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"
