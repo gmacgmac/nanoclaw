@@ -270,7 +270,7 @@ Changes to TypeScript source or skills appear automatically on the next containe
 rm -rf container/agent-runner/dist   # Clear local dist (BuildKit may cache it)
 docker builder prune -f              # Prune BuildKit cache
 ./container/build.sh                 # Rebuild
-docker ps --filter ancestor=nanoclaw-agent:latest -q | xargs -r docker kill  # Stop old containers
+docker ps --filter ancestor=nanoclaw-agent:stable -q | xargs -r docker kill  # Stop old containers
 ```
 
 **If agent reports outdated tools after image rebuild**, the session transcript may have cached tool definitions. Clear it:

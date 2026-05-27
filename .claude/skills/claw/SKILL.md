@@ -21,7 +21,7 @@ description: Install the claw CLI tool — run NanoClaw agent containers from th
 ## Prerequisites
 
 - Python 3.8 or later
-- NanoClaw installed with a built and tagged container image (`nanoclaw-agent:latest`)
+- NanoClaw installed with a built and tagged container image (`nanoclaw-agent:stable`)
 - Either `container` (Apple Container, macOS 15+) or `docker` available in `PATH`
 
 ## Install
@@ -112,7 +112,7 @@ The script auto-detects your NanoClaw directory and reads `~/.config/nanoclaw/se
 
 ### Container times out
 
-The default timeout is 300 seconds. For longer tasks, pass `--timeout 600` (or higher). If the container consistently hangs, check that your `nanoclaw-agent:latest` image is up to date by running `./container/build.sh`.
+The default timeout is 300 seconds. For longer tasks, pass `--timeout 600` (or higher). If the container consistently hangs, check that your `nanoclaw-agent:stable` image is up to date by running `./container/scripts/container.sh build <version>`.
 
 ### "group not found"
 

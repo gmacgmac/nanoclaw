@@ -289,25 +289,55 @@ Do not duplicate formatting rules in CLAUDE.md — point to the skill instead. D
 
 ---
 
+## MCP Tools Reference
+
+All tools are exposed via the `mcp__nanoclaw__` prefix inside containers. This is the authoritative access-control reference.
+
+#### Messaging
+
+| Tool | Access | Purpose |
+|------|--------|---------|
+| `send_message` | Any group | Send a message mid-run (progress updates, cross-group via `target_jid`) |
+| `send_attachment` | Any group | Send a file (image, video, document) to the user. Validates path within `/workspace/group/`. |
+
+#### Delegation
+
+| Tool | Access | Purpose |
+|------|--------|---------|
+| `delegate_to_group` | Main only | Dispatch a task to a target group, returns a UUID for correlation |
+| `respond_to_group` | Any group | Respond to a pending delegation (validates UUID + caller identity) |
+
+#### Scheduling
+
+| Tool | Access | Purpose |
+|------|--------|---------|
+| `schedule_task` | Any group | Create a scheduled task. Main can target any group; others target self only. |
+| `list_tasks` | Any group | List own group's tasks (description + prompt preview) |
+| `get_task` | Any group | Full task detail by ID (own group only) |
+| `search_tasks` | Any group | Substring/regex search of own group's tasks |
+| `update_task` | Any group | Modify own group's task (prompt, schedule, description, etc.) |
+| `pause_task` | Any group | Pause a scheduled task |
+| `resume_task` | Any group | Resume a paused task |
+| `cancel_task` | Any group | Cancel and delete a task |
+
+For the full scheduler model and visibility rules see [README-SCHEDULED-TASKS.md](./README-SCHEDULED-TASKS.md).
+
+#### Administration
+
+| Tool | Access | Purpose |
+|------|--------|---------|
+| `register_group` | Main only | Register a new chat/group (see [Group Creation Checklist](#group-creation-checklist)) |
+| `get_registered_groups` | Any group | List all registered groups and their JIDs (for `target_jid` discovery) |
+| `execute_command` | Any group | Run a shell command on the host (dangerous commands require user approval — see [Command Approval](#command-approval)) |
+| `ping` | Any group | Diagnostic — returns pong |
+
+---
+
 ## Multi-Agent Delegation
 
 Agents can delegate tasks to other registered groups and receive responses back. This enables orchestration patterns where a hub agent dispatches work to specialized sub-agents.
 
-### MCP Tools
-
-| Tool | Who Can Use | Purpose |
-|------|-------------|---------|
-| `delegate_to_group` | Main group only | Send a task to a target group, get a UUID for correlation |
-| `respond_to_group` | Any group | Respond to a pending delegation (validates UUID, caller identity) |
-| `send_attachment` | Any group | Send a file (image, video, document) from the container back to the user via the channel. Validates path within `/workspace/group/`. |
-| `schedule_task` | Any group | Create a scheduled task. Can target own group or another group. `description` required. |
-| `list_tasks` | Any group | List own group's tasks. Shows description + prompt preview. |
-| `get_task` | Any group | Fetch full task record by ID (own group only). |
-| `search_tasks` | Any group | Substring or regex search of own group's tasks. |
-| `update_task` | Any group | Modify own group's task (prompt, description, schedule, etc.). |
-| `pause_task` / `resume_task` / `cancel_task` | Any group | Lifecycle control of own group's tasks. |
-
-For the full scheduler model, tool reference, and visibility rules see [README-SCHEDULED-TASKS.md](./README-SCHEDULED-TASKS.md).
+See [MCP Tools Reference](#mcp-tools-reference) for the full tool table and access control.
 
 **`delegate_to_group`** parameters:
 - `target_jid` — the JID of the target group (e.g. `tg:12345@internal`)

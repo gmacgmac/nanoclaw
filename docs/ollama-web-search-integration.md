@@ -46,7 +46,7 @@ Convention: `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY`. Scan
 
 ```json
 {
-  "webSearchVendor": "ollama",
+  "preset": "ollama-llama4",
   "mcpServers": {
     "nanoclaw-web-search": {
       "command": "node",
@@ -56,7 +56,7 @@ Convention: `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY`. Scan
 }
 ```
 
-`webSearchVendor` defaults to `"ollama"` if omitted.
+`webSearchVendor` is resolved from the group's preset (via `resolvePreset()`), not stored directly in `containerConfig`. Defaults to `"ollama"` if the preset omits it.
 
 ## MCP Tools
 
@@ -71,7 +71,7 @@ Convention: `{VENDOR}_WEB_SEARCH_BASE_URL` + `{VENDOR}_WEB_SEARCH_API_KEY`. Scan
 |------|------|
 | `src/env.ts` | `scanWebSearchEndpoints()` — discovers vendor pairs |
 | `src/credential-proxy.ts` | Path-based routing for `/web_search`, `/web_fetch` |
-| `src/types.ts` | `webSearchVendor?: string` on `ContainerConfig` |
+| `src/types.ts` | `preset?: string` on `ContainerConfig` (vendor resolved from preset at runtime) |
 | `src/container-runner.ts` | Injects `NANOCLAW_WEB_SEARCH_VENDOR`, proxy host/port env vars |
 | `container/mcp-servers/nanoclaw-web-search/` | MCP server (web_search + web_fetch tools) |
 | `container/agent-runner/src/index.ts` | Appends `X-Nanoclaw-Web-Search-Vendor` to `ANTHROPIC_CUSTOM_HEADERS` |
