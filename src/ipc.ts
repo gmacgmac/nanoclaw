@@ -409,14 +409,16 @@ export async function processTaskIpcRequest(
         updates.schedule_value = data.schedule_value as string;
 
       // Recompute next_run if schedule changed
-      if (data.schedule_type !== undefined || data.schedule_value !== undefined) {
+      if (
+        data.schedule_type !== undefined ||
+        data.schedule_value !== undefined
+      ) {
         const merged = { ...task, ...updates };
         if (merged.schedule_type === 'cron') {
           try {
-            const interval = CronExpressionParser.parse(
-              merged.schedule_value,
-              { tz: TIMEZONE },
-            );
+            const interval = CronExpressionParser.parse(merged.schedule_value, {
+              tz: TIMEZONE,
+            });
             updates.next_run = interval.next().toISOString();
           } catch {
             writeIpcResponse(sourceGroup, correlationId, {

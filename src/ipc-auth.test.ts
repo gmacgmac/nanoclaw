@@ -24,10 +24,7 @@ const TEST_DATA_DIR = path.join(
 );
 
 vi.mock('./config.js', () => ({
-  DATA_DIR: path.join(
-    os.tmpdir(),
-    `nanoclaw-ipc-auth-test-${process.pid}`,
-  ),
+  DATA_DIR: path.join(os.tmpdir(), `nanoclaw-ipc-auth-test-${process.pid}`),
   IPC_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
 }));
@@ -327,7 +324,11 @@ describe('pause_task authorization', () => {
 
   it('missing task ID: returns uniform error', async () => {
     await processTaskIpcRequest(
-      { type: 'pause_task_request', taskId: 'nonexistent', correlationId: 'c5' },
+      {
+        type: 'pause_task_request',
+        taskId: 'nonexistent',
+        correlationId: 'c5',
+      },
       'whatsapp_main',
       true,
       deps,
@@ -358,7 +359,11 @@ describe('resume_task authorization', () => {
 
   it('own-group success: non-main group can resume its own task', async () => {
     await processTaskIpcRequest(
-      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r1' },
+      {
+        type: 'resume_task_request',
+        taskId: 'task-paused',
+        correlationId: 'r1',
+      },
       'other-group',
       false,
       deps,
@@ -372,7 +377,11 @@ describe('resume_task authorization', () => {
 
   it('cross-group deny: main group cannot resume another groups task', async () => {
     await processTaskIpcRequest(
-      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r2' },
+      {
+        type: 'resume_task_request',
+        taskId: 'task-paused',
+        correlationId: 'r2',
+      },
       'whatsapp_main',
       true,
       deps,
@@ -385,7 +394,11 @@ describe('resume_task authorization', () => {
 
   it('cross-group deny: non-main group cannot resume another groups task', async () => {
     await processTaskIpcRequest(
-      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r3' },
+      {
+        type: 'resume_task_request',
+        taskId: 'task-paused',
+        correlationId: 'r3',
+      },
       'third-group',
       false,
       deps,
@@ -398,7 +411,11 @@ describe('resume_task authorization', () => {
 
   it('missing task ID: returns uniform error', async () => {
     await processTaskIpcRequest(
-      { type: 'resume_task_request', taskId: 'nonexistent', correlationId: 'r4' },
+      {
+        type: 'resume_task_request',
+        taskId: 'nonexistent',
+        correlationId: 'r4',
+      },
       'other-group',
       false,
       deps,
@@ -427,7 +444,11 @@ describe('cancel_task authorization', () => {
     });
 
     await processTaskIpcRequest(
-      { type: 'cancel_task_request', taskId: 'task-main-cancel', correlationId: 'k1' },
+      {
+        type: 'cancel_task_request',
+        taskId: 'task-main-cancel',
+        correlationId: 'k1',
+      },
       'whatsapp_main',
       true,
       deps,
@@ -479,7 +500,11 @@ describe('cancel_task authorization', () => {
     });
 
     await processTaskIpcRequest(
-      { type: 'cancel_task_request', taskId: 'task-to-cancel', correlationId: 'k3' },
+      {
+        type: 'cancel_task_request',
+        taskId: 'task-to-cancel',
+        correlationId: 'k3',
+      },
       'whatsapp_main',
       true,
       deps,
@@ -505,7 +530,11 @@ describe('cancel_task authorization', () => {
     });
 
     await processTaskIpcRequest(
-      { type: 'cancel_task_request', taskId: 'task-foreign', correlationId: 'k4' },
+      {
+        type: 'cancel_task_request',
+        taskId: 'task-foreign',
+        correlationId: 'k4',
+      },
       'other-group',
       false,
       deps,
@@ -518,7 +547,11 @@ describe('cancel_task authorization', () => {
 
   it('missing task ID: returns uniform error', async () => {
     await processTaskIpcRequest(
-      { type: 'cancel_task_request', taskId: 'nonexistent', correlationId: 'k5' },
+      {
+        type: 'cancel_task_request',
+        taskId: 'nonexistent',
+        correlationId: 'k5',
+      },
       'whatsapp_main',
       true,
       deps,

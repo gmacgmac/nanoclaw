@@ -1,36 +1,22 @@
 /**
- * Nudge prompt builder — single source of truth for all memory nudge text.
+ * Nightly nudge prompt builder for host-side maintenance.
  *
- * Supports three trigger reasons:
- *   - periodic: every 10 turns
- *   - threshold: 80% context window capacity
- *   - nightly: end-of-day maintenance
+ * Triggered by the nightly maintenance cron job. Spawns a fresh
+ * container session for end-of-day persistence and optional skill
+ * extraction.
  *
  * Unlike the old flush prompt, the nudge does NOT write COMPACT.md,
  * does NOT signal completion, and does NOT trigger session deletion.
- *
- * Copied to repo/src/lib/nudge-prompt.ts for host-side nightly maintenance.
  */
 
-export interface NudgePromptOptions {
-  reason: 'periodic' | 'threshold' | 'nightly';
-  learningLoop?: boolean | 'extract-only';
-}
-
-export function buildNudgePrompt(options: NudgePromptOptions): string {
+export function getNightlyNudgePrompt(
+  learningLoop?: boolean | 'extract-only',
+): string {
   const today = new Date().toISOString().split('T')[0];
-
-  const openingLines: Record<NudgePromptOptions['reason'], string> = {
-    periodic:
-      'MEMORY NUDGE — periodic checkpoint. Review recent conversation and persist anything important.',
-    threshold:
-      'MEMORY NUDGE — context window reaching capacity. Persist important facts before auto-compaction.',
-    nightly: 'NIGHTLY MEMORY NUDGE — end-of-day persistence check.',
-  };
 
   const lines: string[] = [
     '<internal>',
-    openingLines[options.reason],
+    'NIGHTLY MEMORY NUDGE — end-of-day persistence check.',
     '',
     'IMPORTANT: Use ONLY file tools (Read, Write, Edit). Do NOT call send_message, schedule_task, or any MCP tools. Do NOT call any tools starting with mcp__.',
     '',
@@ -38,7 +24,7 @@ export function buildNudgePrompt(options: NudgePromptOptions): string {
 
   let stepNum = 1;
 
-  // --- Step 1: Durable facts (always) ---
+  // --- Step 1: Durable facts ---
   lines.push(
     `${stepNum}. DURABLE FACTS → memory/MEMORY.md`,
     '   - Read the current memory/MEMORY.md',
@@ -51,7 +37,7 @@ export function buildNudgePrompt(options: NudgePromptOptions): string {
   );
   stepNum++;
 
-  // --- Step 2: Daily note (always) ---
+  // --- Step 2: Daily note ---
   lines.push(
     `${stepNum}. DAILY NOTE → memory/${today}.md`,
     '   - Append any notable observations or task progress from today to the daily note',
@@ -60,8 +46,8 @@ export function buildNudgePrompt(options: NudgePromptOptions): string {
   );
   stepNum++;
 
-  // --- Step 3: Skill extraction (conditional — nightly + learningLoop) ---
-  if (options.reason === 'nightly' && options.learningLoop) {
+  // --- Step 3: Skill extraction (conditional) ---
+  if (learningLoop) {
     lines.push(
       `${stepNum}. SKILL EXTRACTION → extracted-skills/[skill-name].md`,
       '   - Review this session for reusable patterns: workflows, command sequences, decision frameworks, tool usage patterns',
@@ -83,21 +69,12 @@ export function buildNudgePrompt(options: NudgePromptOptions): string {
 
   // --- Closing ---
   lines.push(
-    'When finished, reply with exactly:',
+    'When finished, your ENTIRE response MUST be exactly:',
     '<internal>done</internal>',
     '',
-    'Do NOT produce any other text in your reply. Do not announce that you performed this maintenance. The <internal> wrapper is required so your reply is not delivered to the user.',
+    'Do NOT produce any other text. Do not explain, summarize, announce, or greet. The <internal> wrapper is required so your reply is not delivered to the user.',
     '</internal>',
   );
 
   return lines.join('\n');
-}
-
-/**
- * Convenience wrapper for nightly maintenance (host-side usage).
- */
-export function getNightlyNudgePrompt(
-  learningLoop?: boolean | 'extract-only',
-): string {
-  return buildNudgePrompt({ reason: 'nightly', learningLoop });
 }
