@@ -275,6 +275,192 @@ export async function processTaskIpcRequest(
       writeIpcResponse(sourceGroup, correlationId, { ok: true, data: results });
       break;
     }
+    case 'pause_task_request': {
+      const taskId = data.taskId as string | undefined;
+      if (!taskId) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== sourceGroup) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      updateTask(taskId, { status: 'paused' });
+      const updatedTask = getTaskById(taskId);
+      writeIpcResponse(sourceGroup, correlationId, {
+        ok: true,
+        data: updatedTask,
+      });
+      logger.info({ taskId, sourceGroup }, 'Task paused via IPC request');
+      deps.onTasksChanged();
+      break;
+    }
+    case 'resume_task_request': {
+      const taskId = data.taskId as string | undefined;
+      if (!taskId) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== sourceGroup) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      // Resume: set status to active and recompute next_run
+      const resumeUpdates: Parameters<typeof updateTask>[1] = {
+        status: 'active',
+      };
+      if (task.schedule_type === 'cron') {
+        try {
+          const interval = CronExpressionParser.parse(task.schedule_value, {
+            tz: TIMEZONE,
+          });
+          resumeUpdates.next_run = interval.next().toISOString();
+        } catch {
+          writeIpcResponse(sourceGroup, correlationId, {
+            ok: false,
+            error: `Invalid schedule_value: cannot parse cron "${task.schedule_value}"`,
+          });
+          break;
+        }
+      } else if (task.schedule_type === 'interval') {
+        const ms = parseInt(task.schedule_value, 10);
+        if (!isNaN(ms) && ms > 0) {
+          resumeUpdates.next_run = new Date(Date.now() + ms).toISOString();
+        }
+      }
+      updateTask(taskId, resumeUpdates);
+      const resumedTask = getTaskById(taskId);
+      writeIpcResponse(sourceGroup, correlationId, {
+        ok: true,
+        data: resumedTask,
+      });
+      logger.info({ taskId, sourceGroup }, 'Task resumed via IPC request');
+      deps.onTasksChanged();
+      break;
+    }
+    case 'cancel_task_request': {
+      const taskId = data.taskId as string | undefined;
+      if (!taskId) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== sourceGroup) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      // Capture pre-deletion record, then delete
+      deleteTask(taskId);
+      writeIpcResponse(sourceGroup, correlationId, { ok: true, data: task });
+      logger.info({ taskId, sourceGroup }, 'Task cancelled via IPC request');
+      deps.onTasksChanged();
+      break;
+    }
+    case 'update_task_request': {
+      const taskId = data.taskId as string | undefined;
+      if (!taskId) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== sourceGroup) {
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: false,
+          error: 'Task not found',
+        });
+        break;
+      }
+
+      const updates: Parameters<typeof updateTask>[1] = {};
+      if (data.description !== undefined)
+        updates.description = data.description as string;
+      if (data.prompt !== undefined) updates.prompt = data.prompt as string;
+      if (data.script !== undefined)
+        updates.script = (data.script as string) || null;
+      if (data.schedule_type !== undefined)
+        updates.schedule_type = data.schedule_type as
+          | 'cron'
+          | 'interval'
+          | 'once';
+      if (data.schedule_value !== undefined)
+        updates.schedule_value = data.schedule_value as string;
+
+      // Recompute next_run if schedule changed
+      if (data.schedule_type !== undefined || data.schedule_value !== undefined) {
+        const merged = { ...task, ...updates };
+        if (merged.schedule_type === 'cron') {
+          try {
+            const interval = CronExpressionParser.parse(
+              merged.schedule_value,
+              { tz: TIMEZONE },
+            );
+            updates.next_run = interval.next().toISOString();
+          } catch {
+            writeIpcResponse(sourceGroup, correlationId, {
+              ok: false,
+              error: `Invalid schedule_value: cannot parse cron "${merged.schedule_value}"`,
+            });
+            break;
+          }
+        } else if (merged.schedule_type === 'interval') {
+          const ms = parseInt(merged.schedule_value, 10);
+          if (isNaN(ms) || ms <= 0) {
+            writeIpcResponse(sourceGroup, correlationId, {
+              ok: false,
+              error: `Invalid schedule_value: interval must be a positive number, got "${merged.schedule_value}"`,
+            });
+            break;
+          }
+          updates.next_run = new Date(Date.now() + ms).toISOString();
+        } else if (merged.schedule_type === 'once') {
+          const date = new Date(merged.schedule_value);
+          if (isNaN(date.getTime())) {
+            writeIpcResponse(sourceGroup, correlationId, {
+              ok: false,
+              error: `Invalid schedule_value: cannot parse timestamp "${merged.schedule_value}"`,
+            });
+            break;
+          }
+          updates.next_run = date.toISOString();
+        }
+      }
+
+      updateTask(taskId, updates);
+      const updatedTask = getTaskById(taskId);
+      writeIpcResponse(sourceGroup, correlationId, {
+        ok: true,
+        data: updatedTask,
+      });
+      logger.info(
+        { taskId, sourceGroup, updates },
+        'Task updated via IPC request',
+      );
+      deps.onTasksChanged();
+      break;
+    }
     default:
       writeIpcResponse(sourceGroup, correlationId, {
         ok: false,
@@ -734,133 +920,16 @@ export async function processTaskIpc(
       }
       break;
 
+    // Stale container fallback: mutation tools moved to request/response in v1.21.
+    // If a pre-v1.21 container writes these as fire-and-forget, log a warning and ignore.
     case 'pause_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
-        if (task && task.group_folder === sourceGroup) {
-          updateTask(data.taskId, { status: 'paused' });
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task paused via IPC',
-          );
-          deps.onTasksChanged();
-        } else {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task pause attempt',
-          );
-        }
-      }
-      break;
-
     case 'resume_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
-        if (task && task.group_folder === sourceGroup) {
-          updateTask(data.taskId, { status: 'active' });
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task resumed via IPC',
-          );
-          deps.onTasksChanged();
-        } else {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task resume attempt',
-          );
-        }
-      }
-      break;
-
     case 'cancel_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
-        if (task && task.group_folder === sourceGroup) {
-          deleteTask(data.taskId);
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task cancelled via IPC',
-          );
-          deps.onTasksChanged();
-        } else {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task cancel attempt',
-          );
-        }
-      }
-      break;
-
     case 'update_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (!task) {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Task not found for update',
-          );
-          break;
-        }
-        // Own-group only. Main's cross-group privilege was removed in 2026-05-22 — see cortex-tasks/.../nanoclaw-ipc_2026-05-22_task-management-isolation-and-tools/
-        if (task.group_folder !== sourceGroup) {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task update attempt',
-          );
-          break;
-        }
-
-        const updates: Parameters<typeof updateTask>[1] = {};
-        if (data.description !== undefined)
-          updates.description = data.description;
-        if (data.prompt !== undefined) updates.prompt = data.prompt;
-        if (data.script !== undefined) updates.script = data.script || null;
-        if (data.schedule_type !== undefined)
-          updates.schedule_type = data.schedule_type as
-            | 'cron'
-            | 'interval'
-            | 'once';
-        if (data.schedule_value !== undefined)
-          updates.schedule_value = data.schedule_value;
-
-        // Recompute next_run if schedule changed
-        if (data.schedule_type || data.schedule_value) {
-          const updatedTask = {
-            ...task,
-            ...updates,
-          };
-          if (updatedTask.schedule_type === 'cron') {
-            try {
-              const interval = CronExpressionParser.parse(
-                updatedTask.schedule_value,
-                { tz: TIMEZONE },
-              );
-              updates.next_run = interval.next().toISOString();
-            } catch {
-              logger.warn(
-                { taskId: data.taskId, value: updatedTask.schedule_value },
-                'Invalid cron in task update',
-              );
-              break;
-            }
-          } else if (updatedTask.schedule_type === 'interval') {
-            const ms = parseInt(updatedTask.schedule_value, 10);
-            if (!isNaN(ms) && ms > 0) {
-              updates.next_run = new Date(Date.now() + ms).toISOString();
-            }
-          }
-        }
-
-        updateTask(data.taskId, updates);
-        logger.info(
-          { taskId: data.taskId, sourceGroup, updates },
-          'Task updated via IPC',
-        );
-        deps.onTasksChanged();
-      }
+      logger.warn(
+        { type: data.type, sourceGroup },
+        'Stale container: mutation type received without _request suffix; rebuild container to v1.21+',
+      );
       break;
 
     case 'refresh_groups':

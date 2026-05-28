@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 import {
   _initTestDatabase,
@@ -10,9 +13,42 @@ import {
   setRegisteredGroup,
   storeChatMetadata,
 } from './db.js';
-import { processTaskIpc, IpcDeps } from './ipc.js';
+import { processTaskIpc, processTaskIpcRequest, IpcDeps } from './ipc.js';
 import { processIpcMessageData } from './ipc.js';
 import { RegisteredGroup } from './types.js';
+
+// Use a unique temp directory for IPC response files
+const TEST_DATA_DIR = path.join(
+  os.tmpdir(),
+  `nanoclaw-ipc-auth-test-${process.pid}`,
+);
+
+vi.mock('./config.js', () => ({
+  DATA_DIR: path.join(
+    os.tmpdir(),
+    `nanoclaw-ipc-auth-test-${process.pid}`,
+  ),
+  IPC_POLL_INTERVAL: 1000,
+  TIMEZONE: 'UTC',
+}));
+
+/**
+ * Read and parse the response file written by processTaskIpcRequest.
+ */
+function readIpcResponse(
+  groupFolder: string,
+  correlationId: string,
+): { ok: true; data: unknown } | { ok: false; error: string } {
+  const respPath = path.join(
+    TEST_DATA_DIR,
+    'ipc',
+    groupFolder,
+    'tasks',
+    `${correlationId}.resp.json`,
+  );
+  const raw = fs.readFileSync(respPath, 'utf-8');
+  return JSON.parse(raw);
+}
 
 // Set up registered groups used across tests
 const MAIN_GROUP: RegisteredGroup = {
@@ -42,6 +78,17 @@ let deps: IpcDeps;
 
 beforeEach(() => {
   _initTestDatabase();
+
+  // Ensure IPC directories exist for response file writes
+  fs.mkdirSync(path.join(TEST_DATA_DIR, 'ipc', 'whatsapp_main', 'tasks'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(TEST_DATA_DIR, 'ipc', 'other-group', 'tasks'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(TEST_DATA_DIR, 'ipc', 'third-group', 'tasks'), {
+    recursive: true,
+  });
 
   // Seed chat rows so FK constraints pass in message-related tests
   storeChatMetadata(
@@ -108,6 +155,11 @@ beforeEach(() => {
     onTasksChanged: () => {},
     enqueueMessageCheck: () => {},
   };
+});
+
+afterEach(() => {
+  // Clean up IPC response files between tests
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
 // --- schedule_task authorization ---
@@ -219,44 +271,70 @@ describe('pause_task authorization', () => {
     });
   });
 
-  it('main group cannot pause another groups task (own-group only)', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-other' },
-      'whatsapp_main',
-      true,
-      deps,
-    );
-    expect(getTaskById('task-other')!.status).toBe('active');
-  });
-
-  it('main group can pause its own task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-main' },
+  it('own-group success: main group can pause its own task', async () => {
+    await processTaskIpcRequest(
+      { type: 'pause_task_request', taskId: 'task-main', correlationId: 'c1' },
       'whatsapp_main',
       true,
       deps,
     );
     expect(getTaskById('task-main')!.status).toBe('paused');
+    const resp = readIpcResponse('whatsapp_main', 'c1');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-main');
+    expect((resp as any).data.status).toBe('paused');
   });
 
-  it('non-main group can pause its own task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-other' },
+  it('own-group success: non-main group can pause its own task', async () => {
+    await processTaskIpcRequest(
+      { type: 'pause_task_request', taskId: 'task-other', correlationId: 'c2' },
       'other-group',
       false,
       deps,
     );
     expect(getTaskById('task-other')!.status).toBe('paused');
+    const resp = readIpcResponse('other-group', 'c2');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-other');
+    expect((resp as any).data.status).toBe('paused');
   });
 
-  it('non-main group cannot pause another groups task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-main' },
+  it('cross-group deny: main group cannot pause another groups task', async () => {
+    await processTaskIpcRequest(
+      { type: 'pause_task_request', taskId: 'task-other', correlationId: 'c3' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-other')!.status).toBe('active');
+    const resp = readIpcResponse('whatsapp_main', 'c3');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('cross-group deny: non-main group cannot pause another groups task', async () => {
+    await processTaskIpcRequest(
+      { type: 'pause_task_request', taskId: 'task-main', correlationId: 'c4' },
       'other-group',
       false,
       deps,
     );
     expect(getTaskById('task-main')!.status).toBe('active');
+    const resp = readIpcResponse('other-group', 'c4');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('missing task ID: returns uniform error', async () => {
+    await processTaskIpcRequest(
+      { type: 'pause_task_request', taskId: 'nonexistent', correlationId: 'c5' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    const resp = readIpcResponse('whatsapp_main', 'c5');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
   });
 });
 
@@ -278,64 +356,63 @@ describe('resume_task authorization', () => {
     });
   });
 
-  it('main group cannot resume another groups task (own-group only)', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
-      'whatsapp_main',
-      true,
-      deps,
-    );
-    expect(getTaskById('task-paused')!.status).toBe('paused');
-  });
-
-  it('non-main group can resume its own task', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
+  it('own-group success: non-main group can resume its own task', async () => {
+    await processTaskIpcRequest(
+      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r1' },
       'other-group',
       false,
       deps,
     );
     expect(getTaskById('task-paused')!.status).toBe('active');
+    const resp = readIpcResponse('other-group', 'r1');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-paused');
+    expect((resp as any).data.status).toBe('active');
   });
 
-  it('non-main group cannot resume another groups task', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
+  it('cross-group deny: main group cannot resume another groups task', async () => {
+    await processTaskIpcRequest(
+      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r2' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-paused')!.status).toBe('paused');
+    const resp = readIpcResponse('whatsapp_main', 'r2');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('cross-group deny: non-main group cannot resume another groups task', async () => {
+    await processTaskIpcRequest(
+      { type: 'resume_task_request', taskId: 'task-paused', correlationId: 'r3' },
       'third-group',
       false,
       deps,
     );
     expect(getTaskById('task-paused')!.status).toBe('paused');
+    const resp = readIpcResponse('third-group', 'r3');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('missing task ID: returns uniform error', async () => {
+    await processTaskIpcRequest(
+      { type: 'resume_task_request', taskId: 'nonexistent', correlationId: 'r4' },
+      'other-group',
+      false,
+      deps,
+    );
+    const resp = readIpcResponse('other-group', 'r4');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
   });
 });
 
 // --- cancel_task authorization ---
 
 describe('cancel_task authorization', () => {
-  it('main group cannot cancel another groups task (own-group only)', async () => {
-    createTask({
-      id: 'task-to-cancel',
-      group_folder: 'other-group',
-      chat_jid: 'other@g.us',
-      prompt: 'cancel me',
-      schedule_type: 'once',
-      schedule_value: '2025-06-01T00:00:00',
-      context_mode: 'isolated',
-      next_run: null,
-      status: 'active',
-      created_at: '2024-01-01T00:00:00.000Z',
-    });
-
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-to-cancel' },
-      'whatsapp_main',
-      true,
-      deps,
-    );
-    expect(getTaskById('task-to-cancel')).toBeDefined();
-  });
-
-  it('main group can cancel its own task', async () => {
+  it('own-group success: main group can cancel its own task', async () => {
     createTask({
       id: 'task-main-cancel',
       group_folder: 'whatsapp_main',
@@ -349,16 +426,19 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-main-cancel' },
+    await processTaskIpcRequest(
+      { type: 'cancel_task_request', taskId: 'task-main-cancel', correlationId: 'k1' },
       'whatsapp_main',
       true,
       deps,
     );
     expect(getTaskById('task-main-cancel')).toBeUndefined();
+    const resp = readIpcResponse('whatsapp_main', 'k1');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-main-cancel');
   });
 
-  it('non-main group can cancel its own task', async () => {
+  it('own-group success: non-main group can cancel its own task', async () => {
     createTask({
       id: 'task-own',
       group_folder: 'other-group',
@@ -372,16 +452,45 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-own' },
+    await processTaskIpcRequest(
+      { type: 'cancel_task_request', taskId: 'task-own', correlationId: 'k2' },
       'other-group',
       false,
       deps,
     );
     expect(getTaskById('task-own')).toBeUndefined();
+    const resp = readIpcResponse('other-group', 'k2');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-own');
   });
 
-  it('non-main group cannot cancel another groups task', async () => {
+  it('cross-group deny: main group cannot cancel another groups task', async () => {
+    createTask({
+      id: 'task-to-cancel',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'cancel me',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpcRequest(
+      { type: 'cancel_task_request', taskId: 'task-to-cancel', correlationId: 'k3' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-to-cancel')).toBeDefined();
+    const resp = readIpcResponse('whatsapp_main', 'k3');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('cross-group deny: non-main group cannot cancel another groups task', async () => {
     createTask({
       id: 'task-foreign',
       group_folder: 'whatsapp_main',
@@ -395,13 +504,139 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-foreign' },
+    await processTaskIpcRequest(
+      { type: 'cancel_task_request', taskId: 'task-foreign', correlationId: 'k4' },
       'other-group',
       false,
       deps,
     );
     expect(getTaskById('task-foreign')).toBeDefined();
+    const resp = readIpcResponse('other-group', 'k4');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('missing task ID: returns uniform error', async () => {
+    await processTaskIpcRequest(
+      { type: 'cancel_task_request', taskId: 'nonexistent', correlationId: 'k5' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    const resp = readIpcResponse('whatsapp_main', 'k5');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+});
+
+// --- update_task authorization ---
+
+describe('update_task authorization', () => {
+  beforeEach(() => {
+    createTask({
+      id: 'task-updatable',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'updatable task',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('own-group success: non-main group can update its own task', async () => {
+    await processTaskIpcRequest(
+      {
+        type: 'update_task_request',
+        taskId: 'task-updatable',
+        correlationId: 'u1',
+        prompt: 'updated prompt',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    expect(getTaskById('task-updatable')!.prompt).toBe('updated prompt');
+    const resp = readIpcResponse('other-group', 'u1');
+    expect(resp.ok).toBe(true);
+    expect((resp as any).data.id).toBe('task-updatable');
+    expect((resp as any).data.prompt).toBe('updated prompt');
+  });
+
+  it('cross-group deny: main group cannot update another groups task', async () => {
+    await processTaskIpcRequest(
+      {
+        type: 'update_task_request',
+        taskId: 'task-updatable',
+        correlationId: 'u2',
+        prompt: 'hacked',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-updatable')!.prompt).toBe('updatable task');
+    const resp = readIpcResponse('whatsapp_main', 'u2');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('cross-group deny: non-main group cannot update another groups task', async () => {
+    await processTaskIpcRequest(
+      {
+        type: 'update_task_request',
+        taskId: 'task-updatable',
+        correlationId: 'u3',
+        prompt: 'sneaky',
+      },
+      'third-group',
+      false,
+      deps,
+    );
+    expect(getTaskById('task-updatable')!.prompt).toBe('updatable task');
+    const resp = readIpcResponse('third-group', 'u3');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('missing task ID: returns uniform error', async () => {
+    await processTaskIpcRequest(
+      {
+        type: 'update_task_request',
+        taskId: 'nonexistent',
+        correlationId: 'u4',
+        prompt: 'nope',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    const resp = readIpcResponse('other-group', 'u4');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toBe('Task not found');
+  });
+
+  it('invalid schedule_value: returns validation error', async () => {
+    await processTaskIpcRequest(
+      {
+        type: 'update_task_request',
+        taskId: 'task-updatable',
+        correlationId: 'u5',
+        schedule_type: 'cron',
+        schedule_value: 'not a cron',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+    // DB unchanged
+    expect(getTaskById('task-updatable')!.schedule_type).toBe('once');
+    const resp = readIpcResponse('other-group', 'u5');
+    expect(resp.ok).toBe(false);
+    expect((resp as any).error).toContain('Invalid schedule_value');
   });
 });
 

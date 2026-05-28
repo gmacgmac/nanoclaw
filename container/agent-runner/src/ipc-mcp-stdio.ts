@@ -462,73 +462,124 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 
 server.tool(
   'pause_task',
-  'Pause a scheduled task. It will not run until resumed.',
+  'Pause a scheduled task. Returns the updated task on success, or an error if the task is not found.',
   { task_id: z.string().describe('The task ID to pause') },
   async (args) => {
-    const data = {
-      type: 'pause_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
+    try {
+      const task = await requestResponse('pause_task_request', { taskId: args.task_id }) as {
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        status: string;
+        next_run: string | null;
+      };
 
-    writeIpcFile(TASKS_DIR, data);
+      const lines = [
+        'Task paused.',
+        `ID: ${task.id}`,
+        `Description: ${task.description || '(no description)'}`,
+        `Status: ${task.status}`,
+        `Schedule: ${task.schedule_type} ${task.schedule_value}`,
+        `Next run: ${task.next_run || 'N/A'}`,
+      ];
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 
 server.tool(
   'resume_task',
-  'Resume a paused task.',
+  'Resume a paused task. Returns the updated task on success, or an error if the task is not found.',
   { task_id: z.string().describe('The task ID to resume') },
   async (args) => {
-    const data = {
-      type: 'resume_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
+    try {
+      const task = await requestResponse('resume_task_request', { taskId: args.task_id }) as {
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        status: string;
+        next_run: string | null;
+      };
 
-    writeIpcFile(TASKS_DIR, data);
+      const lines = [
+        'Task resumed.',
+        `ID: ${task.id}`,
+        `Description: ${task.description || '(no description)'}`,
+        `Status: ${task.status}`,
+        `Schedule: ${task.schedule_type} ${task.schedule_value}`,
+        `Next run: ${task.next_run || 'N/A'}`,
+      ];
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 
 server.tool(
   'cancel_task',
-  'Cancel and delete a scheduled task.',
+  'Cancel and permanently delete a scheduled task. Returns the deleted task record on success, or an error if the task is not found.',
   { task_id: z.string().describe('The task ID to cancel') },
   async (args) => {
-    const data = {
-      type: 'cancel_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
+    try {
+      const task = await requestResponse('cancel_task_request', { taskId: args.task_id }) as {
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        status: string;
+        next_run: string | null;
+      };
 
-    writeIpcFile(TASKS_DIR, data);
+      const lines = [
+        'Task cancelled.',
+        `ID: ${task.id}`,
+        `Description: ${task.description || '(no description)'}`,
+        `Status: ${task.status}`,
+        `Schedule: ${task.schedule_type} ${task.schedule_value}`,
+      ];
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 
 server.tool(
   'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same. To append to or refine an existing prompt, call get_task first to read the current full prompt, then call update_task with the modified text.',
+  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same. Returns the updated task on success, or an error if the task is not found or validation fails. To append to or refine an existing prompt, call get_task first to read the current full prompt, then call update_task with the modified text.',
   {
     task_id: z.string().describe('The task ID to update'),
     description: z.string().optional().describe('New description for the task'),
     prompt: z.string().optional().describe('New prompt for the task'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
     schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    context_mode: z.enum(['group', 'isolated']).optional().describe('New context mode'),
   },
   async (args) => {
-    // Validate schedule_value if provided
+    // Validate schedule_value if provided (client-side fast-fail)
     if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
       if (args.schedule_value) {
         try {
@@ -551,21 +602,43 @@ server.tool(
       }
     }
 
-    const data: Record<string, string | undefined> = {
-      type: 'update_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain: String(isMain),
-      timestamp: new Date().toISOString(),
-    };
-    if (args.description !== undefined) data.description = args.description;
-    if (args.prompt !== undefined) data.prompt = args.prompt;
-    if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
-    if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+    // Build payload — only include fields that were provided
+    const payload: Record<string, string | undefined> = { taskId: args.task_id };
+    if (args.description !== undefined) payload.description = args.description;
+    if (args.prompt !== undefined) payload.prompt = args.prompt;
+    if (args.schedule_type !== undefined) payload.schedule_type = args.schedule_type;
+    if (args.schedule_value !== undefined) payload.schedule_value = args.schedule_value;
+    if (args.context_mode !== undefined) payload.context_mode = args.context_mode;
 
-    writeIpcFile(TASKS_DIR, data);
+    try {
+      const task = await requestResponse('update_task_request', payload) as {
+        id: string;
+        description?: string | null;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        context_mode: string;
+        status: string;
+        next_run: string | null;
+      };
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
+      const lines = [
+        'Task updated.',
+        `ID: ${task.id}`,
+        `Description: ${task.description || '(no description)'}`,
+        `Status: ${task.status}`,
+        `Schedule: ${task.schedule_type} ${task.schedule_value}`,
+        `Context Mode: ${task.context_mode}`,
+        `Next run: ${task.next_run || 'N/A'}`,
+      ];
+
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 

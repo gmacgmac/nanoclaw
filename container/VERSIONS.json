@@ -1,7 +1,7 @@
 {
   "channels": {
     "stable": "v1.0.0",
-    "next": "v1.2.0"
+    "next": "v1.21.0"
   },
   "versions": {
     "v1.0.0": {
@@ -24,6 +24,13 @@
       "sdkVersion": "0.3.147",
       "cliVersion": "2.1.147 (Claude Code)",
       "notes": "Upgrade from v1.1.0. Same SDK (0.3.147) and CLI (2.1.147). Adds task management isolation and tools: required `description` field on schedule_task, request/response IPC pattern (.req.json/.resp.json), reworked list_tasks (own-group + description + 50-char preview), new get_task tool, new search_tasks tool, update_task accepts description, removed snapshot writes (current_tasks.json), removed isMain cross-group privilege for read/mutation tools. Wire-protocol compatibility: new host is fully backward-compatible with v1.0.0/v1.1.0 containers for existing tools; old containers' list_tasks returns empty (no snapshot) — intentional. Branch: feat/task-management-isolation-and-tools."
+    },
+    "v1.21.0": {
+      "imageId": "sha256:03138222c3c4677fb18553cfb55b0406e981806419c8228cc54594ceb8a2873c",
+      "builtAt": "2026-05-28T08:09:53",
+      "sdkVersion": "0.3.147",
+      "cliVersion": "2.1.147 (Claude Code)",
+      "notes": ""
     }
   },
   "history": []
