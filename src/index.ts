@@ -72,7 +72,11 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { startNightlyCron, startSchedulerLoop, stopSchedulerLoop } from './task-scheduler.js';
+import {
+  startNightlyCron,
+  startSchedulerLoop,
+  stopSchedulerLoop,
+} from './task-scheduler.js';
 import { sweepAbandonedRuns } from './abandoned-run-sweep.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -686,11 +690,17 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {
       // Second signal — hard exit immediately
-      logger.warn({ signal }, 'Second signal received — forcing immediate exit');
+      logger.warn(
+        { signal },
+        'Second signal received — forcing immediate exit',
+      );
       process.exit(1);
     }
     isShuttingDown = true;
-    logger.info({ signal, gracePeriodMs: SHUTDOWN_GRACE_MS }, 'Shutdown signal received');
+    logger.info(
+      { signal, gracePeriodMs: SHUTDOWN_GRACE_MS },
+      'Shutdown signal received',
+    );
     stopSchedulerLoop();
     proxyServer.close();
     await queue.shutdown(SHUTDOWN_GRACE_MS);

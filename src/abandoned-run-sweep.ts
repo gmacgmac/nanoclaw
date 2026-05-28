@@ -1,8 +1,4 @@
-import {
-  getOrphanedStartedRuns,
-  getTaskById,
-  updateTaskRunLog,
-} from './db.js';
+import { getOrphanedStartedRuns, getTaskById, updateTaskRunLog } from './db.js';
 import { logger } from './logger.js';
 
 export interface SweepDependencies {
@@ -52,10 +48,7 @@ export async function sweepAbandonedRuns(
     try {
       await deps.sendMessage(jid, message);
     } catch (err) {
-      logger.warn(
-        { jid, err },
-        'Failed to send abandoned-run alert to group',
-      );
+      logger.warn({ jid, err }, 'Failed to send abandoned-run alert to group');
     }
   }
 
