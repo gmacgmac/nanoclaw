@@ -212,10 +212,7 @@ describe('delegate_to_group message injection', () => {
     );
 
     // The message should be stored as a non-bot user message in the target group
-    const msgs = getMessagesSince(
-      'other@g.us',
-      '2020-01-01T00:00:00.000Z',
-    );
+    const msgs = getMessagesSince('other@g.us', '2020-01-01T00:00:00.000Z');
     const delegationMsg = msgs.find((m) =>
       m.content.includes('Delegation UUID: del-msg-1'),
     );
@@ -298,10 +295,7 @@ describe('respond_to_group', () => {
     expect(d!.status).toBe('fulfilled');
 
     // Response message should be in caller's DB
-    const msgs = getMessagesSince(
-      'main@g.us',
-      '2020-01-01T00:00:00.000Z',
-    );
+    const msgs = getMessagesSince('main@g.us', '2020-01-01T00:00:00.000Z');
     const responseMsg = msgs.find((m) =>
       m.content.includes('Delegation Response'),
     );

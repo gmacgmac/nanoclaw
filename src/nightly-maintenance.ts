@@ -122,12 +122,16 @@ export async function runNightlyMaintenance(
   }
 
   // --- DB maintenance ---
-  result.messagesPruned = (deps.pruneMessages ?? (() => pruneOldMessages(30)))();
+  result.messagesPruned = (
+    deps.pruneMessages ?? (() => pruneOldMessages(30))
+  )();
   if (result.messagesPruned > 0) {
     logger.info({ deleted: result.messagesPruned }, 'Pruned old messages');
   }
 
-  result.delegationsExpired = (deps.expireDelegations ?? expireStaleDelegations)();
+  result.delegationsExpired = (
+    deps.expireDelegations ?? expireStaleDelegations
+  )();
   if (result.delegationsExpired > 0) {
     logger.info(
       { expired: result.delegationsExpired },

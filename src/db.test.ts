@@ -57,10 +57,7 @@ describe('storeMessage', () => {
       timestamp: '2024-01-01T00:00:01.000Z',
     });
 
-    const messages = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:00.000Z',
-    );
+    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z');
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe('msg-1');
     expect(messages[0].sender).toBe('123@s.whatsapp.net');
@@ -80,10 +77,7 @@ describe('storeMessage', () => {
       timestamp: '2024-01-01T00:00:04.000Z',
     });
 
-    const messages = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:00.000Z',
-    );
+    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z');
     expect(messages).toHaveLength(0);
   });
 
@@ -101,10 +95,7 @@ describe('storeMessage', () => {
     });
 
     // Message is stored (we can retrieve it — is_from_me doesn't affect retrieval)
-    const messages = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:00.000Z',
-    );
+    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z');
     expect(messages).toHaveLength(1);
   });
 
@@ -129,10 +120,7 @@ describe('storeMessage', () => {
       timestamp: '2024-01-01T00:00:01.000Z',
     });
 
-    const messages = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:00.000Z',
-    );
+    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z');
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('updated');
   });
@@ -180,20 +168,14 @@ describe('getMessagesSince', () => {
   });
 
   it('returns messages after the given timestamp', () => {
-    const msgs = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:02.000Z',
-    );
+    const msgs = getMessagesSince('group@g.us', '2024-01-01T00:00:02.000Z');
     // Should exclude m1, m2 (before/at timestamp), m3 (bot message still in table but no longer filtered)
     // Now returns m3 (bot) + m4 since is_bot_message filter is removed
     expect(msgs).toHaveLength(2);
   });
 
   it('no longer filters bot messages (messages table is now a pure input queue)', () => {
-    const msgs = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:00.000Z',
-    );
+    const msgs = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z');
     // All 4 messages returned (no bot filtering)
     expect(msgs).toHaveLength(4);
   });
@@ -301,10 +283,7 @@ describe('getMessagesSince', () => {
       content: 'Andy: old bot reply',
       timestamp: '2024-01-01T00:00:05.000Z',
     });
-    const msgs = getMessagesSince(
-      'group@g.us',
-      '2024-01-01T00:00:04.000Z',
-    );
+    const msgs = getMessagesSince('group@g.us', '2024-01-01T00:00:04.000Z');
     expect(msgs).toHaveLength(1);
     expect(msgs[0].content).toBe('Andy: old bot reply');
   });
