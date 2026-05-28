@@ -2,7 +2,7 @@
  * BE_03: Prompt Injection Scanner — Detection Engine
  *
  * Scans text content for prompt injection patterns. Designed to run on
- * NanoClaw context files (CLAUDE.md, MEMORY.md, COMPACT.md, daily notes)
+ * NanoClaw context files (CLAUDE.md, MEMORY.md, daily notes)
  * before they're loaded into agent sessions.
  *
  * Used by: BE_04 (integration into container startup)

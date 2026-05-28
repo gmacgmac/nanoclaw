@@ -163,7 +163,6 @@ its own session, memory, and personality.
 | `resume_task` | Resume a paused task | No (scoped to own group unless main) |
 | `cancel_task` | Cancel and delete a task | No (scoped to own group unless main) |
 | `update_task` | Modify an existing task | No (scoped to own group unless main) |
-| `manual_flush` | Trigger memory compaction mid-session | No |
 | `execute_command` | Execute a shell command (with approval mode for write-mounted paths) | No |
 | `ping` | Test tool, returns pong | No |
 

@@ -90,7 +90,7 @@ export interface ContainerConfig {
 
   /**
    * Prompt injection scanning mode for context files.
-   * Scans CLAUDE.md, MEMORY.md, COMPACT.md, and daily notes before container launch.
+   * Scans CLAUDE.md, MEMORY.md, and daily notes before container launch.
    * - undefined / absent → 'warn' (secure default — log but don't block)
    * - 'off' → skip scanning entirely
    * - 'warn' → log findings, continue with container launch
@@ -143,13 +143,12 @@ export interface ContainerConfig {
   allowedHostCommands?: string[];
 
   /**
-   * Self-improving learning loop — skill extraction during memory flush.
-   * When enabled, the flush prompt includes a skill extraction step before
-   * memory/compact/daily-note steps.
+   * Self-improving learning loop — skill extraction during memory nudge.
+   * When enabled, the nudge prompt includes a skill extraction step.
    * - undefined / absent → false (no skill extraction)
    * - false → no skill extraction
-   * - true → extract skills during flush AND load them into the next session
-   * - 'extract-only' → extract skills during flush but do NOT load into next session (review before enabling full loop)
+   * - true → extract skills during nudge AND load them into the next session
+   * - 'extract-only' → extract skills during nudge but do NOT load into next session (review before enabling full loop)
    */
   learningLoop?: boolean | 'extract-only';
 }

@@ -69,7 +69,7 @@ A personal Claude assistant accessible via messaging channels (Telegram, WhatsAp
 - **Docker containers** for isolated agent execution
 - **Messaging channels** as skills that self-register at startup (Telegram, WhatsApp, Slack, Discord, Gmail)
 - **Dashboard** as an internal web UI channel
-- **Persistent memory** per group (MEMORY.md, COMPACT.md, session transcripts)
+- **Persistent memory** per group (MEMORY.md, daily notes, session transcripts)
 - **Scheduled tasks** that run Claude and can message back
 - **Web access** for search and browsing (built-in or via MCP proxy for non-Anthropic endpoints)
 - **Browser automation** via agent-browser (host-stored binary, mounted at runtime)
@@ -94,14 +94,14 @@ A personal Claude assistant accessible via messaging channels (Telegram, WhatsAp
 
 ### Memory System
 - **Per-group memory**: Each group has a folder with its own `CLAUDE.md` and a `memory/` directory
-- **Four memory layers**: Session transcript (`.jsonl`), `MEMORY.md` (durable facts), `COMPACT.md` (session summary), and `CLAUDE.md` (instructions/personality)
-- `MEMORY.md` and `COMPACT.md` are loaded via `@import` directives in CLAUDE.md — the SDK expands them at container spawn time
+- **Three memory layers**: Session transcript (`.jsonl`), `MEMORY.md` (durable facts), and `CLAUDE.md` (instructions/personality)
+- `MEMORY.md` is loaded via an `@import` directive in CLAUDE.md — the SDK expands it at container spawn time
 - There is no global CLAUDE.md loaded at runtime — `groups/global/CLAUDE.md` exists as a template for new groups
 - Agent runs in the group's folder at `/workspace/group`, loading only that group's CLAUDE.md
 
 ### Session Management
 - Each group maintains a conversation session (via Claude Agent SDK)
-- Sessions auto-compact when context gets too long, preserving critical information
+- Sessions are long-running. Claude Code's built-in auto-compact handles context window management. NanoClaw uses a nudge system to continuously persist memories.
 
 ### Container Isolation
 - All agents run inside Docker containers

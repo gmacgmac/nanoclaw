@@ -1,12 +1,8 @@
 /**
  * Nightly nudge prompt builder for host-side maintenance.
  *
- * Triggered by the nightly maintenance cron job. Spawns a fresh
- * container session for end-of-day persistence and optional skill
- * extraction.
- *
- * Unlike the old flush prompt, the nudge does NOT write COMPACT.md,
- * does NOT signal completion, and does NOT trigger session deletion.
+ * Triggered by the nightly maintenance cron job for end-of-day
+ * persistence and optional skill extraction.
  */
 
 export function getNightlyNudgePrompt(

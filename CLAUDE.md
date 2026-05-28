@@ -105,7 +105,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
-| `contextWindowSize` | `number` | `128000` | Token threshold for auto-flush (80% live, 50% nightly) |
+| `contextWindowSize` | `number` | `128000` | Token threshold for memory nudge (80% live, 50% nightly) |
 | `webSearchVendor` | `string` | `undefined` | Routes web search through named vendor's proxy endpoint |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
 
@@ -173,14 +173,13 @@ Four memory layers:
 |-------|------------------------|---------|
 | Session transcript (`.jsonl`) | No — tied to session ID | Full conversation continuity |
 | `MEMORY.md` | Yes — persists across sessions | Durable facts, user preferences |
-| `COMPACT.md` | Yes — overwritten on each flush | Session summary after compaction |
 | CLAUDE.md (group folder) | Yes — it's a file you control | Instructions, personality, skills |
 
 ## Context Loading Order
 
 1. Claude Code built-in system prompt (`claude_code` preset)
 2. `containerConfig.systemPrompt` (appended to preset prompt)
-3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md` and `COMPACT.md`
+3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md`
 4. Session transcript (if resuming an existing session)
 
 ## Skills

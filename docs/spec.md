@@ -653,16 +653,15 @@ NanoClaw uses a per-group memory system with CLAUDE.md files and `@import` direc
 
 Each group has a `CLAUDE.md` file at `groups/<group>/CLAUDE.md`. The Claude Agent SDK auto-loads this from the working directory (`/workspace/group`) at session start.
 
-CLAUDE.md templates include `@import` directives for `@memory/MEMORY.md` and `@memory/COMPACT.md`, which the SDK expands at container spawn time.
+CLAUDE.md templates include an `@import` directive for `@memory/MEMORY.md`, which the SDK expands at container spawn time.
 
 ### Memory Protocol
 
-Agents manage three memory files inside `groups/{folder}/memory/`:
+Agents manage two memory files inside `groups/{folder}/memory/`:
 
 | File | Behaviour | Purpose |
 |------|-----------|---------|
 | `MEMORY.md` | Read, append, remove superseded entries. No duplicates. | Durable facts — user preferences, corrections, long-term knowledge |
-| `COMPACT.md` | Overwrite on flush (~2000 word cap). | Session summary — key decisions and open items after compaction |
 | `YYYY-MM-DD.md` | Append daily. | Session-specific observations and daily notes |
 
 The `memory/` directory is created automatically during group registration, along with a seed `MEMORY.md` if one doesn't exist.
@@ -672,7 +671,7 @@ The `memory/` directory is created automatically during group registration, alon
 1. **Agent Context Loading**
    - Agent runs with `cwd` set to `/workspace/group` (mounted from `groups/{group-name}/`)
    - Claude Agent SDK with `settingSources: ['project', 'user']` loads CLAUDE.md from `cwd`
-   - `@import` directives in CLAUDE.md expand `MEMORY.md` and `COMPACT.md` at spawn time
+   - `@import` directive in CLAUDE.md expands `MEMORY.md` at spawn time
 
 2. **Writing Memory**
    - "Remember this: ..." → agent may write to `MEMORY.md` or `CLAUDE.md`
@@ -729,18 +728,17 @@ Containers are NOT one-per-message:
 
 The `--rm` flag on `docker run` ensures containers are cleaned up after exit.
 
-### Four Layers of Memory
+### Three Layers of Memory
 
 | Layer | Mechanism | Survives Session Reset? | Primary Use |
 |-------|-----------|------------------------|-------------|
 | Session transcript (`.jsonl`) | SDK session resumption | No — tied to session ID | Full conversation continuity |
 | `MEMORY.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — persists across sessions | Durable facts, user preferences |
-| `COMPACT.md` | `@import` in CLAUDE.md → SDK loads at spawn | Yes — overwritten on each flush | Session summary after compaction |
 | CLAUDE.md (group folder) | SDK loads from `cwd` on startup | Yes — it's a file you control | Instructions, personality, skills |
 
-The session transcript is the primary memory mechanism — the agent gets full conversation replay on every message. `MEMORY.md` and `COMPACT.md` are loaded via `@import` directives in CLAUDE.md, so they're always available even after a session reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
+The session transcript is the primary memory mechanism — the agent gets full conversation replay on every message. `MEMORY.md` is loaded via an `@import` directive in CLAUDE.md, so it's always available even after a session reset. CLAUDE.md is for explicit instructions you want the agent to always follow.
 
-When a flush triggers (auto, manual, or nightly), the agent writes durable facts to `MEMORY.md` and a compact summary to `COMPACT.md`. The host then deletes the session so the next message starts fresh — but the `@import`ed files preserve essential context.
+Memory persistence is continuous: the agent writes durable facts to `MEMORY.md` throughout its session via periodic nudge prompts. Sessions are long-running and are never automatically deleted.
 
 ### Where Session Data Lives
 
@@ -758,7 +756,7 @@ When a container starts, context is loaded in this order:
 
 1. Claude Code built-in system prompt (`claude_code` preset)
 2. `containerConfig.systemPrompt` (appended to preset prompt)
-3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md` and `COMPACT.md`
+3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md`
 4. Session transcript (if resuming an existing session)
 
 ---

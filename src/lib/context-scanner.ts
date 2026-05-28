@@ -1,7 +1,7 @@
 /**
  * BE_04: Prompt Injection Scanner — Context File Integration
  *
- * Scans group context files (CLAUDE.md, MEMORY.md, COMPACT.md, daily notes)
+ * Scans group context files (CLAUDE.md, MEMORY.md, daily notes)
  * on the host before container launch. Runs in runAgent() in src/index.ts.
  */
 
@@ -60,7 +60,7 @@ export function discoverContextFiles(
     files.push('CLAUDE.md');
   }
 
-  // memory/MEMORY.md and memory/COMPACT.md — loaded via @import
+  // memory/MEMORY.md and daily notes — loaded via @import
   const memoryDir = path.join(groupFolderPath, 'memory');
   if (fs.existsSync(memoryDir) && fs.statSync(memoryDir).isDirectory()) {
     try {
