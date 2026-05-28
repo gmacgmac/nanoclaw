@@ -123,6 +123,8 @@ describe('runNightlyMaintenance', () => {
       runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     const result = await runNightlyMaintenance(deps);
@@ -151,6 +153,8 @@ describe('runNightlyMaintenance', () => {
       runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('below-group') }),
       getSessions: () => ({ 'below-group': 'session-456' }),
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     const result = await runNightlyMaintenance(deps);
@@ -167,6 +171,8 @@ describe('runNightlyMaintenance', () => {
       runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group') }),
       getSessions: () => ({}), // No active sessions
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     const result = await runNightlyMaintenance(deps);
@@ -188,6 +194,8 @@ describe('runNightlyMaintenance', () => {
       runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     const result = await runNightlyMaintenance(deps);
@@ -207,6 +215,8 @@ describe('runNightlyMaintenance', () => {
       runNudge,
       getGroups: () => ({ 'jid1@g.us': makeGroup('maint-group', 100000) }),
       getSessions: () => ({ 'maint-group': 'session-123' }),
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     // Should not throw
@@ -242,6 +252,8 @@ describe('runNightlyMaintenance', () => {
         'above-group': 'session-a',
         'below-group': 'session-b',
       }),
+      pruneMessages: () => 0,
+      expireDelegations: () => 0,
     };
 
     const result = await runNightlyMaintenance(deps);

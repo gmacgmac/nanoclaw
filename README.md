@@ -393,27 +393,29 @@ The database serves the application layer — message routing, group registratio
 
 ### The `messages` Table: Input Queue, Not Conversation Store
 
-This is an important architectural distinction. The `messages` table has two roles that are intentionally asymmetric:
+The `messages` table is a **pure input queue** for the message loop. Dashboard chat history is stored separately.
 
 **Role 1 — Input queue for the message loop (all channels)**
 
-Incoming user messages from Telegram, WhatsApp, and other channels are written to the `messages` table with `is_bot_message = 0`. The message loop (`getNewMessages()`, `getMessagesSince()`) polls this table — filtered to `is_bot_message = 0` — to detect new messages and trigger container runs. This is the queue mechanism.
+Incoming user messages from all channels (Telegram, WhatsApp, dashboard) are written to the `messages` table. The message loop (`getNewMessages()`, `getMessagesSince()`) polls this table to detect new messages and trigger container runs. No bot responses are stored here — the table contains only inbound user messages.
 
-Bot responses are NOT stored here for external channels (Telegram, WhatsApp). They flow directly to the platform API (e.g., `bot.api.sendMessage()`). The DB only needs the inbound side to drive the queue.
+Bot responses flow directly to platform APIs (e.g., `bot.api.sendMessage()` for Telegram) or to `dashboard_chat_log` for the dashboard channel.
 
-**Role 2 — Full conversation store for the dashboard channel**
+**Nightly pruning** — messages older than 30 days are deleted by `pruneOldMessages(30)` in the nightly maintenance cron. Stale delegations are also expired nightly via `expireStaleDelegations()`.
 
-The dashboard channel (`dashboard@internal`) is different: it has no external platform. The dashboard UI polls the DB directly for both sides of the conversation. So `DashboardChannel.sendMessage()` explicitly stores bot responses with `is_bot_message = 1`. This is the only channel that stores outgoing responses.
+**Role 2 — Dashboard chat history (`dashboard_chat_log` table)**
 
-**No pruning** — the `messages` table is never cleared. It grows indefinitely. For external channels this is low-volume (only inbound messages). For the dashboard channel it includes both sides. If storage becomes a concern, manual pruning or a TTL job would need to be added.
+The dashboard channel (`dashboard@internal`) has no external platform — the dashboard UI polls the DB for both sides of the conversation. Chat history (user inputs AND bot responses) is stored in the dedicated `dashboard_chat_log` table:
 
-### Known Issue: `is_bot_message` on IPC-Stored Outbound Messages
+- User inputs: dual-written to `messages` (for the message loop) AND `dashboard_chat_log` (for the chat UI)
+- Bot responses: `DashboardChannel.sendMessage()` writes ONLY to `dashboard_chat_log` (with `is_from_user = 0`)
+- Dashboard server reads from `dashboard_chat_log` via `getChatMessages()`
 
-**Bug (fixed 2026-03-31)**: `src/ipc.ts` `processIpcMessageData()` was storing outbound bot messages (sent via `mcp__nanoclaw__send_message`) with `is_bot_message = false`. Because the message loop filters on `is_bot_message = 0`, these messages re-entered the queue and triggered a second agent run — causing the agent to respond to its own output.
+The `dashboard_chat_log` table uses `is_from_user` (1 = user, 0 = bot) instead of the legacy `is_bot_message` flag. The dashboard server computes `is_bot_message` and `is_from_me` from `is_from_user` for client compatibility.
 
-**Fix**: Changed `is_bot_message: false` → `true` in `src/ipc.ts` line ~193.
+### Legacy: `is_bot_message` column
 
-**Why it matters for new groups**: Any code path that stores a bot-originated message in the `messages` table MUST set `is_bot_message = true`. If it doesn't, the message loop will treat it as a new user message and fire the agent again. The dashboard channel (`DashboardChannel.sendMessage()`) correctly sets `is_bot_message = true` — use that as the reference implementation.
+The `is_bot_message` column still exists in the `messages` table schema for backward compatibility with existing rows. It is no longer used for filtering — `getNewMessages()` no longer checks it. The column will be cleared naturally as nightly pruning removes old rows. `getLastBotMessageTimestamp()` still references it for cursor recovery.
 
 ### Session Files vs Database
 
@@ -422,7 +424,8 @@ These serve completely different purposes — the DB is NOT a conversation store
 | Store | What | Who Reads It | Format |
 |-------|------|-------------|--------|
 | `.jsonl` session files | Full conversation transcript (both sides) | Claude Agent SDK only | JSONL (opaque, SDK-internal) |
-| SQLite `messages` table | Inbound user messages (queue) + dashboard bot responses | Message loop, dashboard UI | Structured rows |
+| SQLite `messages` table | Inbound user messages (input queue) | Message loop | Structured rows |
+| SQLite `dashboard_chat_log` table | Dashboard chat history (both sides) | Dashboard server UI | Structured rows |
 
 Agent memory and conversation continuity come entirely from the `.jsonl` session files via SDK session resumption. The DB `messages` table does not feed the agent context. Don't try to parse `.jsonl` files — the format is internal to Claude Code and may change.
 

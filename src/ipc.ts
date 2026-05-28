@@ -13,6 +13,7 @@ import {
   getDelegationByUuid,
   getTaskById,
   getTasksForGroup,
+  storeDashboardChatMessage,
   storeMessageDirect,
   updateTask,
 } from './db.js';
@@ -800,16 +801,33 @@ export async function processIpcMessageData(
   // processes them and the agent responds.
   const isDashboardMessage = isDashboardSource;
 
+  const msgId = `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const msgTimestamp = new Date().toISOString();
+
   storeMessageDirect({
-    id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: msgId,
     chat_jid: data.chatJid,
     sender: `${senderSource}@ipc`,
     sender_name: senderName,
     content: data.text,
-    timestamp: new Date().toISOString(),
+    timestamp: msgTimestamp,
     is_from_me: !isDashboardMessage,
     is_bot_message: !isDashboardMessage,
   });
+
+  // Also mirror dashboard user inputs to dashboard_chat_log for the chat UI
+  if (isDashboardMessage || isDashboardTarget) {
+    storeDashboardChatMessage({
+      id: msgId,
+      chat_jid: data.chatJid,
+      sender: `${senderSource}@ipc`,
+      sender_name: senderName,
+      content: data.text,
+      timestamp: msgTimestamp,
+      is_from_user: true,
+    });
+  }
+
   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
 }
 
@@ -1150,16 +1168,33 @@ export async function processTaskIpc(
       const targetGroupEntry = registeredGroups[delegation.target_jid];
       const targetGroupName = targetGroupEntry?.name || 'Unknown';
 
+      const responseId = `delegation-response-${data.uuid}`;
+      const responseTimestamp = new Date().toISOString();
+      const responseContent = `[Delegation Response — UUID: ${data.uuid}]\n[From: ${targetGroupName}]\n${data.responseText}`;
+
       storeMessageDirect({
-        id: `delegation-response-${data.uuid}`,
+        id: responseId,
         chat_jid: delegation.caller_jid,
         sender: `${targetGroupName}@delegation`,
         sender_name: targetGroupName,
-        content: `[Delegation Response — UUID: ${data.uuid}]\n[From: ${targetGroupName}]\n${data.responseText}`,
-        timestamp: new Date().toISOString(),
+        content: responseContent,
+        timestamp: responseTimestamp,
         is_from_me: false,
         is_bot_message: false,
       });
+
+      // Also write to dashboard_chat_log if the caller is a dashboard group
+      if (delegation.caller_jid.endsWith('@internal')) {
+        storeDashboardChatMessage({
+          id: responseId,
+          chat_jid: delegation.caller_jid,
+          sender: `${targetGroupName}@delegation`,
+          sender_name: targetGroupName,
+          content: responseContent,
+          timestamp: responseTimestamp,
+          is_from_user: false,
+        });
+      }
 
       deps.enqueueMessageCheck(delegation.caller_jid);
       logger.info(

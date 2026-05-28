@@ -215,7 +215,6 @@ describe('delegate_to_group message injection', () => {
     const msgs = getMessagesSince(
       'other@g.us',
       '2020-01-01T00:00:00.000Z',
-      'Andy',
     );
     const delegationMsg = msgs.find((m) =>
       m.content.includes('Delegation UUID: del-msg-1'),
@@ -302,7 +301,6 @@ describe('respond_to_group', () => {
     const msgs = getMessagesSince(
       'main@g.us',
       '2020-01-01T00:00:00.000Z',
-      'Andy',
     );
     const responseMsg = msgs.find((m) =>
       m.content.includes('Delegation Response'),

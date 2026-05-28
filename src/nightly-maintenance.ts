@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { DEFAULT_CONTEXT_WINDOW, NIGHTLY_NUDGE_THRESHOLD } from './config.js';
-import { getAllRegisteredGroups, getAllSessions } from './db.js';
+import {
+  getAllRegisteredGroups,
+  getAllSessions,
+  expireStaleDelegations,
+  pruneOldMessages,
+} from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
 import { logger } from './logger.js';
@@ -40,6 +45,8 @@ export function parseLastInputTokens(groupFolder: string): number {
 export interface NightlyMaintenanceResult {
   groupsChecked: number;
   groupsNudged: string[];
+  messagesPruned: number;
+  delegationsExpired: number;
 }
 
 export interface NightlyDependencies {
@@ -49,6 +56,10 @@ export interface NightlyDependencies {
   getGroups?: () => Record<string, RegisteredGroup>;
   /** Override for testing — defaults to getAllSessions(). */
   getSessions?: () => Record<string, string>;
+  /** Override for testing — defaults to pruneOldMessages(30). */
+  pruneMessages?: () => number;
+  /** Override for testing — defaults to expireStaleDelegations(). */
+  expireDelegations?: () => number;
 }
 
 /**
@@ -65,6 +76,8 @@ export async function runNightlyMaintenance(
   const result: NightlyMaintenanceResult = {
     groupsChecked: 0,
     groupsNudged: [],
+    messagesPruned: 0,
+    delegationsExpired: 0,
   };
 
   for (const [jid, group] of Object.entries(groups)) {
@@ -106,6 +119,20 @@ export async function runNightlyMaintenance(
     } catch (err) {
       logger.error({ group: group.folder, err }, 'Nightly nudge failed');
     }
+  }
+
+  // --- DB maintenance ---
+  result.messagesPruned = (deps.pruneMessages ?? (() => pruneOldMessages(30)))();
+  if (result.messagesPruned > 0) {
+    logger.info({ deleted: result.messagesPruned }, 'Pruned old messages');
+  }
+
+  result.delegationsExpired = (deps.expireDelegations ?? expireStaleDelegations)();
+  if (result.delegationsExpired > 0) {
+    logger.info(
+      { expired: result.delegationsExpired },
+      'Expired stale delegations',
+    );
   }
 
   logger.info(

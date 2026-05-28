@@ -192,6 +192,40 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Create dashboard_chat_log table for decoupled dashboard chat storage
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS dashboard_chat_log (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      is_from_user INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dashboard_chat_log_jid_ts
+      ON dashboard_chat_log(chat_jid, timestamp);
+  `);
+
+  // Backfill dashboard_chat_log from existing @internal messages (first-time migration)
+  try {
+    const count = database
+      .prepare(`SELECT COUNT(*) as cnt FROM dashboard_chat_log`)
+      .get() as { cnt: number };
+    if (count.cnt === 0) {
+      database.exec(`
+        INSERT OR IGNORE INTO dashboard_chat_log (id, chat_jid, sender, sender_name, content, timestamp, is_from_user)
+        SELECT id, chat_jid, sender, sender_name, content, timestamp,
+          CASE WHEN is_bot_message = 1 OR is_from_me = 1 THEN 0 ELSE 1 END
+        FROM messages
+        WHERE chat_jid LIKE '%@internal'
+      `);
+    }
+  } catch {
+    /* backfill already ran or messages table doesn't have expected columns */
+  }
 }
 
 export function initDatabase(): void {
@@ -368,24 +402,48 @@ export function storeMessageDirect(msg: {
   );
 }
 
+/**
+ * Store a message in the dashboard_chat_log table.
+ * Used for both user inputs and bot responses in the dashboard channel.
+ */
+export function storeDashboardChatMessage(msg: {
+  id: string;
+  chat_jid: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_user: boolean;
+}): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO dashboard_chat_log
+     (id, chat_jid, sender, sender_name, content, timestamp, is_from_user)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    msg.id,
+    msg.chat_jid,
+    msg.sender,
+    msg.sender_name,
+    msg.content,
+    msg.timestamp,
+    msg.is_from_user ? 1 : 0,
+  );
+}
+
 export function getNewMessages(
   jids: string[],
   lastTimestamp: string,
-  botPrefix: string,
   limit: number = 200,
 ): { messages: NewMessage[]; newTimestamp: string } {
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
-        AND is_bot_message = 0 AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -394,7 +452,7 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(lastTimestamp, ...jids, limit) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -407,18 +465,14 @@ export function getNewMessages(
 export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
-  botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
-        AND is_bot_message = 0 AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -426,7 +480,7 @@ export function getMessagesSince(
   `;
   return db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, sinceTimestamp, limit) as NewMessage[];
 }
 
 export function getLastBotMessageTimestamp(
@@ -953,6 +1007,36 @@ export function logError(entry: ErrorLogEntry): void {
   db.prepare(
     `INSERT INTO error_log (level, message, context) VALUES (?, ?, ?)`,
   ).run(entry.level, entry.message, contextJson);
+}
+
+// --- DB maintenance ---
+
+/**
+ * Delete messages older than `retentionDays` days.
+ * Returns the number of deleted rows.
+ */
+export function pruneOldMessages(retentionDays: number = 30): number {
+  const cutoff = new Date(
+    Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const result = db
+    .prepare(`DELETE FROM messages WHERE timestamp < ?`)
+    .run(cutoff);
+  return result.changes;
+}
+
+/**
+ * Mark pending delegations past their expires_at as 'expired'.
+ * Returns the number of expired rows.
+ */
+export function expireStaleDelegations(): number {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `UPDATE delegations SET status = 'expired' WHERE status = 'pending' AND expires_at < ?`,
+    )
+    .run(now);
+  return result.changes;
 }
 
 // --- Transaction helper ---

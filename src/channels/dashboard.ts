@@ -1,5 +1,5 @@
 import { ASSISTANT_NAME } from '../config.js';
-import { storeMessageDirect, storeChatMetadata } from '../db.js';
+import { storeDashboardChatMessage, storeChatMetadata } from '../db.js';
 import { logger } from '../logger.js';
 import { registerChannel } from './registry.js';
 import type { Channel } from '../types.js';
@@ -26,16 +26,15 @@ export class DashboardChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    // Store the bot response in DB so dashboard can poll for it
-    storeMessageDirect({
+    // Store the bot response in dashboard_chat_log so dashboard can poll for it
+    storeDashboardChatMessage({
       id: `dashboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       chat_jid: jid,
       sender: ASSISTANT_NAME,
       sender_name: ASSISTANT_NAME,
       content: text,
       timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
+      is_from_user: false,
     });
     logger.debug({ jid }, 'Dashboard channel: stored bot response');
   }
