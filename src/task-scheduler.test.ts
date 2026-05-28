@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import {
+  _initTestDatabase,
+  createTask,
+  getTaskById,
+  updateTaskAfterCompletion,
+} from './db.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -185,6 +190,142 @@ describe('task scheduler', () => {
       expect(substitutePromptVars('No placeholders here')).toBe(
         'No placeholders here',
       );
+    });
+  });
+
+  describe('early next_run advance (BE_03)', () => {
+    it('advances next_run before container spawn for interval tasks', async () => {
+      const pastDue = new Date(Date.now() - 60_000).toISOString();
+      createTask({
+        id: 'task-interval-advance',
+        group_folder: 'test-group',
+        chat_jid: 'test@g.us',
+        prompt: 'run interval',
+        schedule_type: 'interval',
+        schedule_value: '300000', // 5 min
+        context_mode: 'isolated',
+        next_run: pastDue,
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      const enqueueTask = vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          void fn();
+        },
+      );
+
+      startSchedulerLoop({
+        registeredGroups: () => ({
+          'test@g.us': {
+            name: 'Test',
+            folder: 'test-group',
+            trigger: '!bot',
+            added_at: '2026-01-01T00:00:00.000Z',
+          },
+        }),
+        getSessions: () => ({}),
+        queue: { enqueueTask } as any,
+        onProcess: () => {},
+        sendMessage: async () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      const task = getTaskById('task-interval-advance');
+      // next_run should be in the future (advanced before container spawn)
+      expect(task?.next_run).not.toBeNull();
+      expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('sets next_run to null for once tasks (no re-trigger on crash)', async () => {
+      const pastDue = new Date(Date.now() - 60_000).toISOString();
+      createTask({
+        id: 'task-once-advance',
+        group_folder: 'test-group',
+        chat_jid: 'test@g.us',
+        prompt: 'run once',
+        schedule_type: 'once',
+        schedule_value: pastDue,
+        context_mode: 'isolated',
+        next_run: pastDue,
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      const enqueueTask = vi.fn(
+        (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+          void fn();
+        },
+      );
+
+      startSchedulerLoop({
+        registeredGroups: () => ({
+          'test@g.us': {
+            name: 'Test',
+            folder: 'test-group',
+            trigger: '!bot',
+            added_at: '2026-01-01T00:00:00.000Z',
+          },
+        }),
+        getSessions: () => ({}),
+        queue: { enqueueTask } as any,
+        onProcess: () => {},
+        sendMessage: async () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      const task = getTaskById('task-once-advance');
+      // next_run should be null — won't be re-triggered on restart
+      expect(task?.next_run).toBeNull();
+      // Status stays 'active' until completion (not flipped to 'completed' yet
+      // because the container hasn't finished — only updateTaskAfterCompletion does that)
+    });
+
+    it('updateTaskAfterCompletion does not re-advance next_run', () => {
+      const futureRun = new Date(Date.now() + 300_000).toISOString();
+      createTask({
+        id: 'task-no-double-advance',
+        group_folder: 'test-group',
+        chat_jid: 'test@g.us',
+        prompt: 'run',
+        schedule_type: 'interval',
+        schedule_value: '300000',
+        context_mode: 'isolated',
+        next_run: futureRun,
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      // Simulate completion — should only write last_run/last_result, not touch next_run
+      updateTaskAfterCompletion('task-no-double-advance', 'Done');
+
+      const task = getTaskById('task-no-double-advance');
+      expect(task?.next_run).toBe(futureRun); // unchanged
+      expect(task?.last_result).toBe('Done');
+      expect(task?.last_run).not.toBeNull();
+    });
+
+    it('updateTaskAfterCompletion flips status to completed when next_run is null', () => {
+      createTask({
+        id: 'task-once-complete',
+        group_folder: 'test-group',
+        chat_jid: 'test@g.us',
+        prompt: 'run once',
+        schedule_type: 'once',
+        schedule_value: '2026-01-01T00:00:00.000Z',
+        context_mode: 'isolated',
+        next_run: null,
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      updateTaskAfterCompletion('task-once-complete', 'Finished');
+
+      const task = getTaskById('task-once-complete');
+      expect(task?.status).toBe('completed');
+      expect(task?.last_result).toBe('Finished');
     });
   });
 });

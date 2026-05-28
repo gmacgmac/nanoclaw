@@ -575,6 +575,26 @@ export function updateTaskAfterRun(
   ).run(nextRun, now, lastResult, nextRun, id);
 }
 
+/**
+ * Write completion metadata after a task run finishes.
+ * Does NOT touch next_run (already advanced at run start by BE_03).
+ * Flips status to 'completed' only if the current next_run is NULL
+ * (i.e. a 'once' task whose next_run was set to null at start).
+ */
+export function updateTaskAfterCompletion(
+  id: string,
+  lastResult: string,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `
+    UPDATE scheduled_tasks
+    SET last_run = ?, last_result = ?, status = CASE WHEN next_run IS NULL THEN 'completed' ELSE status END
+    WHERE id = ?
+  `,
+  ).run(now, lastResult, id);
+}
+
 export function logTaskRun(log: TaskRunLog): void {
   db.prepare(
     `
@@ -589,6 +609,62 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+/**
+ * Insert a 'started' sentinel row at the beginning of a task run.
+ * Returns the row ID so it can be updated on completion.
+ */
+export function logTaskRunStarted(taskId: string, runAt: string): number {
+  const result = db
+    .prepare(
+      `INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
+       VALUES (?, ?, 0, 'started', NULL, NULL)`,
+    )
+    .run(taskId, runAt);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Update an existing task_run_logs row (transition from 'started' to final state).
+ */
+export function updateTaskRunLog(
+  rowId: number,
+  updates: {
+    status: 'success' | 'error';
+    result?: string | null;
+    error?: string | null;
+    duration_ms?: number;
+  },
+): void {
+  db.prepare(
+    `UPDATE task_run_logs
+     SET status = ?, result = ?, error = ?, duration_ms = ?
+     WHERE id = ?`,
+  ).run(
+    updates.status,
+    updates.result ?? null,
+    updates.error ?? null,
+    updates.duration_ms ?? 0,
+    rowId,
+  );
+}
+
+export interface OrphanedRunLog {
+  id: number;
+  task_id: string;
+  run_at: string;
+}
+
+/**
+ * Find all task_run_logs rows still in 'started' status (orphaned by a crash).
+ */
+export function getOrphanedStartedRuns(): OrphanedRunLog[] {
+  return db
+    .prepare(
+      `SELECT id, task_id, run_at FROM task_run_logs WHERE status = 'started'`,
+    )
+    .all() as OrphanedRunLog[];
 }
 
 // --- Router state accessors ---

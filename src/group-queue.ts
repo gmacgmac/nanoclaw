@@ -57,6 +57,24 @@ export class GroupQueue {
     return state;
   }
 
+  // --- Public read accessors for runtime state derivation (BE_01) ---
+
+  isTaskRunning(groupJid: string, taskId: string): boolean {
+    const state = this.groups.get(groupJid);
+    return state?.runningTaskId === taskId;
+  }
+
+  isTaskQueued(groupJid: string, taskId: string): boolean {
+    const state = this.groups.get(groupJid);
+    if (!state) return false;
+    return state.pendingTasks.some((t) => t.id === taskId);
+  }
+
+  hasActiveContainer(groupJid: string): boolean {
+    const state = this.groups.get(groupJid);
+    return state?.active === true;
+  }
+
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
   }
@@ -406,22 +424,45 @@ export class GroupQueue {
     }
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
-    const activeContainers: string[] = [];
+    // Signal all active containers to wind down via _close
+    let signalledCount = 0;
     for (const [_jid, state] of this.groups) {
-      if (state.process && !state.process.killed && state.containerName) {
-        activeContainers.push(state.containerName);
+      if (state.active && state.groupFolder) {
+        const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+        try {
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(path.join(inputDir, '_close'), '');
+          signalledCount++;
+        } catch {
+          // Best-effort — container may have already exited
+        }
       }
     }
 
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount, signalledCount, gracePeriodMs },
+      'GroupQueue shutting down — waiting for containers to exit',
     );
+
+    // Poll until all containers exit or grace period expires
+    const deadline = Date.now() + gracePeriodMs;
+    const POLL_MS = 250;
+
+    while (this.activeCount > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+
+    const remaining = this.activeCount;
+    if (remaining > 0) {
+      logger.warn(
+        { remaining },
+        'Grace period expired — containers still active (will be swept on next start)',
+      );
+    } else {
+      logger.info('All containers exited cleanly during shutdown');
+    }
   }
 }

@@ -6,22 +6,195 @@ This is separate from the nightly maintenance cron (`startNightlyCron` in `src/t
 
 ---
 
+## Scheduling Is Best-Effort
+
+Scheduled tasks share the per-group queue slot with chat containers. A task fires **only when the group's slot is free**. If the group has an active container — whether mid-turn or idle-waiting — the task waits.
+
+What can delay a task:
+
+- An active chat container (idle or mid-turn) occupying the group's slot
+- Other queued tasks ahead of it in `pendingTasks[]`
+- The scheduler poll interval (up to 60s between checks)
+
+This means a task scheduled for 09:00 might not fire until 09:01 or later if the group is busy. Tasks are **not real-time guarantees** — they are best-effort dispatches.
+
+**Recommendations:**
+
+- Schedule critical tasks for low-activity windows (e.g., early morning, late night)
+- Don't have agents actively monitor task completion in real time — use `get_task` to check `last_run` and `last_result` after the fact
+- For time-sensitive work, keep the group's chat container idle around the scheduled time
+
+---
+
+## Runtime State
+
+Every active task has a live `runtime_state` field derived at request time from the `GroupQueue` and DB state. This field is **not persisted** — it reflects the current moment.
+
+| Value | Meaning |
+|-------|---------|
+| `running` | Task is the currently executing task for its group |
+| `queued` | Task is in the pending queue, waiting for the slot |
+| `blocked` | Task is due but the group has an active container (chat or another task) |
+| `due` | Task is due and the group has no active container (will be picked up next poll) |
+| `idle` | Task is active but `next_run` is in the future |
+| `null` | Task is `paused` or `completed` (no runtime concept) |
+
+**Where it appears:**
+
+- `list_tasks` — appended as `[running]`, `[queued]`, `[blocked]`, or `[due]` annotation (skips `idle`)
+- `get_task` — shown as a `Runtime State: <value>` field
+
+**Dashboard divergence:** `nanoclaw-dashboard` reads SQLite directly and does NOT see `runtime_state`. The dashboard only shows persisted columns (`status`, `next_run`, `last_run`, etc.). This is documented divergence — plans for parity are out of scope.
+
+---
+
 ## How the Scheduler Loop Works
 
 `startSchedulerLoop()` in `src/task-scheduler.ts` polls `getDueTasks()` every 60 seconds (`SCHEDULER_POLL_INTERVAL` in `src/config.ts`). Due tasks are enqueued on the per-group queue — the same queue used for incoming messages — so they respect concurrency limits and don't race with live conversations.
 
 For each due task, `runTask()`:
 
-1. Resolves the group folder
-2. Spawns the group's container via `runContainerAgent()` with `isScheduledTask: true`
-3. Prepends `[SCHEDULED TASK - ...]` to the prompt inside the container so the agent knows the message is automated, not from a real user
-4. Streams results back to the host; any text output is forwarded to the group's chat via `sendMessage`
-5. After a result arrives, schedules a 10-second close delay (`TASK_CLOSE_DELAY_MS`) — tasks are single-turn, so there's no need to keep the container alive for the full idle timeout (30 min)
-6. Logs the run to `task_run_logs` and updates `next_run` and `last_result` via `updateTaskAfterRun()`
+1. Inserts a `'started'` sentinel row into `task_run_logs` (survives crashes — see "Run Audit Trail")
+2. Advances `next_run` to the next scheduled time **before** spawning the container (see "Metadata Update Timing")
+3. Resolves the group folder
+4. Spawns a **fresh, dedicated task container** via `runContainerAgent()` with `isScheduledTask: true`. Tasks never reuse an existing chat container — every task run is its own `docker run --rm`.
+5. Prepends `[SCHEDULED TASK - ...]` to the prompt inside the container so the agent knows the message is automated, not from a real user
+6. Streams results back to the host; any text output is forwarded directly to the group's chat via `channel.sendMessage` (not piped through any other container — see "What you see in chat when a task fires" below)
+7. After a result arrives, schedules a 10-second close delay (`TASK_CLOSE_DELAY_MS`) — tasks are single-turn, so there's no need to keep the container alive for the full idle timeout
+8. Transitions the `'started'` log row to `'success'` or `'error'` and updates `last_run` / `last_result` via `updateTaskAfterCompletion()`
 
 **Host schedules and dispatches. Container executes.** The host owns the loop; the agent always runs inside the group's container image with the group's full environment.
 
 Nudges are disabled for scheduled tasks (`nudgeInterval: 0` when `isScheduledTask: true`).
+
+---
+
+## Metadata Update Timing
+
+`next_run` is advanced **at the start of the run**, before the container spawns. This ensures that a host crash mid-run does not re-trigger the same task on restart.
+
+`last_run` and `last_result` are written **after the task container exits**, via `updateTaskAfterCompletion()`.
+
+For `once` tasks, `next_run` is set to `null` upfront. The `status` field flips to `completed` only on successful completion. If the host crashes mid-run, the task won't re-trigger (since `next_run` is already null), and the abandoned run is surfaced via the crash-recovery sweep (see "Run Audit Trail").
+
+**During an in-flight run:**
+
+- `get_task` and `list_tasks` show the **previous** run's `last_run` / `last_result` (not yet updated)
+- `runtime_state` shows `running` (derived live from `GroupQueue`)
+- The `task_run_logs` table has a `'started'` row for the current run (visible via `get_task` run history)
+
+---
+
+## Run Audit Trail
+
+Every task run produces a row in `task_run_logs` that tracks its lifecycle:
+
+| `status` value | Meaning |
+|----------------|---------|
+| `started` | Run is in-flight (sentinel inserted at the top of `runTask`) |
+| `success` | Run completed successfully |
+| `error` | Run failed (error message in `error` column) |
+
+### Crash Recovery
+
+If the host crashes or is killed mid-run, orphaned `'started'` rows remain in `task_run_logs`. On the next host startup, **before the scheduler loop begins**, a sweep runs:
+
+1. `getOrphanedStartedRuns()` finds all rows still in `'started'` status
+2. Each is closed out as `status: 'error', error: 'Host stopped mid-run', duration_ms: 0`
+3. One aggregated alert is sent per affected group: `⚠️ N task run(s) abandoned during last shutdown:` followed by the task labels
+
+Because `next_run` was already advanced at run start (see above), the abandoned task will **not** re-trigger. The user sees the alert and can re-create or re-schedule if needed.
+
+---
+
+## Graceful Shutdown
+
+When the host receives `SIGTERM` or `SIGINT`, it performs a graceful shutdown sequence:
+
+1. **Stops the scheduler loop** — no new tasks will be enqueued
+2. **Closes the proxy** — no new requests accepted
+3. **Writes `_close` to all active containers** — signals them to finish and exit
+4. **Waits up to `SHUTDOWN_GRACE_MS`** (default 30s) for all containers to exit naturally
+5. **Disconnects channels and exits** — `process.exit(0)`
+
+If containers are still running when the grace period expires, the host exits anyway. Those runs become orphaned `'started'` rows, handled by the crash-recovery sweep on next startup.
+
+**Double-signal escape:** A second `SIGINT` during the grace period triggers `process.exit(1)` immediately — useful when you need to force-quit without waiting.
+
+---
+
+## Concurrency: Chat vs Task Containers
+
+Each registered group has its own slot on the `GroupQueue` (`src/group-queue.ts`). Per group, **only one container can run at a time** — chat and task containers never coexist for the same group. Different groups run in parallel up to `MAX_CONCURRENT_CONTAINERS`.
+
+### Two flows, one slot per group
+
+| Flow | Container | Lifetime | Trigger |
+|------|-----------|----------|---------|
+| **Chat** | Long-lived (`isTaskContainer: false`) | Lives until idle for `IDLE_TIMEOUT` ms with no streamed result. Each new user message is piped into the running SDK query via IPC, resetting the timer. Hard cap is `CONTAINER_TIMEOUT`, also reset on every result. | User message arrives via Telegram/Dashboard |
+| **Task** | Single-shot (`isTaskContainer: true`) | Spawns fresh per task, closed via `_close` sentinel ~10s after the agent emits its first result | Scheduler loop finds a due task |
+
+### What happens when both want to run
+
+If a task fires while a chat container is active:
+
+1. `enqueueTask` sees `state.active === true` → pushes the task into `pendingTasks[]`
+2. If the chat is `idleWaiting` (finished its last response, waiting for IPC input), the queue **immediately preempts** by writing `_close` to the chat container
+3. If the chat is still mid-turn (streaming results), the task waits until the turn completes and the chat goes idle, then `_close` is written
+4. Chat container exits → `drainGroup()` runs → tasks are prioritised over pending messages → fresh task container spawns
+
+Symmetrically, user messages that arrive while a task is running are queued (`pendingMessages` flag) and handled in a fresh chat container after the task exits. The host's `queue.sendMessage` explicitly **refuses** to pipe user text into a task container (`if (state.isTaskContainer) return false`), so a user can never inject into a running task.
+
+A host crash mid-run is safe: `next_run` was already advanced upfront, so the task won't re-trigger on restart. The orphaned run is detected and reported by the crash-recovery sweep.
+
+### Implication for testing
+
+If you want to test a task firing live: leave the chat container alone (or wait for it to idle out) so the task can preempt and run. The chat container will respawn for your next message after the task completes.
+
+### Per-group queue with dedup
+
+`GroupQueue.groups` is a `Map<groupJid, GroupState>`. `enqueueTask` deduplicates by task ID — the same task ID will not double-queue:
+
+- Rejected if `state.runningTaskId === taskId` (already running)
+- Rejected if `state.pendingTasks.some(t => t.id === taskId)` (already queued)
+
+Different task IDs queue freely, drained FIFO. There is no length cap on `pendingTasks[]`.
+
+---
+
+## What you see in chat when a task fires
+
+When a task produces output, you'll see a message in the group chat moments later. **This is not the chat agent reacting to a notification.** No second container spawns.
+
+The flow is direct:
+
+1. Task container's agent emits its result via the OUTPUT marker stream
+2. `runTask()`'s streaming callback receives the result and calls `deps.sendMessage(task.chat_jid, result)`
+3. `deps.sendMessage` (wired in `src/index.ts`) calls `channel.sendMessage` directly — Telegram/Dashboard delivers it
+4. 10s later, `_close` is written → task container exits → metadata is updated
+
+The "reply" you see is the task agent's own final output, shipped straight to the channel by the host. The chat container is uninvolved (and during this window, it isn't running for that group anyway).
+
+---
+
+## Configuration
+
+All timing and capacity values are configurable via `.env` or environment variables.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IDLE_TIMEOUT` | `1800000` (30 min) | How long a chat container stays alive after its last streamed result |
+| `CONTAINER_TIMEOUT` | `1800000` (30 min) | Hard-kill safety net for any container. Resets on every streamed result |
+| `SCHEDULER_POLL_INTERVAL` | `60000` (60s) | How often the scheduler checks for due tasks (hardcoded in `config.ts`) |
+| `MAX_CONCURRENT_CONTAINERS` | `5` | Maximum containers running across all groups simultaneously |
+| `SHUTDOWN_GRACE_MS` | `30000` (30s) | How long graceful shutdown waits for in-flight containers before hard exit |
+
+**Not env-configurable (hardcoded constants):**
+
+| Constant | Value | Location | Description |
+|----------|-------|----------|-------------|
+| `TASK_CLOSE_DELAY_MS` | `10000` (10s) | `src/task-scheduler.ts` | Delay after task result before writing `_close` |
+| `SCHEDULER_POLL_INTERVAL` | `60000` (60s) | `src/config.ts` | Scheduler tick interval |
 
 ---
 
@@ -228,7 +401,7 @@ Tasks are stored in `store/messages.db`.
 | `schedule_type` | TEXT | `cron`, `interval`, or `once` |
 | `schedule_value` | TEXT | Raw value as provided |
 | `context_mode` | TEXT | `group` or `isolated` (default `isolated`) |
-| `next_run` | TEXT | ISO timestamp. `null` for completed `once` tasks. |
+| `next_run` | TEXT | ISO timestamp. `null` for completed `once` tasks. Advanced at run start. |
 | `last_run` | TEXT | ISO timestamp of last execution |
 | `last_result` | TEXT | First 200 chars of last result, or error message |
 | `status` | TEXT | `active`, `paused`, `completed` |
@@ -242,9 +415,11 @@ Tasks are stored in `store/messages.db`.
 | `task_id` | FK → `scheduled_tasks.id` |
 | `run_at` | ISO timestamp |
 | `duration_ms` | Wall time for the container run |
-| `status` | `success` or `error` |
+| `status` | `started`, `success`, or `error` |
 | `result` | Full result text (nullable) |
 | `error` | Error message if failed (nullable) |
+
+A row in `started` status means the run is either in-flight or was abandoned (see "Run Audit Trail"). The crash-recovery sweep on host startup closes orphaned `started` rows.
 
 `deleteTask()` in `src/db.ts` deletes child `task_run_logs` rows first (FK constraint), then the task row.
 
@@ -276,6 +451,7 @@ This means:
 - There is no stale snapshot; agents see changes immediately
 - The host enforces group isolation at query time (`getTasksForGroup(sourceGroup)`)
 - Run history (`task_run_logs`) is accessible via `get_task` for own-group tasks
+- `runtime_state` is derived live from `GroupQueue` at response time (see "Runtime State")
 
 ### The Full Round-Trip
 
@@ -292,7 +468,8 @@ Agent calls list_tasks MCP tool
   → writes .req.json with correlation ID to /workspace/ipc/tasks/
   → host's processTaskIpcRequest() reads the request
   → host queries getTasksForGroup(sourceGroup) — own-group only
-  → host writes .resp.json with results
+  → host derives runtime_state for each task from GroupQueue
+  → host writes .resp.json with results (including runtime_state annotations)
   → container reads response, returns formatted task list to agent
 ```
 
@@ -302,9 +479,13 @@ Agent calls list_tasks MCP tool
 
 | File | Role |
 |------|------|
-| `src/task-scheduler.ts` | Scheduler loop, `runTask()`, `computeNextRun()`, `substitutePromptVars()`, nightly cron |
+| `src/task-scheduler.ts` | Scheduler loop, `runTask()`, `computeNextRun()`, `substitutePromptVars()`, `stopSchedulerLoop()`, nightly cron |
+| `src/task-runtime-state.ts` | `deriveRuntimeState()` — pure helper for live runtime state derivation |
+| `src/abandoned-run-sweep.ts` | `sweepAbandonedRuns()` — startup sweep for orphaned `started` rows + alert dispatch |
 | `src/ipc.ts` → `processTaskIpc()` | Host-side authorization and task CRUD from container IPC files |
-| `src/ipc.ts` → `processTaskIpcRequest()` | Host-side request/response handler for read tools |
-| `src/db.ts` | `createTask`, `getDueTasks`, `updateTask`, `updateTaskAfterRun`, `deleteTask`, `logTaskRun`, `getTasksForGroup` |
-| `src/config.ts` | `SCHEDULER_POLL_INTERVAL` (60s), `TIMEZONE` |
-| `container/agent-runner/src/ipc-mcp-stdio.ts` | `schedule_task` and all task management MCP tools |
+| `src/ipc.ts` → `processTaskIpcRequest()` | Host-side request/response handler for read tools (decorates with `runtime_state`) |
+| `src/db.ts` | `createTask`, `getDueTasks`, `updateTask`, `updateTaskAfterCompletion`, `deleteTask`, `logTaskRunStarted`, `updateTaskRunLog`, `getOrphanedStartedRuns`, `getTasksForGroup` |
+| `src/group-queue.ts` | Per-group queue, `shutdown(gracePeriodMs)`, `isTaskRunning()`, `isTaskQueued()`, `hasActiveContainer()` |
+| `src/config.ts` | `SCHEDULER_POLL_INTERVAL`, `SHUTDOWN_GRACE_MS`, `IDLE_TIMEOUT`, `CONTAINER_TIMEOUT`, `TIMEZONE` |
+| `src/index.ts` | Startup wiring (sweep → scheduler), shutdown handler (stop loop → close → grace wait) |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | `schedule_task` and all task management MCP tools (annotates `runtime_state` in output) |

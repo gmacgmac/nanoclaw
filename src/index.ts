@@ -7,6 +7,7 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   NUDGE_INTERVAL,
   POLL_INTERVAL,
+  SHUTDOWN_GRACE_MS,
   TIMEZONE,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
@@ -71,7 +72,8 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { startNightlyCron, startSchedulerLoop } from './task-scheduler.js';
+import { startNightlyCron, startSchedulerLoop, stopSchedulerLoop } from './task-scheduler.js';
+import { sweepAbandonedRuns } from './abandoned-run-sweep.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { handleHostCommand } from './host-commands.js';
@@ -680,10 +682,18 @@ async function main(): Promise<void> {
   );
 
   // Graceful shutdown handlers
+  let isShuttingDown = false;
   const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'Shutdown signal received');
+    if (isShuttingDown) {
+      // Second signal — hard exit immediately
+      logger.warn({ signal }, 'Second signal received — forcing immediate exit');
+      process.exit(1);
+    }
+    isShuttingDown = true;
+    logger.info({ signal, gracePeriodMs: SHUTDOWN_GRACE_MS }, 'Shutdown signal received');
+    stopSchedulerLoop();
     proxyServer.close();
-    await queue.shutdown(10000);
+    await queue.shutdown(SHUTDOWN_GRACE_MS);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -841,6 +851,18 @@ async function main(): Promise<void> {
 
   setChannelList(channels);
 
+  // Sweep orphaned task runs from previous crash (before scheduler starts)
+  await sweepAbandonedRuns({
+    sendMessage: async (jid, text) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn({ jid }, 'No channel owns JID, cannot send sweep alert');
+        return;
+      }
+      await channel.sendMessage(jid, text);
+    },
+  });
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: getRegisteredGroups,
@@ -967,6 +989,7 @@ async function main(): Promise<void> {
       // Snapshot writes removed (BE_03) — will be replaced by request/response IPC in BE_05
     },
     enqueueMessageCheck: (jid: string) => queue.enqueueMessageCheck(jid),
+    queue,
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

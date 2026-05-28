@@ -20,6 +20,7 @@ const envConfig = readEnvFile([
   'MAX_CONCURRENT_CONTAINERS',
   'NIGHTLY_NUDGE_THRESHOLD',
   'NUDGE_INTERVAL',
+  'SHUTDOWN_GRACE_MS',
   'TZ',
 ]);
 
@@ -128,6 +129,15 @@ export const DEFAULT_CONTEXT_WINDOW = parseInt(
     envConfig.DEFAULT_CONTEXT_WINDOW ||
     '128000',
   10,
+);
+
+// Graceful shutdown: how long to wait for in-flight containers before hard exit (ms).
+export const SHUTDOWN_GRACE_MS = Math.max(
+  0,
+  parseInt(
+    process.env.SHUTDOWN_GRACE_MS || envConfig.SHUTDOWN_GRACE_MS || '30000',
+    10,
+  ) || 30000,
 );
 
 function escapeRegex(str: string): string {

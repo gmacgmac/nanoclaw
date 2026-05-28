@@ -308,6 +308,7 @@ server.tool(
         schedule_value: string;
         status: string;
         next_run: string | null;
+        runtime_state?: string | null;
       }>;
 
       if (!tasks || tasks.length === 0) {
@@ -318,7 +319,8 @@ server.tool(
         .map((t) => {
           const desc = t.description || '(no description)';
           const promptPreview = t.prompt.length > 50 ? `${t.prompt.slice(0, 50)}...` : t.prompt;
-          return `- [${t.id}] ${desc} (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}\n  prompt: ${promptPreview}`;
+          const runtimeAnnotation = t.runtime_state && t.runtime_state !== 'idle' ? ` [${t.runtime_state}]` : '';
+          return `- [${t.id}] ${desc} (${t.schedule_type}: ${t.schedule_value}) - ${t.status}${runtimeAnnotation}, next: ${t.next_run || 'N/A'}\n  prompt: ${promptPreview}`;
         })
         .join('\n');
 
@@ -351,6 +353,7 @@ server.tool(
         last_result: string | null;
         created_at: string;
         script?: string | null;
+        runtime_state?: string | null;
       };
 
       const lines = [
@@ -360,6 +363,7 @@ server.tool(
         `Schedule: ${task.schedule_type} ${task.schedule_value}`,
         `Context Mode: ${task.context_mode}`,
         `Status: ${task.status}`,
+        `Runtime State: ${task.runtime_state ?? 'N/A'}`,
         `Next Run: ${task.next_run || 'N/A'}`,
         `Last Run: ${task.last_run || 'N/A'}`,
         `Last Result: ${task.last_result || 'N/A'}`,

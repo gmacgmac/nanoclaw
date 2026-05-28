@@ -180,6 +180,117 @@ describe('GroupQueue', () => {
     expect(processMessages).not.toHaveBeenCalled();
   });
 
+  // --- Graceful shutdown waits for active containers ---
+
+  it('shutdown writes _close to all active containers', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+
+    // Start shutdown (don't await yet)
+    const shutdownPromise = queue.shutdown(5000);
+
+    // _close should have been written
+    const closeWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(closeWrites).toHaveLength(1);
+
+    // Simulate container exit
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(300);
+    await shutdownPromise;
+  });
+
+  it('shutdown resolves immediately when no containers are active', async () => {
+    const start = Date.now();
+    await queue.shutdown(5000);
+    // Should resolve without waiting the full grace period
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
+  it('shutdown resolves when all containers exit within grace period', async () => {
+    let resolveTask: () => void;
+
+    const taskFn = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveTask = resolve;
+      });
+    });
+
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    let shutdownResolved = false;
+    const shutdownPromise = queue.shutdown(5000).then(() => {
+      shutdownResolved = true;
+    });
+
+    // Container still running — shutdown should be waiting
+    await vi.advanceTimersByTimeAsync(250);
+    expect(shutdownResolved).toBe(false);
+
+    // Container exits
+    resolveTask!();
+    await vi.advanceTimersByTimeAsync(300);
+    await shutdownPromise;
+    expect(shutdownResolved).toBe(true);
+  });
+
+  it('shutdown resolves after grace period even if containers are still active', async () => {
+    const processMessages = vi.fn(async () => {
+      // Never resolves — simulates a hung container
+      await new Promise<void>(() => {});
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    let shutdownResolved = false;
+    const shutdownPromise = queue.shutdown(2000).then(() => {
+      shutdownResolved = true;
+    });
+
+    // Advance past grace period
+    await vi.advanceTimersByTimeAsync(2100);
+    await shutdownPromise;
+    expect(shutdownResolved).toBe(true);
+  });
+
   // --- Max retries exceeded ---
 
   it('stops retrying after MAX_RETRIES and resets', async () => {
@@ -307,10 +418,11 @@ describe('GroupQueue', () => {
 
     // Enqueue a task while container is active but NOT idle
     const taskFn = vi.fn(async () => {});
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
 
     // _close should NOT have been written (container is working, not idle)
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
     const closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
     );

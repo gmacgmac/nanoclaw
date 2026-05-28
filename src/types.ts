@@ -211,9 +211,23 @@ export interface TaskRunLog {
   task_id: string;
   run_at: string;
   duration_ms: number;
-  status: 'success' | 'error';
+  status: 'started' | 'success' | 'error';
   result: string | null;
   error: string | null;
+}
+
+// --- Runtime state derivation (BE_01) ---
+
+export type RuntimeState =
+  | 'idle'
+  | 'due'
+  | 'blocked'
+  | 'queued'
+  | 'running'
+  | null;
+
+export interface ScheduledTaskWithRuntime extends ScheduledTask {
+  runtime_state: RuntimeState;
 }
 
 // --- Channel abstraction ---

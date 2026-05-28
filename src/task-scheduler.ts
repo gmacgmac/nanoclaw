@@ -11,9 +11,10 @@ import { ContainerOutput, runContainerAgent } from './container-runner.js';
 import {
   getDueTasks,
   getTaskById,
-  logTaskRun,
+  logTaskRunStarted,
+  updateTaskRunLog,
   updateTask,
-  updateTaskAfterRun,
+  updateTaskAfterCompletion,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -110,6 +111,17 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  const runAt = new Date().toISOString();
+
+  // Insert 'started' sentinel row immediately — survives crashes
+  const runLogId = logTaskRunStarted(task.id, runAt);
+
+  // Advance next_run upfront so a host crash won't re-trigger this run.
+  // For 'once' tasks this sets next_run = null; status flips to 'completed'
+  // only on successful completion via updateTaskAfterCompletion.
+  const nextRun = computeNextRun(task);
+  updateTask(task.id, { next_run: nextRun });
+
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);
@@ -121,13 +133,10 @@ async function runTask(
       { taskId: task.id, groupFolder: task.group_folder, error },
       'Task has invalid group folder',
     );
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: Date.now() - startTime,
+    updateTaskRunLog(runLogId, {
       status: 'error',
-      result: null,
       error,
+      duration_ms: Date.now() - startTime,
     });
     return;
   }
@@ -148,13 +157,10 @@ async function runTask(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
     );
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: Date.now() - startTime,
+    updateTaskRunLog(runLogId, {
       status: 'error',
-      result: null,
       error: `Group not found: ${task.group_folder}`,
+      duration_ms: Date.now() - startTime,
     });
     return;
   }
@@ -196,13 +202,10 @@ async function runTask(
         },
         'Preset resolution failed, task container not spawned',
       );
-      logTaskRun({
-        task_id: task.id,
-        run_at: new Date().toISOString(),
-        duration_ms: Date.now() - startTime,
+      updateTaskRunLog(runLogId, {
         status: 'error',
-        result: null,
         error,
+        duration_ms: Date.now() - startTime,
       });
       return;
     }
@@ -259,25 +262,32 @@ async function runTask(
 
   const durationMs = Date.now() - startTime;
 
-  logTaskRun({
-    task_id: task.id,
-    run_at: new Date().toISOString(),
-    duration_ms: durationMs,
+  // Transition the 'started' row to its final state
+  updateTaskRunLog(runLogId, {
     status: error ? 'error' : 'success',
     result,
     error,
+    duration_ms: durationMs,
   });
 
-  const nextRun = computeNextRun(task);
   const resultSummary = error
     ? `Error: ${error}`
     : result
       ? result.slice(0, 200)
       : 'Completed';
-  updateTaskAfterRun(task.id, nextRun, resultSummary);
+  updateTaskAfterCompletion(task.id, resultSummary);
 }
 
 let schedulerRunning = false;
+let schedulerStopped = false;
+
+/**
+ * Stop the scheduler loop. The current tick completes but no further
+ * ticks are scheduled. Called during graceful shutdown.
+ */
+export function stopSchedulerLoop(): void {
+  schedulerStopped = true;
+}
 
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
@@ -285,9 +295,12 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     return;
   }
   schedulerRunning = true;
+  schedulerStopped = false;
   logger.info('Scheduler loop started');
 
   const loop = async () => {
+    if (schedulerStopped) return;
+
     try {
       const dueTasks = getDueTasks();
       if (dueTasks.length > 0) {
@@ -309,7 +322,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       logger.error({ err }, 'Error in scheduler loop');
     }
 
-    setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+    if (!schedulerStopped) {
+      setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+    }
   };
 
   loop();
@@ -363,5 +378,6 @@ export function startNightlyCron(
 /** @internal - for tests only. */
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
+  schedulerStopped = false;
   nightlyCronRunning = false;
 }

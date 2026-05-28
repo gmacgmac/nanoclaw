@@ -17,8 +17,10 @@ import {
   updateTask,
 } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { deriveRuntimeState } from './task-runtime-state.js';
+import { RegisteredGroup, ScheduledTaskWithRuntime } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -39,6 +41,7 @@ export interface IpcDeps {
   ) => void;
   onTasksChanged: () => void;
   enqueueMessageCheck: (jid: string) => void;
+  queue?: GroupQueue;
 }
 
 // --- Command approval state ---
@@ -175,7 +178,17 @@ export async function processTaskIpcRequest(
   switch (type) {
     case 'list_tasks_request': {
       const tasks = getTasksForGroup(sourceGroup);
-      writeIpcResponse(sourceGroup, correlationId, { ok: true, data: tasks });
+      const now = new Date();
+      const decorated: ScheduledTaskWithRuntime[] = tasks.map((task) => ({
+        ...task,
+        runtime_state: deps.queue
+          ? deriveRuntimeState(task, deps.queue, now)
+          : null,
+      }));
+      writeIpcResponse(sourceGroup, correlationId, {
+        ok: true,
+        data: decorated,
+      });
       break;
     }
     case 'get_task_request': {
@@ -194,7 +207,17 @@ export async function processTaskIpcRequest(
           error: 'Task not found',
         });
       } else {
-        writeIpcResponse(sourceGroup, correlationId, { ok: true, data: task });
+        const now = new Date();
+        const decorated: ScheduledTaskWithRuntime = {
+          ...task,
+          runtime_state: deps.queue
+            ? deriveRuntimeState(task, deps.queue, now)
+            : null,
+        };
+        writeIpcResponse(sourceGroup, correlationId, {
+          ok: true,
+          data: decorated,
+        });
       }
       break;
     }
