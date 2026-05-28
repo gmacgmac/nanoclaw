@@ -119,7 +119,7 @@ The nudge prompt instructs the agent to keep `MEMORY.md` under **5000 characters
 
 ### `contextWindowSize` — Per-Group Context Limit
 
-Controls when the threshold nudge fires. Set in `containerConfig`:
+Controls when the threshold nudge fires (memory persistence). This is separate from auto-compaction (which is driven by the preset's `compactThreshold` and fires at the SDK level to summarize the conversation). Set in `containerConfig`:
 
 ```json
 { "contextWindowSize": 128000 }
@@ -523,7 +523,8 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
     "endpoint": "ollama",
     "model": "kimi-k2.6:cloud",
     "capabilities": { "vision": false, "tools": true },
-    "contextWindow": 128000
+    "contextWindow": 262144,
+    "compactThreshold": 0.57
   }
 }
 ```
@@ -534,7 +535,10 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
 | `model` | `string` | yes | — |
 | `capabilities` | `{ vision: boolean, thinking?: boolean, tools?: boolean }` | yes | — |
 | `contextWindow` | `number` | no | `128000` |
+| `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
+
+**Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 
 Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets at runtime. Only the preset name is stored in `containerConfig.preset`; the container is recycled on switch.
 

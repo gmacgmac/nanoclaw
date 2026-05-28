@@ -111,10 +111,15 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   // Always regenerate settings.json from the resolved preset so it never drifts.
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   const resolved = resolvePreset(group.containerConfig?.preset);
+  const contextWindow = resolved?.contextWindow ?? 128000;
+  const compactRatio = resolved?.compactThreshold ?? 0.8;
+  const autoCompactWindow = Math.floor(contextWindow * compactRatio);
   fs.writeFileSync(
     settingsFile,
     JSON.stringify(
       {
+        autoCompactEnabled: true,
+        autoCompactWindow,
         env: {
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
           CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',

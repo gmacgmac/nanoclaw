@@ -22,6 +22,7 @@ export interface ModelPreset {
   model: string;
   capabilities: ModelCapabilities;
   contextWindow?: number;
+  compactThreshold?: number;
   webSearchVendor?: string;
 }
 
@@ -101,6 +102,13 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
       ? obj.contextWindow
       : DEFAULT_CONTEXT_WINDOW;
 
+  const compactThreshold =
+    typeof obj.compactThreshold === 'number' &&
+    obj.compactThreshold >= 0.1 &&
+    obj.compactThreshold <= 0.95
+      ? obj.compactThreshold
+      : undefined;
+
   const webSearchVendor =
     typeof obj.webSearchVendor === 'string' && obj.webSearchVendor
       ? obj.webSearchVendor
@@ -111,6 +119,7 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
     model: obj.model,
     capabilities,
     contextWindow,
+    ...(compactThreshold !== undefined && { compactThreshold }),
     webSearchVendor,
   };
 }

@@ -89,25 +89,49 @@ ZAI_API_KEY=...
 
 Each vendor is defined by a `{VENDOR}_BASE_URL` and `{VENDOR}_API_KEY` pair. The vendor name (lowercase) becomes the routing key.
 
-Groups select an endpoint via `containerConfig.endpoint` (defaults to `"anthropic"`). The proxy reads the `X-Nanoclaw-Endpoint` header on each request and routes to the matching vendor's upstream URL with its credentials.
+Groups select an endpoint via their preset (`containerConfig.preset` → resolved `endpoint` field). The proxy reads the `X-Nanoclaw-Endpoint` header on each request and routes to the matching vendor's upstream URL with its credentials.
 
 ## Per-Group Configuration (`containerConfig`)
 
-Stored as JSON in the `registered_groups.container_config` SQLite column. All fields are optional.
+Stored as JSON in the `registered_groups.container_config` SQLite column. All fields are optional except `preset`.
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `endpoint` | `string` | **required** | Named vendor from `secrets.env` (e.g. `"ollama"`, `"zai"`). Routes API traffic to that upstream |
+| `preset` | `string` | **required** | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, compactThreshold, webSearchVendor |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
-| `model` | `string` | `undefined` = inherit | Per-group model override (e.g. `"sonnet"`, `"haiku"`). Prefer `settings.json` for easier editing |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
-| `contextWindowSize` | `number` | `128000` | Token threshold for memory nudge (80% live, 50% nightly) |
-| `webSearchVendor` | `string` | `undefined` | Routes web search through named vendor's proxy endpoint |
+| `contextWindowSize` | `number` | from preset | Token threshold for memory nudge (80% live, 50% nightly). Defaults to preset's `contextWindow` |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
+
+**Preset file schema** (`~/.config/nanoclaw/model-presets.json`):
+
+```json
+{
+  "OK2.6": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud",
+    "capabilities": { "vision": true, "thinking": true, "tools": true },
+    "contextWindow": 262144,
+    "compactThreshold": 0.57,
+    "webSearchVendor": "ollama"
+  }
+}
+```
+
+| Preset Field | Type | Required | Default |
+|--------------|------|----------|---------|
+| `endpoint` | `string` | yes | — |
+| `model` | `string` | yes | — |
+| `capabilities` | `{ vision: boolean, thinking?: boolean, tools?: boolean }` | yes | — |
+| `contextWindow` | `number` | no | `128000` |
+| `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
+| `webSearchVendor` | `string` | no | `"ollama"` |
+
+**Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 
 **`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 
@@ -127,36 +151,16 @@ sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE 
 
 ### Model Configuration
 
-Two ways to set per-group models:
+Models are configured via presets defined in `~/.config/nanoclaw/model-presets.json`. Each group references a preset by name in `containerConfig.preset`.
 
-**Preferred: `settings.json`** (easier to edit)
+**To switch presets at runtime**: Use `/model <preset>` (requires `allowedHostCommands: ['model']`). The container is recycled on switch.
+
+**To set via database**:
 ```bash
-# File: data/sessions/{folder}/.claude/settings.json
-{
-  "ANTHROPIC_MODEL": "claude-sonnet-4-6"
-}
+sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.preset', 'OK2.6') WHERE folder = 'mygroup'"
 ```
 
-**Alternative: database** (overrides everything)
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.model', 'sonnet') WHERE folder = 'mygroup'"
-```
-
-To switch from database to settings.json (recommended), remove the model from the database:
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_remove(container_config, '$.model') WHERE folder = 'mygroup'"
-```
-
-The model precedence:
-1. `container_config.model` (database) — overrides everything
-2. `data/sessions/{folder}/.claude/settings.json` → `ANTHROPIC_MODEL` — group-specific model
-3. `.env` → `ANTHROPIC_MODEL` — global default
-4. SDK default
-
-**Endpoint** must be in database (no settings.json fallback):
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.endpoint', 'zai') WHERE folder = 'mygroup'"
-```
+**`settings.json` is auto-generated** at container spawn from the resolved preset. Do not edit it manually — changes will be overwritten on next container start. It contains `ANTHROPIC_MODEL`, `autoCompactEnabled`, and `autoCompactWindow`.
 
 ## Session Architecture
 
@@ -323,7 +327,7 @@ Store persistent context here (not in `~/.claude/projects/` auto-memory). This f
 ### Project State
 
 - **Provider**: Ollama at `http://localhost:11434` (Anthropic-compatible API)
-- **Model**: `glm-5:cloud` (set via `ANTHROPIC_MODEL` in `.env` and `data/sessions/{group}/.claude/settings.json`)
+- **Model**: Resolved from `containerConfig.preset` via `model-presets.json` (e.g. `OK2.6` → `kimi-k2.6:cloud`)
 - **Credentials**: Native credential proxy — reads vendor keys from `~/.config/nanoclaw/secrets.env`
 - **Channel**: Telegram bot `@dandysandy_bot` (token in `secrets.env`)
 - **Registered chat**: `tg:123456789` (GM's DM), folder `telegram_main`, no trigger required (main group)

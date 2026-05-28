@@ -491,7 +491,8 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
     "endpoint": "ollama",
     "model": "kimi-k2.6:cloud",
     "capabilities": { "vision": false, "tools": true },
-    "contextWindow": 128000
+    "contextWindow": 262144,
+    "compactThreshold": 0.57
   }
 }
 ```
@@ -502,9 +503,12 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
 | `model` | `string` | yes | — |
 | `capabilities` | `{ vision: boolean, thinking?: boolean, tools?: boolean }` | yes | — |
 | `contextWindow` | `number` | no | `128000` |
+| `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
 
-**Runtime resolution**: `containerConfig.preset` → `resolvePreset(name)` → returns the full `ResolvedPreset` with endpoint, model, capabilities, contextWindow, webSearchVendor. All container spawn, IPC, and scheduling paths use this.
+**Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
+
+**Runtime resolution**: `containerConfig.preset` → `resolvePreset(name)` → returns the full `ResolvedPreset` with endpoint, model, capabilities, contextWindow, compactThreshold, webSearchVendor. All container spawn, IPC, and scheduling paths use this.
 
 Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets. This stores only the preset name in the database and recycles the active container so the next message spawns fresh with the new config.
 
@@ -582,7 +586,8 @@ Host commands are intercepted on the host process before reaching the agent cont
     "endpoint": "ollama",
     "model": "kimi-k2.6:cloud",
     "capabilities": { "vision": false, "tools": true },
-    "contextWindow": 128000
+    "contextWindow": 262144,
+    "compactThreshold": 0.57
   },
   "opus_4.7": {
     "endpoint": "anthropic",
