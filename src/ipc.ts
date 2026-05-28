@@ -431,6 +431,8 @@ export async function processTaskIpcRequest(
           | 'once';
       if (data.schedule_value !== undefined)
         updates.schedule_value = data.schedule_value as string;
+      if (data.context_mode !== undefined)
+        updates.context_mode = data.context_mode as 'group' | 'isolated';
 
       // Recompute next_run if schedule changed
       if (

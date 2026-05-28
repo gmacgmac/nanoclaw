@@ -229,9 +229,11 @@ Each task has a `context_mode` that controls whether it runs against the group's
 | `group` | Resumes the group's current `.jsonl` session | Task needs conversation context — "follow up on what I asked", preference recall, referencing recent decisions |
 | `isolated` | Fresh session, no conversation history | Self-contained tasks — daily reports, reminders, background data gathering. **Put all necessary context in the prompt itself.** |
 
-Default is `isolated`. If unclear, the agent should ask: "follow up on our discussion" → `group`; "check Hacker News every morning" → `isolated`.
+**There is no default.** The agent must always ask the user which mode to use before scheduling a task. The `schedule_task` schema has no `.default()` — omitting `context_mode` will fail validation.
 
-`context_mode` is stored in the `scheduled_tasks` table. It was added as a migration (`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'` in `src/db.ts`), so existing tasks default to `isolated`.
+The agent is instructed to ask in plain language: *"Should this task remember our past chats when it runs, or start fresh each time?"*
+
+`context_mode` is stored in the `scheduled_tasks` table. It was added as a migration (`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'` in `src/db.ts`), so existing tasks (created before this change) default to `isolated`.
 
 ---
 
@@ -273,7 +275,7 @@ These are registered on the `nanoclaw` MCP server in `container/agent-runner/src
 - `description` — **required**. Human-readable summary of what the task does (shown in `list_tasks` output)
 - `schedule_type` — `cron`, `interval`, or `once`
 - `schedule_value` — format per schedule type (see above)
-- `context_mode` — `group` or `isolated` (default `isolated`)
+- `context_mode` — `group` or `isolated` (required — agent must ask the user)
 - `target_group_jid` — (main only) JID of the target group; defaults to current group
 - `prompt` — supports `{{NOW}}` etc. placeholders
 
@@ -400,7 +402,7 @@ Tasks are stored in `store/messages.db`.
 | `prompt` | TEXT | The agent's instruction. May contain `{{placeholders}}`. |
 | `schedule_type` | TEXT | `cron`, `interval`, or `once` |
 | `schedule_value` | TEXT | Raw value as provided |
-| `context_mode` | TEXT | `group` or `isolated` (default `isolated`) |
+| `context_mode` | TEXT | `group` or `isolated`. Required at creation time (no app-level default). DB migration default is `isolated` for pre-existing rows. |
 | `next_run` | TEXT | ISO timestamp. `null` for completed `once` tasks. Advanced at run start. |
 | `last_run` | TEXT | ISO timestamp of last execution |
 | `last_result` | TEXT | First 200 chars of last result, or error message |

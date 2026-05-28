@@ -550,6 +550,7 @@ export function updateTask(
       | 'next_run'
       | 'status'
       | 'script'
+      | 'context_mode'
     >
   >,
 ): void {
@@ -583,6 +584,10 @@ export function updateTask(
   if (updates.script !== undefined) {
     fields.push('script = ?');
     values.push(updates.script);
+  }
+  if (updates.context_mode !== undefined) {
+    fields.push('context_mode = ?');
+    values.push(updates.context_mode);
   }
 
   if (fields.length === 0) return;
