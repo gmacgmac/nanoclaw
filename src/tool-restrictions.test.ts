@@ -296,7 +296,7 @@ describe('BE_04: agent-browser binary mounting', () => {
 
     if (
       fs.existsSync(agentBrowserPkg) &&
-      (!allowedSkills || allowedSkills.includes('agent-browser'))
+      allowedSkills?.includes('agent-browser')
     ) {
       const archMap: Record<string, string> = {
         arm64: 'linux-arm64',
@@ -327,22 +327,16 @@ describe('BE_04: agent-browser binary mounting', () => {
     return mounts;
   }
 
-  it('mounts agent-browser when allowedSkills is undefined (backward compat)', () => {
-    // Create fake pkg + binary
+  it('does NOT mount agent-browser when allowedSkills is undefined (secure by default)', () => {
     const pkgDir = path.join(tempDir, 'agent-browser');
     const binDir = path.join(pkgDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
+    // undefined skills = no skills (secure by default) — binary must NOT mount
     const mounts = computeAgentBrowserMounts(pkgDir, undefined, 'x64');
 
-    expect(mounts).toHaveLength(2);
-    expect(mounts[0].containerPath).toBe(
-      '/usr/local/lib/node_modules/agent-browser',
-    );
-    expect(mounts[1].containerPath).toBe('/usr/local/bin/agent-browser');
-    expect(mounts[0].readonly).toBe(true);
-    expect(mounts[1].readonly).toBe(true);
+    expect(mounts).toHaveLength(0);
   });
 
   it('mounts agent-browser when it is in allowedSkills', () => {
@@ -368,7 +362,6 @@ describe('BE_04: agent-browser binary mounting', () => {
     const pkgDir = path.join(tempDir, 'agent-browser');
     fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
 
-    // telegram_main config: skills = ['capabilities', 'slack-formatting', 'status']
     const mounts = computeAgentBrowserMounts(
       pkgDir,
       ['capabilities', 'slack-formatting', 'status'],
@@ -380,7 +373,7 @@ describe('BE_04: agent-browser binary mounting', () => {
 
   it('does NOT mount when pkg directory does not exist', () => {
     const nonExistentPkg = path.join(tempDir, 'nonexistent');
-    const mounts = computeAgentBrowserMounts(nonExistentPkg, undefined, 'x64');
+    const mounts = computeAgentBrowserMounts(nonExistentPkg, ['agent-browser'], 'x64');
     expect(mounts).toHaveLength(0);
   });
 
@@ -389,7 +382,7 @@ describe('BE_04: agent-browser binary mounting', () => {
     fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
     // No binary file created
 
-    const mounts = computeAgentBrowserMounts(pkgDir, undefined, 'x64');
+    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'x64');
 
     // Package dir mount should still happen
     expect(mounts).toHaveLength(1);
@@ -408,7 +401,7 @@ describe('BE_04: agent-browser binary mounting', () => {
     );
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
-    const mounts = computeAgentBrowserMounts(pkgDir, undefined, 'arm64');
+    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'arm64');
     const binMount = mounts.find(
       (m) => m.containerPath === '/usr/local/bin/agent-browser',
     );
@@ -421,7 +414,7 @@ describe('BE_04: agent-browser binary mounting', () => {
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
-    const mounts = computeAgentBrowserMounts(pkgDir, undefined, 'x64');
+    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'x64');
     const binMount = mounts.find(
       (m) => m.containerPath === '/usr/local/bin/agent-browser',
     );
@@ -434,7 +427,7 @@ describe('BE_04: agent-browser binary mounting', () => {
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
-    const mounts = computeAgentBrowserMounts(pkgDir, undefined, 'riscv64');
+    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'riscv64');
     const binMount = mounts.find(
       (m) => m.containerPath === '/usr/local/bin/agent-browser',
     );

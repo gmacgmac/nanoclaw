@@ -1,7 +1,7 @@
 {
   "channels": {
-    "stable": "v1.0.0",
-    "next": "v1.21.0"
+    "stable": "v1.21.0",
+    "next": "v1.23.0"
   },
   "versions": {
     "v1.0.0": {
@@ -30,8 +30,29 @@
       "builtAt": "2026-05-28T08:09:53",
       "sdkVersion": "0.3.147",
       "cliVersion": "2.1.147 (Claude Code)",
-      "notes": ""
+      "notes": "Security hardening batch. Skills default flipped to none (was: all). Bash excluded from default allowedTools when approvalMode active. WebSearch/WebFetch excluded from defaults (use nanoclaw-web-search MCP). register_group and delegate_to_group hidden from non-main groups at MCP server registration level (double-gated). Branch: feat/container-security-hardening."
+    },
+    "v1.22.0": {
+      "imageId": "sha256:5bf7dfd102f3273749f392ec478ac3d9720cc141d7418425ff5b25284ef7e29f",
+      "builtAt": "2026-05-28T21:59:28",
+      "sdkVersion": "0.3.147",
+      "cliVersion": "2.1.147 (Claude Code)",
+      "notes": "Telegram multi-bot support. Per-group telegramBot field in containerConfig routes outbound replies to a named bot instance (TELEGRAM_{NAME}_BOT_TOKEN in secrets.env). Default bot used when field absent."
+    },
+    "v1.23.0": {
+      "imageId": "sha256:f96b87a037783efb0c2b8a9fa0bf1733635944ff09fb28e524b3343e838888a2",
+      "builtAt": "2026-05-29T07:03:19",
+      "sdkVersion": "0.3.147",
+      "cliVersion": "2.1.147 (Claude Code)",
+      "notes": "MCP tool visibility hardening. get_registered_groups gated to main-only (was: all groups). capabilities skill rewritten to remove hardcoded tool/MCP lists — now uses runtime introspection (env vars, filesystem, MCP context). No SDK or CLI changes."
     }
   },
-  "history": []
+  "history": [
+    {
+      "channel": "stable",
+      "from": "v1.0.0",
+      "to": "v1.21.0",
+      "at": "2026-05-28T21:59:01Z"
+    }
+  ]
 }

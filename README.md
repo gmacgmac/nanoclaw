@@ -546,11 +546,11 @@ Use the `/model` host command (requires `allowedHostCommands: ['model']`) to swi
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | All skills copied (backward compatible) |
+| `undefined` / absent | No skills — secure default |
 | `[]` | No skills — minimal container |
 | `["status", "browser"]` | Only named skills |
 
-**`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in `allowedSkills` (or `allowedSkills` is undefined). Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
+**`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is explicitly in the group's `skills` list. Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
 
 > **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
 
@@ -568,7 +568,7 @@ Similarly, include `slack-formatting` for Slack groups. Discord groups do not ne
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | All tools (default list) |
+| `undefined` / absent | Secure default set — excludes `WebSearch`, `WebFetch` (Anthropic-only), and `Bash` when approval mode is active (use `execute_command` MCP instead) |
 | `["Read", "Grep", "WebSearch"]` | Only named tools |
 | `[]` | No tools — only MCP IPC |
 
@@ -1164,7 +1164,7 @@ Adds a human-in-the-loop gate for dangerous shell commands in groups with write-
 **When it applies:** Groups with write-access `additionalMounts`. Approval mode is on by default; set `approvalMode: false` explicitly to disable. If a group has no write mounts, approval mode has no practical effect (all commands target container-internal paths, which are always allowed).
 
 **How it works:**
-1. When approval mode is active (default), `Bash` is removed from `allowedTools` in `runAgent()` and replaced with `mcp__nanoclaw__execute_command` — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
+1. When approval mode is active (default), `Bash` is excluded from the tool set — both stripped from any explicit `allowedTools` list on the host side, and excluded from the default tool set in the agent-runner when `allowedTools` is undefined. The agent uses `mcp__nanoclaw__execute_command` instead — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
 2. The agent uses `execute_command` instead of `Bash`. The tool runs `isDangerousCommand()` from `src/lib/command-approval.ts` against the command.
 3. If the command is dangerous AND targets a write-mounted path (under `/workspace/extra/`), the tool pauses and writes an `approval_request` to the IPC messages directory.
 4. The host's `processIpcMessageData()` picks up the request, formats it, and sends it to the user's messaging channel.
@@ -1391,7 +1391,7 @@ For groups using a non-Anthropic endpoint (e.g. preset with `endpoint: "ollama"`
 1. Ensure `ANTHROPIC_API_KEY=placeholder` is in `secrets.env` (see [Auth Modes](#auth-modes-api-key-vs-oauth))
 2. Add `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
 3. Ensure the preset's `webSearchVendor` field is set
-4. Remove `WebSearch` and `WebFetch` from `allowedTools` if you're using a custom tool list — or if using the default tool list, the built-in tools will be present but non-functional (they'll silently return nothing). The MCP tools (`mcp__nanoclaw-web-search__web_search`, `mcp__nanoclaw-web-search__web_fetch`) work regardless.
+4. `WebSearch` and `WebFetch` are excluded from the default tool set — no action needed. If you have an explicit `allowedTools` list, ensure they are not included.
 
 ---
 

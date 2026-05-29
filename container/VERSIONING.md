@@ -96,7 +96,7 @@ Before running `container.sh promote <version>`:
 ## Session Compatibility Across SDK Versions
 
 > [!IMPORTANT]
-> **`/newsession` is required when switching channels between v1.0.0 and v1.2.0 (or any version pairing that crosses a major SDK boundary).**
+> **`/newsession` is required when switching channels between v1.0.0 and v1.1.0+ (any version crossing the 0.2.x → 0.3.x SDK boundary).**
 
 When the underlying Claude Agent SDK version changes between two channels, the session JSONL format can drift in ways that confuse the resuming model. Observed symptoms during the v1.0.0 → v1.2.0 canary:
 
@@ -104,11 +104,11 @@ When the underlying Claude Agent SDK version changes between two channels, the s
 - The `result` event from the SDK comes back empty, so Telegram receives nothing
 - Tool-use sequencing appears malformed in the resumed session
 
-**Cause:** v1.0.0 ships SDK `0.2.76`. v1.1.0 and v1.2.0 ship SDK `0.3.147`. The 0.2.x → 0.3.x JSONL format changes (thinking block structure, signature fields, content typing) are not backward-resumable — the model born under 0.3.x cannot cleanly continue a session written by 0.2.x.
+**Cause:** v1.0.0 ships SDK `0.2.76`. v1.1.0+ ships SDK `0.3.147`. The 0.2.x → 0.3.x JSONL format changes (thinking block structure, signature fields, content typing) are not backward-resumable.
 
-**Required workaround:** after switching channels with `/version stable` or `/version next`, run `/newsession` in the same group before sending the next user message. This starts a fresh session under the new SDK and avoids format pollution. The old session JSONL is preserved on disk for forensic recovery if needed.
+**Required workaround:** after switching channels with `/version stable` or `/version next` across this boundary, run `/newsession` before sending the next user message. The old session JSONL is preserved on disk.
 
-**Future versions:** if a future build keeps the SDK on the same major line (e.g. 0.3.x → 0.3.x), session resume should work cleanly without `/newsession`. Update this section if/when that's verified.
+**Same-major-line (0.3.x → 0.3.x):** session resume works cleanly without `/newsession`. Verified across v1.1.0 → v1.2.0 → v1.21.0 → v1.22.0 → v1.23.0 (all SDK 0.3.147). If a future build upgrades to 0.4.x or higher, re-evaluate and update this section.
 
 ---
 

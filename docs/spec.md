@@ -59,11 +59,13 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
 │  │  Tools (configurable per-group via allowedTools):               │    │
-│  │    • Bash (safe - sandboxed in container!)                     │    │
+│  │    • execute_command (MCP, approval-gated by default) or Bash  │    │
+│  │      if approvalMode: false — controlled by containerConfig    │    │
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
-│  │    • WebSearch, WebFetch (internet access)                     │    │
+│  │    • WebSearch/WebFetch excluded from defaults (use MCP)       │    │
 │  │    • agent-browser (only if skill explicitly allowed)          │    │
-│  │    • mcp__nanoclaw__* (scheduler tools via IPC — always on)    │    │
+│  │    • mcp__nanoclaw__* (IPC — always on; register_group &       │    │
+│  │      delegate_to_group hidden from non-main groups)            │    │
 │  │    • Per-group MCP servers (e.g. brave-search, nanoclaw-web-search)  │    │
 │  │                                                                │    │
 │  └──────────────────────────────────────────────────────────────┘    │
@@ -413,7 +415,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `preset` | `string` | `undefined` | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, webSearchVendor at runtime. |
-| `skills` | `string[]` | `undefined` = all | Per-group skill selection |
+| `skills` | `string[]` | `undefined` = none | Per-group skill selection |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
 | `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
@@ -425,11 +427,11 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | All skills copied (backward compatible) |
+| `undefined` / absent | No skills — secure default |
 | `[]` | No skills — minimal container |
 | `["status", "browser"]` | Only named skills |
 
-**`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined for backward compat). Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
+**`agent-browser` is special**: it is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is explicitly in the group's `skills` list. Without the mount, the binary does not exist in the container — agents cannot browse the web via Bash even if they try.
 
 > **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
 
@@ -437,7 +439,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | All tools (default list) |
+| `undefined` / absent | Secure default set (excludes `WebSearch`, `WebFetch`, and `Bash` when approval mode active) |
 | `["Read", "Grep", "WebSearch"]` | Only named tools |
 | `[]` | No tools — only MCP IPC |
 

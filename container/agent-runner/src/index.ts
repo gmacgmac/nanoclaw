@@ -20,6 +20,7 @@ import { query, HookCallback, PreCompactHookInput, AbortError } from '@anthropic
 import { fileURLToPath } from 'url';
 
 import { buildNudgePrompt } from './lib/nudge-prompt.js';
+import { runPostTurnChecks } from './lib/post-turn-checks.js';
 
 interface ContainerInput {
   prompt: string;
@@ -433,7 +434,7 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
   options?: { acceptIpc?: boolean; nudgeInterval?: number; contextWindowSize?: number; images?: Array<{ base64: string; mediaType: string; caption?: string }> },
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; resultCount: number }> {
   const acceptIpc = options?.acceptIpc !== false; // default true
   const stream = new MessageStream();
   const controller = new AbortController();
@@ -510,11 +511,24 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Use per-group tools if configured, otherwise all known tools.
+  // Use per-group tools if configured, otherwise a secure default set.
   // mcp__nanoclaw__* is always included so IPC works regardless of config.
+  //
+  // Default set excludes:
+  // - WebSearch/WebFetch: Anthropic-only, non-functional on Ollama. Use nanoclaw-web-search MCP.
+  // - Bash: When approvalMode is active, agents use mcp__nanoclaw__execute_command instead
+  //   (which has approval checks for write-mounted paths). Bash is only included in the
+  //   default set when approval mode is explicitly disabled.
+  const approvalMode = process.env.NANOCLAW_APPROVAL_MODE === 'true';
+  const defaultTools = ALL_KNOWN_TOOLS.filter(t => {
+    if (t === 'WebSearch' || t === 'WebFetch') return false;
+    if (t === 'Bash' && approvalMode) return false;
+    return true;
+  });
+
   const tools = containerInput.allowedTools
     ? [...containerInput.allowedTools, 'mcp__nanoclaw__*']
-    : [...ALL_KNOWN_TOOLS, 'mcp__nanoclaw__*'];
+    : [...defaultTools, 'mcp__nanoclaw__*'];
 
   // Compute disallowedTools as the complement of allowedTools.
   // The SDK's allowedTools only filters SDK-registered tools; preset-injected CLI tools
@@ -522,7 +536,7 @@ async function runQuery(
   // mcp__nanoclaw__* is never disallowed — IPC must always work.
   const disallowedTools = containerInput.allowedTools
     ? ALL_KNOWN_TOOLS.filter(t => !tools.includes(t))
-    : [];
+    : ALL_KNOWN_TOOLS.filter(t => !defaultTools.includes(t));
 
   // Apply model override if configured
   if (containerInput.model) {
@@ -685,7 +699,7 @@ async function runQuery(
 
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, resultCount };
 }
 
 async function main(): Promise<void> {
@@ -784,6 +798,16 @@ async function main(): Promise<void> {
         log('Close sentinel consumed during query, exiting');
         break;
       }
+
+      // Post-turn health checks (silent turn detection, degenerate content cleanup)
+      runPostTurnChecks({
+        sessionId,
+        resultCount: queryResult.resultCount,
+        closedDuringQuery: queryResult.closedDuringQuery,
+        chatJid: containerInput.chatJid,
+        groupFolder: containerInput.groupFolder,
+        isScheduledTask: containerInput.isScheduledTask,
+      });
 
       // Emit session update so host can track it
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });

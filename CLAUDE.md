@@ -98,8 +98,8 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `preset` | `string` | **required** | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, compactThreshold, webSearchVendor |
-| `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none, `["x"]` = named only |
-| `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions. `mcp__nanoclaw__*` always included |
+| `skills` | `string[]` | `undefined` = none | Per-group skill selection. `[]` = none, `["x"]` = named only |
+| `allowedTools` | `string[]` | `undefined` = secure default | Per-group tool restrictions. Default excludes `WebSearch`, `WebFetch`, and `Bash` (when approval mode active). `mcp__nanoclaw__*` always included |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
@@ -133,7 +133,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 
 **Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 
-**`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is in the group's `skills` list (or `skills` is undefined). `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
+**`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is explicitly in the group's `skills` list. `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 
 **`allowedTools` complement**: The agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime. This blocks preset-injected CLI tools that bypass the SDK's `allowedTools` filter. You never configure `disallowedTools` directly.
 
@@ -199,10 +199,24 @@ Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) f
 |-------|-------------|
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
+| `/customize-claude-md` | Build or upgrade a group's CLAUDE.md from the modular prompt-behaviours snippet library |
 | `/debug` | Container issues, logs, troubleshooting |
 | `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+
+## Per-Group CLAUDE.md & Prompt Behaviours
+
+Each group gets a `CLAUDE.md` that defines its personality, rules, and capabilities. Use `/customize-claude-md <folder>` to build or audit one.
+
+**Snippet library**: `docs/prompt-behaviours/` contains modular behaviour snippets (gitignored — not pushed to GitHub). Files are named `{category}_{descriptor}.md` and designed to be concatenated:
+
+- `core_` — universal behaviours (ack, question gate, memory, etc.)
+- `comms_` — channel communication mechanics
+- `scheduling_` — date/time awareness, task management
+- `builder_` — code, git, deployment patterns
+
+**Templates**: `groups/global/CLAUDE.md` (non-main) and `groups/main/CLAUDE.md` (main) serve as starting points. The `/customize-claude-md` skill layers snippets on top of these.
 
 ## Multi-Agent Routing
 

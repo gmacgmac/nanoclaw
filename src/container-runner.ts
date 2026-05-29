@@ -133,10 +133,9 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   );
 
   // Sync skills from container/skills/ into each group's .claude/skills/
-  // Skills can be filtered per-group via containerConfig.skills:
-  // - undefined: copy all skills (backward compat)
-  // - []: copy no skills
-  // - ["skill1", "skill2"]: copy only listed skills
+  // Skills are opt-in per-group via containerConfig.skills:
+  // - undefined or []: no skills (secure by default)
+  // - ["skill1", "skill2"]: only listed skills
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   const allowedSkills = group.containerConfig?.skills;
@@ -147,10 +146,9 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   }
   fs.mkdirSync(skillsDst, { recursive: true });
 
-  if (fs.existsSync(skillsSrc)) {
+  if (fs.existsSync(skillsSrc) && allowedSkills && allowedSkills.length > 0) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
-      // Skip if skill is not in the allowed list (when list is defined)
-      if (allowedSkills && !allowedSkills.includes(skillDir)) {
+      if (!allowedSkills.includes(skillDir)) {
         continue;
       }
       const srcDir = path.join(skillsSrc, skillDir);
@@ -237,7 +235,7 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
   );
   if (
     fs.existsSync(agentBrowserPkg) &&
-    (!allowedSkills || allowedSkills.includes('agent-browser'))
+    allowedSkills?.includes('agent-browser')
   ) {
     // Map Node.js arch to the binary naming convention used by agent-browser
     const archMap: Record<string, string> = {

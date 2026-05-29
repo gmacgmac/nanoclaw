@@ -55,9 +55,9 @@ describe('Per-Group Skill Isolation', () => {
   });
 
   describe('Skill Filtering', () => {
-    it('should copy all skills when skills is undefined', () => {
-      // This tests the logic in buildVolumeMounts at lines 199-215
-      // When allowedSkills is undefined, all skills from container/skills/ are copied
+    it('should copy no skills when skills is undefined (secure by default)', () => {
+      // This tests the logic in buildVolumeMounts
+      // When allowedSkills is undefined, NO skills are copied (secure by default)
 
       const skills = ['status', 'browser', 'formatting', 'mcp'];
       const groupSkillsDir = path.join(
@@ -70,24 +70,13 @@ describe('Per-Group Skill Isolation', () => {
       fs.mkdirSync(groupSkillsDir, { recursive: true });
 
       // Simulate the skill copy logic from buildVolumeMounts
-      let allowedSkills: string[] | undefined = undefined;
+      // When skills is undefined (or empty), no skills are copied (secure by default).
+      // The production code: if (!allowedSkills || allowedSkills.length === 0) → skip
+      // So with undefined, the copy loop never runs.
 
-      for (const skillDir of fs.readdirSync(skillsDir)) {
-        if (
-          Array.isArray(allowedSkills) &&
-          !(allowedSkills as string[]).includes(skillDir)
-        ) {
-          continue;
-        }
-        const srcDir = path.join(skillsDir, skillDir);
-        if (!fs.statSync(srcDir).isDirectory()) continue;
-        const dstDir = path.join(groupSkillsDir, skillDir);
-        fs.cpSync(srcDir, dstDir, { recursive: true });
-      }
-
-      // All skills should be present
+      // No skills should be present
       const copied = fs.readdirSync(groupSkillsDir);
-      expect(copied.sort()).toEqual(skills.sort());
+      expect(copied).toEqual([]);
     });
 
     it('should copy no skills when skills is empty array', () => {
@@ -186,6 +175,9 @@ describe('Agent Customisation (BE_04)', () => {
   // Test the logic from agent-runner/src/index.ts
 
   it('should use default tools when allowedTools is undefined', () => {
+    // Default tools exclude WebSearch/WebFetch (Anthropic-only, use nanoclaw-web-search MCP)
+    // and exclude Bash when approval mode is active (use execute_command MCP instead).
+    // This test assumes approval mode is NOT active (Bash included in defaults).
     const defaultTools = [
       'Bash',
       'Read',
@@ -193,18 +185,29 @@ describe('Agent Customisation (BE_04)', () => {
       'Edit',
       'Glob',
       'Grep',
-      'WebSearch',
-      'WebFetch',
-      'Task',
-      'TaskOutput',
+      'NotebookEdit',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'TaskCreate',
+      'TaskGet',
+      'TaskList',
+      'TaskUpdate',
       'TaskStop',
+      'TaskOutput',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
+      'EnterWorktree',
+      'ExitWorktree',
       'TeamCreate',
       'TeamDelete',
       'SendMessage',
+      'Agent',
+      'Skill',
+      'RemoteTrigger',
+      'AskUserQuestion',
       'TodoWrite',
       'ToolSearch',
-      'Skill',
-      'NotebookEdit',
       'mcp__nanoclaw__*',
     ];
 
@@ -214,6 +217,8 @@ describe('Agent Customisation (BE_04)', () => {
       : defaultTools;
 
     expect(tools).toEqual(defaultTools);
+    expect(tools).not.toContain('WebSearch');
+    expect(tools).not.toContain('WebFetch');
   });
 
   it('should merge allowedTools with mcp__nanoclaw__* when provided', () => {

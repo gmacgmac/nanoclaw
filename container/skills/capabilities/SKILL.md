@@ -20,37 +20,30 @@ Then stop — do not generate the report.
 
 ## How to gather the information
 
-Run these commands and compile the results into the report format below.
-
 ### 1. Installed skills
-
-List skill directories available to you:
 
 ```bash
 ls -1 /home/node/.claude/skills/ 2>/dev/null || echo "No skills found"
 ```
 
-Each directory is an installed skill. The directory name is the skill name (e.g., `agent-browser` → `/agent-browser`).
+Each directory is an installed skill. Read the `description` field from each skill's SKILL.md frontmatter for a one-line summary.
 
-### 2. Available tools
+### 2. Shell access mode
 
-Read the allowed tools from your SDK configuration. You always have access to:
-- **Core:** Read, Write, Edit, Glob, Grep
-- **Shell:** `execute_command` (MCP) — shell commands with approval checks for write-mounted paths. Core `Bash` is automatically removed from `allowedTools` when approval mode is active (on by default); if you need shell access, use `execute_command` which routes through the approval gate.
-- **Web (MCP):** mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
-- **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
-- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management, command execution)
+```bash
+echo "APPROVAL_MODE=${NANOCLAW_APPROVAL_MODE:-unset}"
+```
 
-### 3. MCP server tools
+- If `APPROVAL_MODE=true`: shell access is via `mcp__nanoclaw__execute_command` (dangerous commands require user approval). Direct `Bash` tool is disabled.
+- If `APPROVAL_MODE=unset` or `false`: direct `Bash` tool is available.
 
-NanoClaw exposes tools via the `mcp__nanoclaw__*` prefix. Use them as needed — full descriptions, parameters, and usage guidance are built into the tool definitions.
+### 3. MCP servers & tools
 
-- `send_message`, `send_attachment`, `schedule_task`, `list_tasks`, `get_task`, `search_tasks`, `pause/resume/cancel/update_task`, `get_registered_groups`, `register_group`, `delegate_to_group`, `respond_to_group`, `execute_command`, `ping`
+MCP tools are self-describing — their names, descriptions, and parameters are already in your context from session init. Do NOT hardcode or list individual tool names or descriptions.
 
-### 4. Container skills (Bash tools)
+To report MCP servers: look at which `mcp__*` tools are available to you, group them by prefix (e.g. `mcp__nanoclaw__*`, `mcp__nanoclaw-web-search__*`), and list each server prefix. The user can ask about specific tools if they want details.
 
-Check for executable tools in the container:
+### 4. Container binaries
 
 ```bash
 which agent-browser 2>/dev/null && echo "agent-browser: available" || echo "agent-browser: not found"
@@ -59,37 +52,39 @@ which agent-browser 2>/dev/null && echo "agent-browser: available" || echo "agen
 ### 5. Group info
 
 ```bash
+test -d /workspace/project && echo "Main channel: yes" || echo "Main channel: no"
 ls /workspace/group/CLAUDE.md 2>/dev/null && echo "Group memory: yes" || echo "Group memory: no"
 ls /workspace/extra/ 2>/dev/null && echo "Extra mounts: $(ls /workspace/extra/ 2>/dev/null | wc -l | tr -d ' ')" || echo "Extra mounts: none"
 ```
 
 ## Report format
 
-Present the report as a clean, readable message. Example:
+Present the report as a clean, readable message:
 
 ```
 📋 *NanoClaw Capabilities*
 
-*Installed Skills:*
-• /agent-browser — Browse the web, fill forms, extract data
-• /capabilities — This report
-(list all found skills)
+*Skills:*
+• /skill-name — description from frontmatter
+(list all found)
 
-*Tools:*
-• Core: Bash, Read, Write, Edit, Glob, Grep
-• Web (MCP): mcp__nanoclaw-web-search__web_search, mcp__nanoclaw-web-search__web_fetch
-• Orchestration: Task, TeamCreate, SendMessage
-• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group, delegate_to_group, respond_to_group
+*Shell:*
+• Mode: approval (execute_command) | direct (Bash)
 
-*Container Tools:*
-• agent-browser: ✓
+*MCP Servers:*
+• nanoclaw — messaging, tasks, scheduling, groups
+• nanoclaw-web-search — web search & fetch
+(list only servers actually connected)
+
+*Binaries:*
+• agent-browser: ✓/✗
 
 *System:*
+• Main channel: yes/no
 • Group memory: yes/no
 • Extra mounts: N directories
-• Main channel: yes
 ```
 
-Adapt the output based on what you actually find — don't list things that aren't installed.
+Only report what is actually available — omit sections with nothing to show.
 
 **See also:** `/status` for a quick health check of session, workspace, and tasks.

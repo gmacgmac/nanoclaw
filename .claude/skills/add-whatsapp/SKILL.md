@@ -276,7 +276,9 @@ If missing, copy the appropriate template:
   cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
   ```
 
-After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. You should edit this file to customise the agent's identity and add any group-specific instructions."
+After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. Run `/customize-claude-md <folder>` to build a tailored CLAUDE.md using the prompt-behaviours snippet library, or edit the file manually."
+
+Then clean up the Message Formatting section: the template contains formatting rules for all channels (Telegram, Slack, WhatsApp, Discord). Since this is a WhatsApp group, **remove all non-WhatsApp formatting subsections** from the copied CLAUDE.md. Keep only the WhatsApp block. Also add a line at the top of the Message Formatting section: "All output goes to WhatsApp. Format accordingly."
 
 ### B. Create memory directory and seed files
 

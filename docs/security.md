@@ -65,7 +65,10 @@ Messages and task operations are verified against group identity:
 | Schedule task for self | ✓ | ✓ |
 | Schedule task for others | ✓ | ✗ |
 | View all tasks | ✓ | Own only |
-| Manage other groups | ✓ | ✗ |
+| List registered groups | ✓ | ✗ |
+| Register new groups | ✓ | ✗ |
+| Delegate to other groups | ✓ | ✗ |
+| Respond to a delegation | ✓ | ✓ (reply only — requires delegation UUID) |
 
 ### 5. Credential Isolation (Credential Proxy)
 
@@ -155,7 +158,7 @@ Human-in-the-loop gate for dangerous shell commands in groups with write-access 
 | Global memory | None (use `additionalMounts`) | None |
 | Additional mounts | Configurable | Read-only unless allowed |
 | Network access | Unrestricted | Unrestricted |
-| MCP tools | All | All |
+| MCP tools (`mcp__nanoclaw__*`) | All registered tools | All registered tools except main-only (conditionally registered at MCP server level based on `isMain`) |
 
 ## Security Architecture Diagram
 

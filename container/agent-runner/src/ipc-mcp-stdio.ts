@@ -162,7 +162,7 @@ server.tool(
 
 server.tool(
   'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+  `Schedule a recurring or one-time task. The task runs in a SEPARATE container — not inside your current session. Your current container must be idle or closed before the task can launch. Do NOT use this to "continue work shortly" — use it for future independent work (reminders, reports, scrapes). Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
 CONTEXT MODE \u2014 You MUST ask the user about this. Do not guess.
 
@@ -258,11 +258,21 @@ PROMPT PLACEHOLDERS - The following are substituted at runtime when the task exe
   },
 );
 
+// Main-only tools: only register when this group is the main group.
+// Non-main groups never see these tools (defense-in-depth: handler also checks isMain).
+if (isMain) {
 server.tool(
   'get_registered_groups',
-  'List all registered groups that you can send messages to. Use this to discover group JIDs for send_message target_jid parameter.',
+  'List all registered groups that you can send messages to. Use this to discover group JIDs for send_message target_jid parameter. Main group only.',
   {},
   async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can list registered groups.' }],
+        isError: true,
+      };
+    }
+
     const groupsFile = path.join(IPC_DIR, 'registered_groups.json');
 
     try {
@@ -292,6 +302,7 @@ server.tool(
     }
   },
 );
+} // end isMain gate for get_registered_groups
 
 server.tool(
   'list_tasks',
@@ -423,6 +434,9 @@ server.tool(
   },
 );
 
+// Main-only tools: only register when this group is the main group.
+// Non-main groups never see these tools (defense-in-depth: handler also checks isMain).
+if (isMain) {
 server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
@@ -462,6 +476,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     };
   },
 );
+} // end isMain gate for register_group
 
 server.tool(
   'pause_task',
@@ -645,6 +660,7 @@ server.tool(
   },
 );
 
+if (isMain) {
 server.tool(
   'delegate_to_group',
   `Delegate a task to another group's agent and receive a response back. Main group only.
@@ -683,6 +699,7 @@ The response will arrive as a normal message in your queue — no polling needed
     };
   },
 );
+} // end isMain gate for delegate_to_group
 
 server.tool(
   'respond_to_group',
