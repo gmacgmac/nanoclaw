@@ -15,7 +15,7 @@ keywords: nanoclaw, agent, telegram, dashboard, claude-agent-sdk, sessions, memo
 
 > Throughout this document, `$NANOCLAW_ROOT` refers to the NanoClaw repo root directory. This is typically `~/.nanoclaw/` but may vary by machine (e.g. `~/.nanoclaw/repo/`).
 
-NanoClaw is the always-on personal AI agent system. It runs as a Node.js orchestrator (~6,200 lines) that listens on messaging channels, routes messages to isolated Docker containers, and manages persistent sessions via the Claude Agent SDK.
+NanoClaw is the always-on personal AI agent system. It runs as a Node.js orchestrator (~12,000 lines) that listens on messaging channels, routes messages to isolated Docker containers, and manages persistent sessions via the Claude Agent SDK.
 
 ---
 
@@ -95,13 +95,13 @@ Agents accumulate context over long conversations. Claude Code's built-in auto-c
 |---------|-----------|------|-----------------|
 | **Periodic** | Every 10 user messages | Live, mid-conversation | No |
 | **Threshold** | `lastInputTokens > contextWindowSize * 0.8` (once per session) | Live, mid-conversation | No |
-| **Nightly** | `lastInputTokens / contextWindowSize > 0.5` | Midnight daily (cron) | No |
+| **Nightly** | `lastInputTokens / contextWindowSize > NIGHTLY_NUDGE_THRESHOLD` (default 0.7) | Midnight daily (cron) | No |
 
 All three triggers inject the same nudge prompt (with minor variations). None delete the session or stop the container.
 
 ### What a Nudge Does
 
-When triggered, the agent runs a structured **nudge prompt** (`buildNudgePrompt()` in `src/lib/nudge-prompt.ts`) wrapped in `<internal>` tags (invisible to the user). It instructs the agent to:
+When triggered, the agent runs a structured **nudge prompt** wrapped in `<internal>` tags (invisible to the user). It instructs the agent to:
 
 1. **Append durable facts** to `memory/MEMORY.md` — read current file, append new facts, remove superseded entries. One bullet per fact, no prose. **5000 character cap** — consolidate or prune if approaching limit.
 2. **Append a daily note** to `memory/YYYY-MM-DD.md` — observations and task progress. Create file if it doesn't exist.
@@ -109,33 +109,38 @@ When triggered, the agent runs a structured **nudge prompt** (`buildNudgePrompt(
 
 The agent continues normal work after the nudge — no announcement, no session interruption, no user-visible output.
 
-Both container-side and host-side use `buildNudgePrompt()` as the single source of truth. A copy exists at both locations (container boundary — cannot import from host `src/` at runtime):
-- `container/agent-runner/src/lib/nudge-prompt.ts` (container-side: periodic + threshold)
-- `src/lib/nudge-prompt.ts` (host-side: nightly maintenance)
+Two nudge prompt builders exist (container boundary — cannot import from host `src/` at runtime):
+- `container/agent-runner/src/lib/nudge-prompt.ts` → `buildNudgePrompt()` (container-side: periodic + threshold)
+- `src/lib/nudge-prompt.ts` → `getNightlyNudgePrompt()` (host-side: nightly maintenance)
 
 ### Memory Size Cap
 
 The nudge prompt instructs the agent to keep `MEMORY.md` under **5000 characters**. Enforcement is prompt-based only (no host-side validation). If approaching capacity, the agent should consolidate related facts, remove stale entries, and keep one bullet per fact.
 
-### `contextWindowSize` — Per-Group Context Limit
+### Context Window Size — Per-Group Context Limit
 
-Controls when the threshold nudge fires (memory persistence). This is separate from auto-compaction (which is driven by the preset's `compactThreshold` and fires at the SDK level to summarize the conversation). Set in `containerConfig`:
+Controls when the threshold nudge fires (memory persistence). This is separate from auto-compaction (which is driven by the preset's `compactThreshold` and fires at the SDK level to summarize the conversation).
+
+The context window size is resolved from the group's preset (`contextWindow` field in `model-presets.json`). It is no longer set directly in `containerConfig` — the migration removed it. To change the context window for a group, update the preset definition:
 
 ```json
-{ "contextWindowSize": 128000 }
+{
+  "my_preset": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud",
+    "contextWindow": 262144,
+    ...
+  }
+}
 ```
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | Default: 128000 tokens |
+| `undefined` / absent in preset | Default: 128000 tokens |
 | `64000` | Smaller model — nudge sooner |
-| `200000` | Larger context model — nudge later |
+| `200000`+ | Larger context model — nudge later |
 
-To set per-group:
-
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.contextWindowSize', 200000) WHERE folder = 'mygroup'"
-```
+Controls when the threshold nudge fires. The threshold nudge triggers at 80% of this value during live conversations. Nightly maintenance nudges at `NIGHTLY_NUDGE_THRESHOLD` (default 0.7 = 70%).
 
 ### Token Usage Logging
 
@@ -147,20 +152,29 @@ Log format:
 [2026-04-07T21:30:00.000Z] id=msg_01ABC type=text input=42000 output=1200
 ```
 
-Entries are deduplicated by message ID (last-write-wins). The file is append-only and grows indefinitely — prune manually if needed.
+Entries are deduplicated by message ID (last-write-wins). The file is prepended (newest first) and truncated to 100 lines nightly by the maintenance cron.
 
 ### Nightly Maintenance
 
 A built-in cron job (`startNightlyCron` in `src/task-scheduler.ts`) runs at midnight by default. It is **not** a row in the `scheduled_tasks` table — it is a separate subsystem that runs alongside the user-facing task scheduler.
 
-For each registered group with an active session:
+**Memory nudge** — for each registered group with an active session:
 
 1. Reads `input_tokens` from `token-usage.log`
 2. Computes usage ratio: `input_tokens / contextWindowSize`
-3. If >= 50%, enqueues a nudge via the group queue (respects one-container-at-a-time)
+3. If >= threshold (default 70%, configurable via `NIGHTLY_NUDGE_THRESHOLD`), enqueues a nudge via the group queue (respects one-container-at-a-time)
 4. Container stays alive after nudge completes (normal idle timeout applies)
 
-Groups below 50% or without active sessions are skipped. Nightly nudge includes skill extraction when `learningLoop` is enabled.
+Groups below the threshold or without active sessions are skipped. Nightly nudge includes skill extraction when `learningLoop` is enabled.
+
+**DB maintenance:**
+- `pruneOldMessages(30)` — deletes messages older than 30 days
+- `expireStaleDelegations()` — marks pending delegations past their `expires_at` as expired
+
+**Log cleanup:**
+- Main app logs (`logs/nanoclaw.log`, `logs/nanoclaw.error.log`) — copytruncate rotation, prune rotated files older than 30 days
+- Per-group container logs (`groups/{folder}/logs/container-*.log`) — delete files older than 30 days
+- Per-group token-usage logs — truncate to most recent 100 lines
 
 ---
 
@@ -327,7 +341,7 @@ For the full scheduler model and visibility rules see [README-SCHEDULED-TASKS.md
 | Tool | Access | Purpose |
 |------|--------|---------|
 | `register_group` | Main only | Register a new chat/group (see [Group Creation Checklist](#group-creation-checklist)) |
-| `get_registered_groups` | Any group | List all registered groups and their JIDs (for `target_jid` discovery) |
+| `get_registered_groups` | Main only | List all registered groups and their JIDs (for `target_jid` discovery) |
 | `execute_command` | Any group | Run a shell command on the host. Dangerous commands targeting write-mounted paths require user approval (on by default — see [Command Approval](#command-approval)). Disable per-group via `approvalMode: false`. |
 | `ping` | Any group | Diagnostic — returns pong |
 
@@ -494,7 +508,6 @@ Configure group behaviour via the `containerConfig` JSON column in the `register
       "args": ["/app/mcp-servers/brave-search/dist/index.js"]
     }
   },
-  "contextWindowSize": 128000,
   "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
   "timeout": 3600000,
   "allowedHostCommands": ["model", "version", "newsession"],
@@ -648,19 +661,13 @@ The `nanoclaw` server is always present and cannot be overridden — if a group 
 | `undefined` / absent | Preset prompt only |
 | `"You are X..."` | Appended to preset prompt |
 
-#### `contextWindowSize` — Per-Group Context Threshold
+#### Context Window Size — Resolved from Preset
 
-| Value | Behaviour |
-|-------|-----------|
-| `undefined` / absent | Default: 128000 tokens |
-| `64000` | Smaller context model — nudge sooner |
-| `200000` | Larger context model — nudge later |
+The context window size is no longer a direct `containerConfig` field — it is resolved from the group's preset (`contextWindow` field in `model-presets.json`). The migration removed `contextWindowSize` from `containerConfig`.
 
-Controls when the threshold nudge fires. The threshold nudge triggers at 80% of this value during live conversations. Nightly maintenance nudges at 50%. See [Context Management](#context-management) for details.
+Controls when the threshold nudge fires. The threshold nudge triggers at 80% of this value during live conversations. Nightly maintenance nudges at `NIGHTLY_NUDGE_THRESHOLD` (default 0.7). See [Context Management](#context-management) for details.
 
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.contextWindowSize', 200000) WHERE folder = 'mygroup'"
-```
+To change the context window, update the preset definition in `~/.config/nanoclaw/model-presets.json`.
 
 #### `telegramBot` — Per-Group Named Telegram Bot
 
@@ -1076,7 +1083,6 @@ NanoClaw's primary security boundary is container isolation — agents run in ep
 | `approvalTimeout` | `number` (10–600) | `120` | Seconds before an approval request auto-denies |
 | `commandAllowlist` | `string[]` | `[]` | Regex patterns for commands that skip approval |
 | `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge |
-| `contextWindowSize` | `number` | `128000` | Token threshold for nudge (80% live, 50% nightly) |
 | `telegramBot` | `string` | `undefined` | Named Telegram bot instance for this group's outbound replies |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model', 'version', 'newsession']` enables gated commands |
 
@@ -1498,9 +1504,9 @@ When working on NanoClaw tasks:
 - Session IDs flow: container output → `src/index.ts` → SQLite `sessions` table → next container input
 - To expose external data to agents: use `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-- Tests: `npm test` (vitest, currently ~360 tests)
+- Tests: `npm test` (vitest, currently ~900 tests)
 - Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup
-- Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, 50% nightly); `src/nightly-maintenance.ts` orchestrates nightly cron; `buildNudgePrompt()` in `src/lib/nudge-prompt.ts` is the single source of truth
+- Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, configurable nightly via `NIGHTLY_NUDGE_THRESHOLD` default 0.7); `src/nightly-maintenance.ts` orchestrates nightly cron; two nudge prompt functions: `buildNudgePrompt()` in `container/agent-runner/src/lib/nudge-prompt.ts` (periodic + threshold, container-side) and `getNightlyNudgePrompt()` in `src/lib/nudge-prompt.ts` (nightly, host-side)
 - Model presets: `src/presets.ts` (`loadPresets`, `resolvePreset`, `getAvailablePresetNames`); preset file at `~/.config/nanoclaw/model-presets.json`; only `containerConfig.preset` stored in DB
 - Delegation: `delegations` table + `delegate_to_group`/`respond_to_group` MCP tools; `multi_agent_router` flag enables hub routing
 - Web search: `nanoclaw-web-search` MCP server + `{VENDOR}_WEB_SEARCH_BASE_URL`/`{VENDOR}_WEB_SEARCH_API_KEY` in secrets.env; vendor resolved from preset's `webSearchVendor` field
@@ -1509,6 +1515,6 @@ When working on NanoClaw tasks:
 - Group creation: `register_group` does NOT create `CLAUDE.md` or `memory/` — these must be created manually using the global/main template
 - Skills: `container/skills/capabilities/SKILL.md` and `container/skills/status/SKILL.md` list web search tools as `mcp__nanoclaw-web-search__*` — these are only available when the group has the MCP server configured via `containerConfig.mcpServers`
 - Security features: SSRF (`src/lib/ssrf-validator.ts`), injection scanning (`src/lib/context-scanner.ts` + `src/lib/injection-scanner.ts`), command approval (`src/lib/command-approval.ts`), config validation (`src/lib/config-validator.ts`) — all behind `containerConfig` flags
-- Learning loop: `src/lib/nudge-prompt.ts` (`buildNudgePrompt()`), `src/lib/skill-manager.ts` (`getExtractedSkills()`), `container/skills/learning-loop/SKILL.md` — enabled via `containerConfig.learningLoop`
+- Learning loop: `container/agent-runner/src/lib/nudge-prompt.ts` (`buildNudgePrompt()`), `src/lib/skill-manager.ts` (`getExtractedSkills()`), `container/skills/learning-loop/SKILL.md` — enabled via `containerConfig.learningLoop`
 - Host commands: `repo/src/host-commands.ts` defines all handlers. Ungated (`/stop`, `/shutdown`) only check sender allowlist. Gated (`/model`, `/version`, `/newsession`) also check `containerConfig.allowedHostCommands`. Post-exit work uses `queue.onAfterExit(jid, cb)` so the work runs after the container actually exits, not before.
 - Container channel routing: `:stable`/`:next` aliases over immutable versioned tags. `resolveImageTag(channel)` in `src/container-runtime.ts` resolves the tag at spawn time. Per-group via `registered_groups.container_channel`. Manage via `./container/scripts/container.sh`. See `container/VERSIONING.md`.

@@ -162,7 +162,7 @@ Scheduled tasks run in a **separate container** — not inside your current sess
 
 ### Task Validation
 
-Before editing or updating ANY scheduled task, you MUST read the original full prompt from `/workspace/ipc/current_tasks.json`. The `list_tasks` tool only shows truncated summaries — never rely on it for task content. Always validate the original task content before making changes.
+Before editing or updating ANY scheduled task, you MUST read the full task details using `get_task` with the task ID. The `list_tasks` tool only shows truncated summaries — never rely on it for task content. Always validate the original task content before making changes.
 
 ## Message Formatting
 

@@ -136,7 +136,7 @@ Agents inside containers access IPC through MCP tools (`mcp__nanoclaw__*`):
 | `update_task` | Update existing task (prompt, schedule, description) | Own group only |
 | `get_task` | Get task details and run history | Own group only |
 | `search_tasks` | Search tasks by keyword | Own group only |
-| `get_registered_groups` | List registered groups (for `target_jid` discovery) | All groups |
+| `get_registered_groups` | List registered groups (for `target_jid` discovery) | Main only |
 | `register_group` | Register a new chat/group | Main only |
 | `delegate_to_group` | Delegate task to another group's agent | Main only |
 | `respond_to_group` | Respond to a delegation request | All groups |
@@ -420,7 +420,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `task_id` | TEXT FK | Task reference |
 | `run_at` | TEXT | Execution timestamp |
 | `duration_ms` | INTEGER | Execution duration |
-| `status` | TEXT | `success` or `error` |
+| `status` | TEXT | `started`, `success`, or `error` |
 | `result` | TEXT | Result text |
 | `error` | TEXT | Error message if failed |
 
@@ -436,6 +436,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `requires_trigger` | INTEGER | Trigger required flag (default: 1) |
 | `is_main` | INTEGER | Main group flag (default: 0) |
 | `multi_agent_router` | INTEGER | Hub routing flag (default: 0) |
+| `container_channel` | TEXT | Image channel: `stable` or `next` (default: `stable`) |
 
 ### `error_log`
 | Column | Type | Description |
@@ -468,6 +469,17 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `group_folder` | TEXT PK | Group folder |
 | `session_id` | TEXT | Active session ID |
 
+### `dashboard_chat_log`
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Message ID |
+| `chat_jid` | TEXT FK | Chat reference |
+| `sender` | TEXT | Sender identifier |
+| `sender_name` | TEXT | Sender display name |
+| `content` | TEXT | Message content |
+| `timestamp` | TEXT | ISO timestamp |
+| `is_from_user` | INTEGER | 1 for user messages, 0 for bot responses |
+
 ---
 
 ## Container Static Files
@@ -489,7 +501,7 @@ Groups available for activation (from channels like Telegram/WhatsApp). Main gro
 
 ### `registered_groups.json`
 
-All registered groups (for cross-group messaging). Available to all groups.
+All registered groups (for cross-group messaging). Available to main group only.
 
 ```json
 {
@@ -501,7 +513,7 @@ All registered groups (for cross-group messaging). Available to all groups.
 }
 ```
 
-Use the `get_registered_groups` MCP tool to discover JIDs for cross-group messaging with `send_message target_jid`.
+Use the `get_registered_groups` MCP tool (main group only) to discover JIDs for cross-group messaging with `send_message target_jid`.
 
 ---
 

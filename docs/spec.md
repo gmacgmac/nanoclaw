@@ -80,7 +80,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 | Channel System | Channel registry (`src/channels/registry.ts`) | Channels self-register at startup |
 | Message Storage | SQLite (better-sqlite3) | Store messages for polling |
 | Container Runtime | Containers (Linux VMs) | Isolated environments for agent execution |
-| Agent | @anthropic-ai/claude-agent-sdk (0.2.29) | Run Claude with tools and MCP servers |
+| Agent | @anthropic-ai/claude-agent-sdk (0.3.147) | Run Claude with tools and MCP servers |
 | Browser Automation | agent-browser + Chromium | Web interaction and screenshots |
 | Runtime | Node.js 20+ | Host process for routing and scheduling |
 
@@ -210,7 +210,7 @@ Channels self-register using a barrel-import pattern:
 2. The barrel file `src/channels/index.ts` imports all channel modules, triggering registration:
 
    ```typescript
-   import './whatsapp.js';
+   import './dashboard.js';
    import './telegram.js';
    // ... each skill adds its import here
    ```
@@ -270,6 +270,8 @@ nanoclaw/
 │   ├── index.ts                   # Orchestrator: state, message loop, agent invocation
 │   ├── channels/
 │   │   ├── registry.ts            # Channel factory registry
+│   │   ├── telegram.ts            # Telegram channel implementation
+│   │   ├── dashboard.ts           # Dashboard channel implementation
 │   │   └── index.ts               # Barrel imports for channel self-registration
 │   ├── ipc.ts                     # IPC watcher and task processing
 │   ├── router.ts                  # Message formatting and outbound routing
@@ -277,55 +279,105 @@ nanoclaw/
 │   ├── types.ts                   # TypeScript interfaces (includes Channel)
 │   ├── logger.ts                  # Built-in logger with DB error wrapper
 │   ├── db.ts                      # SQLite database initialization and queries
+│   ├── env.ts                     # Environment variable loading from secrets.env and .env
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit
+│   ├── group-folder.ts            # Group folder path resolution and validation
+│   ├── group-registry.ts          # Group registration helpers
 │   ├── mount-security.ts          # Mount allowlist validation for containers
-│   ├── whatsapp-auth.ts           # Standalone WhatsApp authentication
-│   ├── task-scheduler.ts          # Runs scheduled tasks when due
+│   ├── host-commands.ts           # Host commands (/model, /version, /newsession, /shutdown, /stop)
+│   ├── task-scheduler.ts          # Runs scheduled tasks when due + nightly cron
+│   ├── task-runtime-state.ts      # Runtime state derivation for scheduled tasks
+│   ├── nightly-maintenance.ts     # Nightly cron: nudge, prune, expire, log rotation
 │   ├── container-runner.ts        # Spawns agents in containers
+│   ├── container-runtime.ts       # Volume mounts, image tag resolution
+│   ├── credential-proxy.ts        # Host-side API proxy — injects real credentials
+│   ├── multi-agent-router.ts      # Hub group routing (multiAgentRouter flag)
+│   ├── remote-control.ts          # Remote control IPC
+│   ├── session-sanitizer.ts       # Session JSONL sanitization (thinking blocks, tool IDs)
+│   ├── sender-allowlist.ts        # Sender allowlist validation
+│   ├── presets.ts                 # Model preset loading and resolution
+│   ├── image.ts                   # Image encoding for vision
+│   ├── transcription.ts           # Voice message transcription
+│   ├── abandoned-run-sweep.ts     # Sweep for abandoned container runs
+│   ├── cursor-state.ts            # Cursor state management
 │   └── lib/                       # Security and utility modules
 │       ├── ssrf-validator.ts      # SSRF URL validation (async, fail-closed)
 │       ├── injection-scanner.ts   # Prompt injection pattern detection
+│       ├── injection-scan-flow.ts # Injection scan orchestration
 │       ├── context-scanner.ts     # Context file discovery and scanning
 │       ├── command-approval.ts    # Dangerous command detection
 │       ├── config-validator.ts    # containerConfig runtime validation
-│       ├── flush-prompt.ts        # Shared flush prompt builder (single source of truth)
-│       └── skill-manager.ts       # Extracted skill file reader
+│       ├── nudge-prompt.ts        # Host-side nightly nudge prompt builder
+│       ├── skill-manager.ts       # Extracted skill file reader
+│       └── image-extraction.ts    # Image extraction from messages
 │
 ├── container/
 │   ├── Dockerfile                 # Container image (runs as 'node' user, includes Claude Code CLI)
-│   ├── build.sh                   # Build script for container image
+│   ├── build.sh                   # Legacy build script (use container/scripts/container.sh instead)
+│   ├── scripts/
+│   │   └── container.sh           # Container image build/promote/list script (source of truth)
+│   ├── VERSIONING.md              # Container versioning rules
+│   ├── VERSIONS.json              # Channel→version mapping (managed by container.sh)
 │   ├── agent-runner/              # Code that runs inside the container
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src/
 │   │       ├── index.ts           # Entry point (query loop, IPC polling, session resume)
 │   │       ├── ipc-mcp-stdio.ts   # Stdio-based MCP server for host communication
-│   │       └── lib/               # Copies of host-side modules (container boundary)
-│   │           ├── ssrf-validator.ts      # SSRF validation (copied from src/lib/)
-│   │           ├── command-approval.ts    # Command detection (copied from src/lib/)
-│   │           └── flush-prompt.ts        # Flush prompt builder (copied from src/lib/)
+│   │       └── lib/               # Container-side utility modules
+│   │           ├── command-approval.ts    # Command detection
+│   │           ├── degenerate-detector.ts # Degenerate token detection (entropy + n-gram)
+│   │           ├── nudge-prompt.ts        # Container-side nudge prompt builder (periodic + threshold)
+│   │           └── post-turn-checks.ts    # Post-turn health checks (silent turn + degenerate)
 │   ├── binaries/                  # Host-stored binaries (NOT in Docker image)
 │   │   └── agent-browser/         # MUST be committed to git — runtime source for browser skill
 │   ├── mcp-servers/               # Self-built MCP servers (built into Docker image)
 │   │   ├── brave-search/          # Brave Search API wrapper
-│   │   └── nanoclaw-web-search/   # Web search via credential proxy (any vendor)
+│   │   ├── nanoclaw-web-search/   # Web search via credential proxy (any vendor)
+│   │   └── nanoclaw-transcription/ # Voice transcription MCP server
 │   └── skills/
-│       ├── agent-browser.md       # Browser automation skill
-│       └── learning-loop/SKILL.md # Skill extraction format guide (when learningLoop enabled)
+│       ├── agent-browser/         # Browser automation skill
+│       ├── capabilities/          # Runtime capability introspection
+│       ├── glm-ocr/              # OCR skill
+│       ├── learning-loop/         # Skill extraction format guide (when learningLoop enabled)
+│       ├── slack-formatting/      # Slack markdown formatting
+│       ├── status/                # Status reporting skill
+│       ├── telegram-formatting/   # Telegram Markdown v1 formatting
+│       └── uplynk-api/           # Uplynk API skill
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
 ├── .claude/
-│   └── skills/
-│       ├── setup/SKILL.md              # /setup - First-time installation
-│       ├── customize/SKILL.md          # /customize - Add capabilities
-│       ├── debug/SKILL.md              # /debug - Container debugging
-│       ├── add-telegram/SKILL.md       # /add-telegram - Telegram channel
-│       ├── add-gmail/SKILL.md          # /add-gmail - Gmail integration
+│   └── skills/                         # Claude Code skills (invoked via /command)
+│       ├── setup/                      # /setup - First-time installation
+│       ├── debug/                      # /debug - Container debugging
+│       ├── claw/                       # /claw - CLI utility
+│       ├── configure-group/            # /configure-group - Group configuration
+│       ├── customize-claude-md/        # /customize-claude-md - CLAUDE.md builder
+│       ├── update-nanoclaw/            # /update-nanoclaw - Upstream updates
+│       ├── update-skills/              # /update-skills - Skill updates
+│       ├── add-telegram/               # /add-telegram - Telegram channel
+│       ├── add-telegram-swarm/         # /add-telegram-swarm - Multi-bot Telegram
+│       ├── add-whatsapp/               # /add-whatsapp - WhatsApp channel
+│       ├── add-slack/                  # /add-slack - Slack channel
+│       ├── add-discord/                # /add-discord - Discord channel
+│       ├── add-gmail/                  # /add-gmail - Gmail integration
+│       ├── add-internal-group/         # /add-internal-group - Internal groups
+│       ├── add-image-vision/           # /add-image-vision - Image vision
 │       ├── add-voice-transcription/    # /add-voice-transcription - Whisper
-│       ├── x-integration/SKILL.md      # /x-integration - X/Twitter
-│       ├── convert-to-apple-container/  # /convert-to-apple-container - Apple Container runtime
-│       └── add-parallel/SKILL.md       # /add-parallel - Parallel agents
+│       ├── add-transcription/          # /add-transcription - Transcription
+│       ├── add-reactions/              # /add-reactions - Message reactions
+│       ├── add-parallel/               # /add-parallel - Parallel agents
+│       ├── add-compact/                # /add-compact - Compaction
+│       ├── add-ollama-tool/            # /add-ollama-tool - Ollama tools
+│       ├── add-pdf-reader/             # /add-pdf-reader - PDF reading
+│       ├── convert-to-apple-container/ # /convert-to-apple-container - Apple Container runtime
+│       ├── use-local-whisper/          # /use-local-whisper - Local Whisper
+│       ├── use-native-credential-proxy/ # /use-native-credential-proxy - Native proxy
+│       ├── x-integration/             # /x-integration - X/Twitter
+│       ├── glm-ocr/                   # /glm-ocr - OCR skill
+│       ├── get-qodo-rules/            # /get-qodo-rules - Qodo coding rules
+│       └── qodo-pr-resolver/          # /qodo-pr-resolver - Qodo PR review
 │
 ├── groups/
 │   ├── CLAUDE.md                  # Global memory (all groups read this)
@@ -338,8 +390,7 @@ nanoclaw/
 │       └── *.md                   # Files created by the agent
 │
 ├── store/                         # Local data (gitignored)
-│   ├── auth/                      # WhatsApp authentication state
-│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, delegations, router_state, error_log)
+│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, delegations, dashboard_chat_log, router_state, error_log)
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
@@ -363,7 +414,7 @@ Configuration constants are in `src/config.ts`:
 ```typescript
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Bot';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -377,10 +428,13 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const CONTAINER_IMAGE_OVERRIDE = process.env.CONTAINER_IMAGE || envConfig.CONTAINER_IMAGE || '';
 export const CONTAINER_IMAGE_BASE = 'nanoclaw-agent';
 // resolveImageTag(channel?) → uses CONTAINER_IMAGE_OVERRIDE if set, else `${CONTAINER_IMAGE_BASE}:${channel || 'stable'}`
-export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || '1800000', 10); // 30min default
+export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || envConfig.CONTAINER_TIMEOUT || '1800000', 10); // 30min default
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min — keep container alive after last result
-export const MAX_CONCURRENT_CONTAINERS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5);
+export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || envConfig.IDLE_TIMEOUT || '1800000', 10); // 30min — keep container alive after last result
+export const MAX_CONCURRENT_CONTAINERS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_CONTAINERS || envConfig.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5);
+export const NUDGE_INTERVAL = Math.max(0, parseInt(process.env.NUDGE_INTERVAL || envConfig.NUDGE_INTERVAL || '10', 10) || 10);
+export const NIGHTLY_NUDGE_THRESHOLD = 0.7; // Configurable via env
+export const DEFAULT_CONTEXT_WINDOW = 128000; // Configurable via env
 
 export const TRIGGER_PATTERN = new RegExp(`^@${ASSISTANT_NAME}\\b`, 'i');
 ```

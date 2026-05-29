@@ -3,7 +3,7 @@
 Configuration guide for multi-agent routing and delegation in NanoClaw.
 
 For conceptual overview of the two delegation patterns (auto-routed dispatch vs
-orchestrated delegation), see [agent-team-patterns.md](agent-team-patterns.md)
+orchestrated delegation), see [agent-team-patterns.md](claude-code/agent-team-patterns.md)
 "Group Delegation" section.
 
 ---

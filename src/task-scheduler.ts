@@ -337,7 +337,7 @@ let nightlyCronRunning = false;
 /**
  * Start the nightly maintenance cron. Runs at the given cron expression
  * (default: midnight in the configured timezone). Checks groups for context
- * usage above 50% and triggers flush + session reset. Also cleans old trash.
+ * usage above the nightly threshold and triggers memory nudge. Also cleans old trash.
  */
 export function startNightlyCron(
   nightlyDeps: NightlyDependencies,

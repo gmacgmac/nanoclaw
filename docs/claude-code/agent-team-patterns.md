@@ -157,7 +157,7 @@ its own session, memory, and personality.
 | `respond_to_group` | Respond to a pending delegation (validates UUID, caller identity) | No |
 | `schedule_task` | Schedule a recurring or one-time task in any group | Cross-group: main-only |
 | `list_tasks` | List scheduled tasks | No (scoped to own group unless main) |
-| `get_registered_groups` | List all registered groups and their JIDs | No |
+| `get_registered_groups` | List all registered groups and their JIDs | Yes (main only) |
 | `register_group` | Register a new chat/group | Yes |
 | `pause_task` | Pause a scheduled task | No (scoped to own group unless main) |
 | `resume_task` | Resume a paused task | No (scoped to own group unless main) |
@@ -231,7 +231,7 @@ JID.** Each JID maps to exactly one group/agent.
 
 # Group Delegation
 
-> **Setup instructions**: See [delegation-setup.md](delegation-setup.md) for SQL commands,
+> **Setup instructions**: See [delegation-setup.md](../delegation-setup.md) for SQL commands,
 > CLAUDE.md templates, and troubleshooting.
 
 **Flow 1: Auto-Routed Dispatch (host intercepts, hub never sees it)**

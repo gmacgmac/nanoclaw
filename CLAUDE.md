@@ -24,7 +24,9 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/env.ts` | Environment variable loading from secrets.env and .env |
 | `src/logger.ts` | Built-in logger with DB error wrapper |
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
-| `store/messages.db` | SQLite database (registered_groups, messages, sessions tables) |
+| `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
+| `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop) |
+| `store/messages.db` | SQLite database (registered_groups, messages, sessions, scheduled_tasks, delegations, dashboard_chat_log tables) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers (SDK invocation) |
@@ -41,11 +43,12 @@ Query the database with: `sqlite3 store/messages.db`
 |-------|---------|
 | `chats` | `jid` (PK), `name`, `last_message_time`, `channel`, `is_group` |
 | `messages` | `id`, `chat_jid`, `sender`, `sender_name`, `content`, `timestamp`, `is_from_me`, `is_bot_message` |
-| `registered_groups` | `jid` (PK), `name`, `folder`, `trigger_pattern`, `added_at`, `container_config`, `requires_trigger`, `is_main`, `multi_agent_router` |
+| `registered_groups` | `jid` (PK), `name`, `folder`, `trigger_pattern`, `added_at`, `container_config`, `requires_trigger`, `is_main`, `multi_agent_router`, `container_channel` |
 | `sessions` | `group_folder` (PK), `session_id` |
-| `scheduled_tasks` | `id` (PK), `group_folder`, `chat_jid`, `prompt`, `schedule_type`, `schedule_value`, `context_mode`, `next_run`, `last_run`, `last_result`, `status`, `created_at`, `script` |
+| `scheduled_tasks` | `id` (PK), `group_folder`, `chat_jid`, `prompt`, `description`, `schedule_type`, `schedule_value`, `context_mode`, `next_run`, `last_run`, `last_result`, `status`, `created_at`, `script` |
 | `task_run_logs` | `id`, `task_id`, `run_at`, `duration_ms`, `status`, `result`, `error` |
 | `delegations` | `uuid` (PK), `caller_jid`, `target_jid`, `created_at`, `expires_at`, `status` |
+| `dashboard_chat_log` | `id` (PK), `chat_jid`, `sender`, `sender_name`, `content`, `timestamp`, `is_from_user` |
 | `error_log` | `id`, `level`, `message`, `context`, `timestamp` |
 | `router_state` | `key` (PK), `value` |
 
@@ -104,7 +107,7 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
-| `contextWindowSize` | `number` | from preset | Token threshold for memory nudge (80% live, 50% nightly). Defaults to preset's `contextWindow` |
+| `contextWindowSize` | `number` | from preset | **Deprecated as a direct field** — now resolved from preset's `contextWindow`. Legacy values ignored after migration. |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
 
 **Preset file schema** (`~/.config/nanoclaw/model-presets.json`):
@@ -176,7 +179,8 @@ Four memory layers:
 | Layer | Survives Session Reset? | Purpose |
 |-------|------------------------|---------|
 | Session transcript (`.jsonl`) | No — tied to session ID | Full conversation continuity |
-| `MEMORY.md` | Yes — persists across sessions | Durable facts, user preferences |
+| `MEMORY.md` | Yes — persists across sessions | Durable facts, user preferences (5000 char cap) |
+| `YYYY-MM-DD.md` | Yes — persists across sessions | Daily notes, observations, task progress |
 | CLAUDE.md (group folder) | Yes — it's a file you control | Instructions, personality, skills |
 
 ## Context Loading Order
@@ -221,7 +225,7 @@ Each group gets a `CLAUDE.md` that defines its personality, rules, and capabilit
 ## Multi-Agent Routing
 
 For configuring sub-agents and delegation, see:
-- [agent-team-patterns.md](docs/agent-team-patterns.md) — Conceptual patterns (Flow 1 vs Flow 2)
+- [agent-team-patterns.md](docs/claude-code/agent-team-patterns.md) — Conceptual patterns (Flow 1 vs Flow 2)
 - [delegation-setup.md](docs/delegation-setup.md) — Setup, SQL commands, troubleshooting
 
 ## Contributing
