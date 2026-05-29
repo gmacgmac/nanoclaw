@@ -199,7 +199,7 @@ Used by Flow 1 sub-agents to respond directly to the user.
 
 ### get_registered_groups
 
-List all registered groups and their JIDs. Any group can call this.
+List all registered groups and their JIDs. Main group only.
 
 ---
 
