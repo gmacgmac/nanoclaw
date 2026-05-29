@@ -277,7 +277,6 @@ describe('runNightlyMaintenance', () => {
   });
 });
 
-
 // --- rotateMainLogs ---
 
 describe('rotateMainLogs', () => {
