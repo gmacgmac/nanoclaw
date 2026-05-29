@@ -373,7 +373,11 @@ describe('BE_04: agent-browser binary mounting', () => {
 
   it('does NOT mount when pkg directory does not exist', () => {
     const nonExistentPkg = path.join(tempDir, 'nonexistent');
-    const mounts = computeAgentBrowserMounts(nonExistentPkg, ['agent-browser'], 'x64');
+    const mounts = computeAgentBrowserMounts(
+      nonExistentPkg,
+      ['agent-browser'],
+      'x64',
+    );
     expect(mounts).toHaveLength(0);
   });
 
@@ -401,7 +405,11 @@ describe('BE_04: agent-browser binary mounting', () => {
     );
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
-    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'arm64');
+    const mounts = computeAgentBrowserMounts(
+      pkgDir,
+      ['agent-browser'],
+      'arm64',
+    );
     const binMount = mounts.find(
       (m) => m.containerPath === '/usr/local/bin/agent-browser',
     );
@@ -427,7 +435,11 @@ describe('BE_04: agent-browser binary mounting', () => {
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, 'agent-browser-linux-x64'), '#!/bin/sh');
 
-    const mounts = computeAgentBrowserMounts(pkgDir, ['agent-browser'], 'riscv64');
+    const mounts = computeAgentBrowserMounts(
+      pkgDir,
+      ['agent-browser'],
+      'riscv64',
+    );
     const binMount = mounts.find(
       (m) => m.containerPath === '/usr/local/bin/agent-browser',
     );
