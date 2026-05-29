@@ -720,6 +720,7 @@ Host commands are intercepted on the host process before reaching the agent cont
 **Ungated** (always available, sender allowlist still applies):
 - `/stop` — abort the in-flight model request, keep the session
 - `/shutdown` — stop the container, keep the session
+- `/context` — show current context window size and last input token usage
 
 **Gated** (require `allowedHostCommands` entry on the group's `containerConfig`):
 - `/model [<preset>]` — show or switch the active model preset
@@ -751,6 +752,20 @@ Writes the `_close` sentinel via `closeStdin()`. The container exits gracefully.
 Reply (single, deferred until container exits): `"Container stopped. Next message will start a new container with the same session."`
 
 If no container is running: `"No container running for this group."`
+
+### `/context` — Show Context Window Usage
+
+Reports the current context window size and last recorded input token count for this group. Useful for knowing how full the session is before deciding to `/newsession`.
+
+Reply (immediate):
+```
+📊 Context Window
+Model: <model> (preset: `<preset>`)
+Window: 128,000 tokens
+Last input: 39,473 tokens (30.8%)
+```
+
+If no token usage has been logged yet: `Last input: — (no usage logged yet)`
 
 ### `/model` — Switch Model Preset
 

@@ -284,7 +284,7 @@ nanoclaw/
 │   ├── group-folder.ts            # Group folder path resolution and validation
 │   ├── group-registry.ts          # Group registration helpers
 │   ├── mount-security.ts          # Mount allowlist validation for containers
-│   ├── host-commands.ts           # Host commands (/model, /version, /newsession, /shutdown, /stop)
+│   ├── host-commands.ts           # Host commands (/model, /version, /newsession, /shutdown, /stop, /context)
 │   ├── task-scheduler.ts          # Runs scheduled tasks when due + nightly cron
 │   ├── task-runtime-state.ts      # Runtime state derivation for scheduled tasks
 │   ├── nightly-maintenance.ts     # Nightly cron: nudge, prune, expire, log rotation

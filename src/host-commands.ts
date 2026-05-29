@@ -3,7 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { DEFAULT_CONTEXT_WINDOW } from './config.js';
 import { logger } from './logger.js';
+import { parseLastInputTokens } from './nightly-maintenance.js';
 import { getAvailablePresetNames, resolvePreset } from './presets.js';
 import { sanitizeSessionJsonl } from './session-sanitizer.js';
 import { isSenderAllowed, loadSenderAllowlist } from './sender-allowlist.js';
@@ -86,6 +88,10 @@ export async function handleHostCommand(
       await ctx.reply('Nothing running to stop.');
     }
     return true;
+  }
+
+  if (commandName === 'context') {
+    return handleContextCommand(ctx);
   }
 
   // --- Gated commands (require allowedHostCommands config) ---
@@ -380,5 +386,33 @@ async function handleVersionCommand(
     );
   });
 
+  return true;
+}
+
+// --- /context command ---
+
+async function handleContextCommand(ctx: HostCommandCtx): Promise<boolean> {
+  const preset = resolvePreset(ctx.group.containerConfig?.preset);
+  const contextWindow = preset?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+  const lastTokens = parseLastInputTokens(ctx.group.folder);
+
+  const lines = ['📊 Context Window'];
+
+  if (preset) {
+    lines.push(`Model: ${preset.model} (preset: \`${preset.name}\`)`);
+  } else {
+    lines.push('Model: (no preset configured)');
+  }
+
+  lines.push(`Window: ${contextWindow.toLocaleString()} tokens`);
+
+  if (lastTokens > 0) {
+    const pct = ((lastTokens / contextWindow) * 100).toFixed(1);
+    lines.push(`Last input: ${lastTokens.toLocaleString()} tokens (${pct}%)`);
+  } else {
+    lines.push('Last input: — (no usage logged yet)');
+  }
+
+  await ctx.reply(lines.join('\n'));
   return true;
 }

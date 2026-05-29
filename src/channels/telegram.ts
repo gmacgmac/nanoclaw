@@ -602,7 +602,7 @@ export class TelegramChannel implements Channel {
       },
     ];
 
-    // /shutdown and /stop are always available (ungated)
+    // /shutdown, /stop, and /context are always available (ungated)
     commands.push({
       command: 'shutdown',
       description: 'Force stop container (emergency)',
@@ -610,6 +610,10 @@ export class TelegramChannel implements Channel {
     commands.push({
       command: 'stop',
       description: 'Stop current container',
+    });
+    commands.push({
+      command: 'context',
+      description: 'Show context window usage',
     });
 
     const allowedHostCommands =

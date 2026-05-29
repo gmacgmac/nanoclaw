@@ -25,7 +25,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/logger.ts` | Built-in logger with DB error wrapper |
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
 | `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
-| `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop) |
+| `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop, /context) |
 | `store/messages.db` | SQLite database (registered_groups, messages, sessions, scheduled_tasks, delegations, dashboard_chat_log tables) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers |
