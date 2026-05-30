@@ -5,54 +5,82 @@ description: Build or upgrade a group's CLAUDE.md using the modular prompt-behav
 
 # Customize Group CLAUDE.md
 
-Build or upgrade a group's `CLAUDE.md` by assembling modular behaviour snippets from the prompt-behaviours library. This skill handles both new groups (from scratch) and existing groups (audit + patch).
+Build or upgrade a group's `CLAUDE.md` by assembling modular behaviour snippets from the prompt-behaviours library. Handles both new groups (from scratch) and existing groups (audit + patch).
 
 ## Snippet Library Location
-
-Behaviour snippets live at:
 
 ```
 docs/prompt-behaviours/
 ```
 
-Each file is a self-contained markdown section (starts with `##`), ends with two newlines, and is designed to be concatenated directly into a CLAUDE.md.
+Each file is a self-contained markdown section starting with frontmatter, then a `##` heading, ending with two newlines. Snippets are written to be concatenated directly into a CLAUDE.md — no transformation needed. Tool names already carry the `mcp__nanoclaw__` prefix, and `core_memory-protocol.md` already includes the `@memory/MEMORY.md` import line.
 
-**If the folder doesn't exist or is empty**, tell the user:
+**If the folder doesn't exist or is empty**, use the Quick Start fallback (see bottom) — copy a template CLAUDE.md instead.
 
-> The prompt-behaviours library isn't set up yet. This folder should contain modular `.md` snippets that define agent behaviours. Would you like me to help you create the initial set?
+## How Inclusion Works (Frontmatter-Driven)
 
-Then guide them through creating the core snippets based on the categories below.
+Every snippet declares its own inclusion rules in frontmatter. Do NOT rely on a hardcoded list — read the frontmatter of each file and decide from that. This keeps the skill correct even as snippets are added or changed.
 
-## Snippet Categories
+```
+---
+category: core | comms | scheduling | builder | admin
+default: true | false
+condition: <short phrase>   # present only when default is false
+---
+```
 
-Files are named `{category}_{descriptor}.md`:
+Selection rule:
+- `default: true` → include in every group.
+- `default: false` → include only if the group's profile matches `condition`.
 
-| Prefix | Purpose | When to include |
-|--------|---------|-----------------|
-| `core_` | Universal behaviours — every group gets these | Always |
-| `comms_` | Channel communication mechanics | Groups that talk to users |
-| `scheduling_` | Date/time awareness, task management | Groups that handle reminders or scheduled work |
-| `builder_` | Code, git, deployment patterns | Groups that write/deploy code |
+### The Group Profile
+
+Derive these facts about the group, then match them against each conditional snippet's `condition`:
+
+| Profile fact | How to determine it |
+|--------------|---------------------|
+| Channel | Folder prefix: `telegram_` / `slack_` / `whatsapp_` / `discord_`. Pick the one matching formatting snippet. |
+| Main group | `isMain` in the group's config (ask, or check `configure-group` / registered_groups). Gates `comms_cross-group`. |
+| Cross-group routing | Group sits behind a multi-agent router hub. Gates `comms_routed-messages`. |
+| Attachments | Channel supports file attachments (Telegram/Slack/WhatsApp/Discord all do). Gates `comms_send-attachments`. |
+| Writes/deploys code | Group does code/deploy work. Gates all `builder_` snippets. |
+| Dedicated admin group | A purpose-built admin group (does not exist yet). Gates `admin_*` snippets. |
+
+> **What's NOT default** (must opt in via profile):
+> - All `builder_*` — only code/deploy groups
+> - `comms_send-attachments` — only attachment-capable channels
+> - `comms_routed-messages` — only groups behind a router hub
+> - `comms_cross-group` — main groups only (cross-group send + `delegate_to_group` are main-gated in the platform)
+> - All `comms_*-formatting` — pick the single one matching the channel
+> - All `admin_*` — **dedicated admin group ONLY.** Do NOT assign to any main or standard group. Group registration/add/remove (`register_group`) is privileged and reserved for a future admin group; its safety is under review. Main groups get read-only group *discovery* (to pick delegation targets) inline, NOT the admin snippet.
+>
+> Everything else (`core_*`, `comms_response-delivery`, `comms_delegated-tasks`, all `scheduling_*`) is default. Note `comms_delegated-tasks` IS default — any group can be a delegation target via `respond_to_group`, even though only main can *initiate* delegation. Note `core_dependency-security` is default (not builder) — any group with shell access can run package installs, so supply-chain hygiene is universal.
+
+### Capability Facts (verified against platform code)
+
+- Plain `send_message` (own group) — every group.
+- `send_message` with `target_jid` (cross-group) — main only.
+- `delegate_to_group` — main only.
+- `respond_to_group` — any group (authorized by being the delegation target).
 
 ## Mode: New Group
 
-When building a CLAUDE.md for a new group (file doesn't exist yet):
+When the group has no CLAUDE.md yet.
 
 ### Step 1: Gather Context
 
 AskUserQuestion: "Tell me about this group:"
-- What's its purpose? (general assistant, scheduler, finance, code builder, etc.)
-- What channel is it on? (Telegram, Slack, Discord, WhatsApp)
-- Is it a main group or a non-main group?
-- Does it handle scheduling/reminders?
+- Purpose? (general assistant, scheduler, finance, code builder, etc.)
+- Channel? (Telegram, Slack, Discord, WhatsApp)
+- Main group or not?
 - Does it write or deploy code?
-- Does it participate in cross-group routing or delegation?
+- Does it sit behind a multi-agent router hub?
+
+These answers populate the Group Profile above.
 
 ### Step 2: Build the Persona
 
-The persona section goes at the top of the CLAUDE.md. It's always custom — never from a snippet.
-
-Guide the user through creating it. Offer these archetypes as starting points:
+The persona goes at the top and is always custom — never from a snippet. Archetypes to offer:
 
 **General Assistant:**
 ```markdown
@@ -67,7 +95,7 @@ Short sentences. Casual tone. Match the energy of the conversation.
 ```markdown
 # [Name]
 
-You are [Name], a [domain] specialist. You're sharp, direct, and know your field deeply. You call things as you see them — no padding, no hedging, no performing expertise you don't have.
+You are [Name], a [domain] specialist. You're sharp, direct, and know your field deeply. You call things as you see them — no padding, no hedging.
 
 Think less "AI assistant" and more "[relatable expert analogy]."
 ```
@@ -81,154 +109,97 @@ You are [Name], a sharp, no-nonsense [role]. Your core job is [primary mission].
 You *know* the [domain]. When someone mentions [X], you know [Y]. This isn't optional — it's your job.
 ```
 
-AskUserQuestion: "Which style fits, or would you like something different?"
-
-After choosing, help them refine:
-- Name
-- Core mission (one sentence)
-- What "performing better than the human" looks like for this group
-- Tone calibration (dry/witty, warm, purely functional)
+AskUserQuestion: "Which style fits, or something different?" Then refine name, one-sentence mission, what "performing better than the human" means here, and tone.
 
 ### Step 3: Select Snippets
 
-Based on the context gathered in Step 1, select applicable snippets:
-
-**Always include (core_):**
-- `core_ack-before-working.md`
-- `core_question-gate.md`
-- `core_read-before-edit.md`
-- `core_how-not-cant.md`
-- `core_memory-protocol.md`
-- `core_multiple-messages.md`
-- `core_internal-tags.md`
-
-**If the group talks to users (comms_):**
-- `comms_response-delivery.md`
-- `comms_visible-output-rule.md`
-- `comms_send-attachments.md`
-- Channel-specific formatting (e.g. `comms_telegram-formatting.md`)
-- `comms_routed-messages.md` (if cross-group routing is needed)
-- `comms_delegated-tasks.md` (if delegation is needed)
-
-**If the group handles scheduling (scheduling_):**
-- `scheduling_date-awareness.md`
-- `scheduling_day-verification.md` (if schedule-heavy)
-- `scheduling_task-validation.md`
-- `scheduling_task-constraints.md`
-- `scheduling_now-token.md`
-
-**If the group writes code (builder_):**
-- `builder_git-discipline.md`
-- `builder_dependency-security.md`
-- `builder_async-operations.md` (if it does deployments/provisioning)
-- `builder_procedure-context.md` (if it does structured feature work)
+Read the frontmatter of every file in `docs/prompt-behaviours/`. Include all `default: true`. For each `default: false`, include only if its `condition` matches the Group Profile from Step 1.
 
 ### Step 4: Assemble
 
-Build the CLAUDE.md in this order:
-
-1. **Persona** (custom, from Step 2)
-2. **Core tenets** (custom per group — 3-6 non-negotiable principles)
-3. **How You Talk** (tone rules — usually standard across groups)
+Order:
+1. **Persona** (custom, Step 2)
+2. **Core tenets** (custom — 3-6 non-negotiable principles for this group)
+3. **How You Talk** (tone rules — usually standard)
 4. **Core behaviours** (all `core_` snippets)
-5. **Communication** (applicable `comms_` snippets)
-6. **Scheduling** (applicable `scheduling_` snippets)
-7. **Builder** (applicable `builder_` snippets)
-8. **Domain-specific** (any custom sections unique to this group)
+5. **Communication** (selected `comms_` snippets, formatting last)
+6. **Scheduling** (`scheduling_` snippets)
+7. **Builder** (selected `builder_` snippets)
+8. **Domain-specific** (custom sections unique to this group)
 
-Read each selected snippet file and concatenate them in order. The two trailing newlines in each file handle spacing.
+Read each selected snippet and concatenate in order. Strip the frontmatter block from each snippet during assembly — it's metadata for selection, not content for the CLAUDE.md. The two trailing newlines handle spacing. No other transformation: tool prefixes and the memory import are already baked in.
 
 ### Step 5: Review and Write
 
-Show the assembled CLAUDE.md to the user in full.
-
-AskUserQuestion: "Does this look right? Any sections to add, remove, or tweak?"
-
-Iterate until they're happy, then write to `groups/<folder>/CLAUDE.md`.
+Show the assembled CLAUDE.md in full. AskUserQuestion: "Does this look right? Anything to add, remove, or tweak?" Iterate, then write to `groups/<folder>/CLAUDE.md`.
 
 ---
 
 ## Mode: Existing Group (Audit & Upgrade)
 
-When the group already has a CLAUDE.md:
-
 ### Step 1: Read Current State
 
 Read the existing `groups/<folder>/CLAUDE.md` in full.
 
-### Step 2: Inventory Snippets
+### Step 2: Build the Profile + Inventory Snippets
 
-Read all files in `docs/prompt-behaviours/`. For each snippet, check whether the existing CLAUDE.md already covers that behaviour (even if worded differently).
+Derive the Group Profile (channel, main, routing, attachments, code). Read all snippet frontmatter. The expected set = all defaults + conditionals whose `condition` matches the profile. For each expected snippet, check whether the CLAUDE.md already covers that behaviour (even if worded differently).
 
 ### Step 3: Gap Report
 
-Present a table:
+Present a table covering only snippets relevant to this group's profile:
 
 ```
 Snippet                          Status
 ─────────────────────────────────────────
-core_ack-before-working          ✓ Present (but outdated — missing web search tools)
 core_question-gate               ✗ Missing
 core_read-before-edit            ✗ Missing
-core_how-not-cant                ✗ Missing
-core_memory-protocol             ✓ Present
-core_multiple-messages           ✓ Present
-core_internal-tags               ~ Partial (no visible-output rule)
+core_output-integrity            ~ Partial (has internal tags, no visible-output rule)
 comms_response-delivery          ✓ Present
-comms_telegram-formatting        ✓ Present
-scheduling_date-awareness        ✗ Missing
-scheduling_task-validation       ✓ Present
+scheduling_day-verification      ✓ Present
 ...
 ```
 
-Use:
-- `✓` — present and up to date
-- `~` — present but outdated or incomplete (explain what's missing)
-- `✗` — missing entirely
+- `✓` present and current
+- `~` present but outdated/incomplete (say what's missing)
+- `✗` missing
+- Also flag any snippet present in the file that's NOT in the expected set (candidate for removal — e.g. wrong channel's formatting).
 
 ### Step 4: Propose Changes
 
-For each gap or outdated section, propose the fix:
+For each gap: where to add it. For each outdated section: propose replacing with the canonical snippet. For ordering: note moves.
 
-- **Missing snippets**: "Add this section after [X]"
-- **Outdated sections**: "Replace the current [section] with the canonical version"
-- **Ordering issues**: "Move [section] to after [other section] for consistency"
+**Never replace or modify without explicit permission.** Present as proposals and wait for "go ahead" / "do it" / "apply".
 
-**CRITICAL: Never replace or modify content without explicit permission.** Present all changes as proposals. Wait for "go ahead", "do it", "apply", etc.
-
-AskUserQuestion: "Which of these changes should I apply?"
-
-Options:
-- All of them
-- Specific ones (let them pick)
-- None (just wanted the audit)
+AskUserQuestion: "Which changes should I apply? (all / specific ones / none)"
 
 ### Step 5: Apply
 
-For each approved change:
-- If adding a new section: read the snippet file, insert at the correct position
-- If replacing an outdated section: show the diff (old vs new), then replace
-- If reordering: move the section, preserve its content
+- Adding: read the snippet (minus frontmatter), insert at the correct position.
+- Replacing outdated: show old vs new, then replace.
+- Reordering: move, preserve content.
 
-After all changes, show the final CLAUDE.md structure (just headers, not full content) so the user can confirm the order is right.
+Preserve all custom content (persona, core tenets, domain sections) that isn't in the library. After applying, show the final header structure so the user can confirm order.
 
 ---
 
 ## Quick Start (No Snippets Available)
 
-If `docs/prompt-behaviours/` doesn't exist or is empty, fall back to copying from the template files:
+If `docs/prompt-behaviours/` is absent (e.g. a different repo without the library), fall back to copying a template as the base:
 
-- **Main groups**: Start from `groups/main/CLAUDE.md`
-- **Non-main groups**: Start from `groups/global/CLAUDE.md`
+- **Main groups**: copy `groups/main/CLAUDE.md`
+- **Non-main groups**: copy `groups/global/CLAUDE.md`
 
-Then customise the persona section and add any domain-specific content. Tell the user that the snippet library enables more granular control and offer to help set it up.
+Then customise the persona and add domain-specific content. Mention that the snippet library enables more granular control and offer to set it up.
 
 ---
 
 ## Rules
 
-1. **Never overwrite without permission.** Always show what you're about to change and wait for explicit approval.
-2. **Preserve custom content.** Domain-specific sections, persona, and custom rules that aren't in the snippet library must be preserved during upgrades.
-3. **Order matters.** The assembly order (persona → core → comms → scheduling → builder → domain) is intentional. It puts identity first, universal rules next, then progressively more specific content.
-4. **Snippets are canonical.** If a group has a hand-written version of something that exists as a snippet, the snippet is the authoritative version. Propose replacing the hand-written version with the snippet (but don't force it).
-5. **Two newlines between sections.** Every snippet ends with two newlines. When assembling, this creates clean visual separation without extra work.
+1. **Never overwrite without permission.** Show changes, wait for explicit approval.
+2. **Preserve custom content.** Persona, core tenets, and domain sections not in the library survive upgrades untouched.
+3. **Order matters.** Identity first, universal rules next, then progressively more specific content.
+4. **Frontmatter is the source of truth for inclusion.** Don't hardcode which snippets apply — read `default` and `condition`.
+5. **Snippets are canonical.** If a group hand-wrote something that now exists as a snippet, propose replacing it with the snippet (don't force it).
+6. **Strip frontmatter on assembly.** It's selection metadata, not CLAUDE.md content.
+7. **One formatting snippet per group.** Match the channel; drop the rest.
