@@ -158,7 +158,7 @@ its own session, memory, and personality.
 | `schedule_task` | Schedule a recurring or one-time task in any group | Cross-group: main-only |
 | `list_tasks` | List scheduled tasks | No (scoped to own group unless main) |
 | `get_registered_groups` | List all registered groups and their JIDs | Yes (main only) |
-| `register_group` | Register a new chat/group | Yes |
+| `register_group` | Register a new chat/group | Yes (admin only) |
 | `pause_task` | Pause a scheduled task | No (scoped to own group unless main) |
 | `resume_task` | Resume a paused task | No (scoped to own group unless main) |
 | `cancel_task` | Cancel and delete a task | No (scoped to own group unless main) |

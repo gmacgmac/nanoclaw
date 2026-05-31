@@ -153,6 +153,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add is_admin column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN is_admin INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add multi_agent_router column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -786,6 +795,7 @@ export function getRegisteredGroup(
         container_config: string | null;
         requires_trigger: number | null;
         is_main: number | null;
+        is_admin: number | null;
         multi_agent_router: number | null;
         container_channel: string;
       }
@@ -817,6 +827,7 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    isAdmin: row.is_admin === 1 ? true : undefined,
     multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
     containerChannel: isValidContainerChannel(channel) ? channel : 'stable',
   };
@@ -833,8 +844,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     );
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, multi_agent_router, container_channel)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, is_admin, multi_agent_router, container_channel)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -844,6 +855,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    group.isAdmin ? 1 : 0,
     group.multiAgentRouter ? 1 : 0,
     channel,
   );
@@ -859,6 +871,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
     is_main: number | null;
+    is_admin: number | null;
     multi_agent_router: number | null;
     container_channel: string;
   }>;
@@ -889,11 +902,38 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+      isAdmin: row.is_admin === 1 ? true : undefined,
       multiAgentRouter: row.multi_agent_router === 1 ? true : undefined,
       containerChannel: isValidContainerChannel(channel) ? channel : 'stable',
     };
   }
   return result;
+}
+
+/**
+ * Delete a registered group by JID.
+ * Used by the CLI removal command (setup/unregister.ts).
+ */
+export function deleteRegisteredGroup(jid: string): void {
+  db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
+}
+
+/**
+ * Relocate all tasks from one group to another.
+ * Updates BOTH group_folder (runtime resolution) and chat_jid (queue + delivery).
+ * Used by the CLI removal command (setup/unregister.ts).
+ */
+export function relocateTasks(
+  fromFolder: string,
+  toFolder: string,
+  toJid: string,
+): number {
+  const result = db
+    .prepare(
+      'UPDATE scheduled_tasks SET group_folder = ?, chat_jid = ? WHERE group_folder = ?',
+    )
+    .run(toFolder, toJid, fromFolder);
+  return result.changes;
 }
 
 // --- JSON migration ---

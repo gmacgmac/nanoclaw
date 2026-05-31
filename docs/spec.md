@@ -64,8 +64,9 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
 │  │    • WebSearch/WebFetch excluded from defaults (use MCP)       │    │
 │  │    • agent-browser (only if skill explicitly allowed)          │    │
-│  │    • mcp__nanoclaw__* (IPC — always on; register_group &       │    │
-│  │      delegate_to_group hidden from non-main groups)            │    │
+│  │    • mcp__nanoclaw__* (IPC — always on; register_group hidden   │    │
+│  │      from non-admin groups; delegate_to_group hidden from       │    │
+│  │      non-main groups)                                           │    │
 │  │    • Per-group MCP servers (e.g. brave-search, nanoclaw-web-search)  │    │
 │  │                                                                │    │
 │  └──────────────────────────────────────────────────────────────┘    │
@@ -1019,7 +1020,7 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 | `delegate_to_group` | Send a task to a target group (main only), get a UUID for correlation |
 | `respond_to_group` | Respond to a pending delegation (validates UUID, caller identity) |
 | `execute_command` | Execute a shell command on the host |
-| `register_group` | Register a new group |
+| `register_group` | Register a new group (admin only) |
 | `get_registered_groups` | List all registered groups |
 
 ---

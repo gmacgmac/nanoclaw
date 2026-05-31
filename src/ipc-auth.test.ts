@@ -173,6 +173,7 @@ describe('schedule_task authorization', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -193,6 +194,7 @@ describe('schedule_task authorization', () => {
       },
       'other-group',
       false,
+      false,
       deps,
     );
 
@@ -212,6 +214,7 @@ describe('schedule_task authorization', () => {
       },
       'other-group',
       false,
+      false,
       deps,
     );
 
@@ -229,6 +232,7 @@ describe('schedule_task authorization', () => {
         targetJid: 'unknown@g.us',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -687,10 +691,30 @@ describe('register_group authorization', () => {
       },
       'other-group',
       false,
+      false,
       deps,
     );
 
     // registeredGroups should not have changed
+    expect(groups['new@g.us']).toBeUndefined();
+  });
+
+  it('main-but-not-admin group cannot register a group', async () => {
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'new@g.us',
+        name: 'New Group',
+        folder: 'new-group',
+        trigger: '@Andy',
+      },
+      'whatsapp_main',
+      true,
+      false,
+      deps,
+    );
+
+    // isMain alone is not enough — must be isAdmin
     expect(groups['new@g.us']).toBeUndefined();
   });
 
@@ -704,6 +728,7 @@ describe('register_group authorization', () => {
         trigger: '@Andy',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -720,6 +745,7 @@ describe('refresh_groups authorization', () => {
     await processTaskIpc(
       { type: 'refresh_groups' },
       'other-group',
+      false,
       false,
       deps,
     );
@@ -795,6 +821,7 @@ describe('schedule_task schedule types', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -819,6 +846,7 @@ describe('schedule_task schedule types', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -837,6 +865,7 @@ describe('schedule_task schedule types', () => {
         targetJid: 'other@g.us',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -861,6 +890,7 @@ describe('schedule_task schedule types', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -878,6 +908,7 @@ describe('schedule_task schedule types', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -894,6 +925,7 @@ describe('schedule_task schedule types', () => {
         targetJid: 'other@g.us',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -917,6 +949,7 @@ describe('schedule_task context_mode', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -935,6 +968,7 @@ describe('schedule_task context_mode', () => {
         targetJid: 'other@g.us',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -955,6 +989,7 @@ describe('schedule_task context_mode', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -972,6 +1007,7 @@ describe('schedule_task context_mode', () => {
         targetJid: 'other@g.us',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -995,6 +1031,7 @@ describe('register_group success', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -1016,6 +1053,7 @@ describe('register_group success', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -1033,6 +1071,7 @@ describe('register_group success', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -1046,6 +1085,49 @@ describe('register_group success', () => {
     const internalChat = chats.find((c) => c.jid === 'test-internal@internal');
     expect(internalChat).toBeDefined();
     expect(internalChat!.name).toBe('Test Internal');
+  });
+
+  it('register_group preserves isAdmin when an existing admin group updates its config via IPC', async () => {
+    // Seed an admin group directly in the DB (as CLI setup would do)
+    setRegisteredGroup('admin@g.us', {
+      name: 'Admin Group',
+      folder: 'whatsapp_admin',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+      isAdmin: true,
+    });
+    // Seed the in-memory groups map so the watcher sees it as admin
+    groups['admin@g.us'] = {
+      name: 'Admin Group',
+      folder: 'whatsapp_admin',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+      isAdmin: true,
+    };
+
+    // Admin group re-registers itself via IPC (e.g. to update containerConfig)
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'admin@g.us',
+        name: 'Admin Group',
+        folder: 'whatsapp_admin',
+        trigger: '@Andy',
+        containerConfig: { additionalMounts: ['/extra'] },
+      },
+      'whatsapp_admin',
+      true,
+      true, // isAdmin = true (the watcher passes this)
+      deps,
+    );
+
+    // isAdmin must be preserved — not stripped by the IPC re-registration
+    const updated = getRegisteredGroup('admin@g.us');
+    expect(updated).toBeDefined();
+    expect(updated!.isAdmin).toBe(true);
+    expect(updated!.isMain).toBe(true);
   });
 });
 

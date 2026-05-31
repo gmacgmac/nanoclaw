@@ -43,7 +43,7 @@ Query the database with: `sqlite3 store/messages.db`
 |-------|---------|
 | `chats` | `jid` (PK), `name`, `last_message_time`, `channel`, `is_group` |
 | `messages` | `id`, `chat_jid`, `sender`, `sender_name`, `content`, `timestamp`, `is_from_me`, `is_bot_message` |
-| `registered_groups` | `jid` (PK), `name`, `folder`, `trigger_pattern`, `added_at`, `container_config`, `requires_trigger`, `is_main`, `multi_agent_router`, `container_channel` |
+| `registered_groups` | `jid` (PK), `name`, `folder`, `trigger_pattern`, `added_at`, `container_config`, `requires_trigger`, `is_main`, `is_admin`, `multi_agent_router`, `container_channel` |
 | `sessions` | `group_folder` (PK), `session_id` |
 | `scheduled_tasks` | `id` (PK), `group_folder`, `chat_jid`, `prompt`, `description`, `schedule_type`, `schedule_value`, `context_mode`, `next_run`, `last_run`, `last_result`, `status`, `created_at`, `script` |
 | `task_run_logs` | `id`, `task_id`, `run_at`, `duration_ms`, `status`, `result`, `error` |

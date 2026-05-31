@@ -42,6 +42,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  isAdmin: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
   // Agent customisation (from containerConfig, threaded through to agent-runner)

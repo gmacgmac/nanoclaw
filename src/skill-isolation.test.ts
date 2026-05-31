@@ -349,6 +349,7 @@ describe('ContainerInput threading', () => {
       groupFolder: string;
       chatJid: string;
       isMain: boolean;
+      isAdmin: boolean;
       isScheduledTask?: boolean;
       assistantName?: string;
       allowedTools?: string[];
@@ -361,6 +362,7 @@ describe('ContainerInput threading', () => {
       groupFolder: 'test-group',
       chatJid: 'test@g.us',
       isMain: false,
+      isAdmin: false,
       allowedTools: ['Read', 'Grep'],
       model: 'sonnet',
       systemPrompt: 'Be concise.',

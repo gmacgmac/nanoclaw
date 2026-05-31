@@ -23,6 +23,7 @@ interface RegisterArgs {
   channel: string;
   requiresTrigger: boolean;
   isMain: boolean;
+  isAdmin: boolean;
   assistantName: string;
   botTokenName: string;
   preset: string;
@@ -37,6 +38,7 @@ function parseArgs(args: string[]): RegisterArgs {
     channel: 'whatsapp', // backward-compat: pre-refactor installs omit --channel
     requiresTrigger: true,
     isMain: false,
+    isAdmin: false,
     assistantName: 'Andy',
     botTokenName: '',
     preset: '',
@@ -64,6 +66,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--is-main':
         result.isMain = true;
+        break;
+      case '--is-admin':
+        result.isAdmin = true;
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
@@ -146,6 +151,7 @@ export async function run(args: string[]): Promise<void> {
     added_at: new Date().toISOString(),
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
+    isAdmin: parsed.isAdmin,
     ...(Object.keys(containerConfig).length > 0 && { containerConfig }),
   });
 
@@ -217,6 +223,7 @@ export async function run(args: string[]): Promise<void> {
     CHANNEL: parsed.channel,
     TRIGGER: parsed.trigger,
     REQUIRES_TRIGGER: parsed.requiresTrigger,
+    IS_ADMIN: parsed.isAdmin,
     ASSISTANT_NAME: parsed.assistantName,
     NAME_UPDATED: nameUpdated,
     ...(parsed.botTokenName && { BOT_TOKEN_NAME: parsed.botTokenName }),

@@ -341,7 +341,7 @@ For the full scheduler model and visibility rules see [README-SCHEDULED-TASKS.md
 
 | Tool | Access | Purpose |
 |------|--------|---------|
-| `register_group` | Main only | Register a new chat/group (see [Group Creation Checklist](#group-creation-checklist)) |
+| `register_group` | Admin only | Register a new chat/group (admin group only — see [Group Creation Checklist](#group-creation-checklist)) |
 | `get_registered_groups` | Main only | List all registered groups and their JIDs (for `target_jid` discovery) |
 | `execute_command` | Any group | Run a shell command on the host. Dangerous commands targeting write-mounted paths require user approval (on by default — see [Command Approval](#command-approval)). Disable per-group via `approvalMode: false`. |
 | `ping` | Any group | Diagnostic — returns pong |
@@ -399,7 +399,7 @@ The database serves the application layer — message routing, group registratio
 | `messages` | Inbound user messages (input queue for the message loop) + bot responses for dashboard-channel conversations |
 | `chats` | Chat metadata (JID, name, last activity, channel) |
 | `sessions` | Maps group folder → current Claude session UUID |
-| `registered_groups` | Group config (name, folder, trigger, containerConfig, `multi_agent_router`) |
+| `registered_groups` | Group config (name, folder, trigger, containerConfig, `is_admin`, `multi_agent_router`) |
 | `delegations` | Inter-group task delegations (UUID, caller, target, status, expiry) |
 | `scheduled_tasks` | Cron/interval tasks with prompts and human-readable descriptions |
 | `task_run_logs` | Execution history for scheduled tasks |
@@ -697,7 +697,7 @@ The `isMain` flag on `registered_groups` designates a group as the main control 
 | Trigger required | No — responds to all messages | Yes, unless `requiresTrigger: false` |
 | Send message to other groups | Yes (any JID) | Own chat JID only |
 | Schedule / pause / cancel tasks | Any group | Own group only |
-| Register new groups | Yes | No |
+| Register new groups | Admin only (`is_admin`) | No |
 | Refresh group metadata | Yes | No |
 | View group list | All groups | Empty list |
 | `additionalMounts` read-only enforcement | Exempt | Enforced when `mount-allowlist.json` has `nonMainReadOnly: true` |
@@ -1339,7 +1339,9 @@ The project hash `-workspace-group` is derived from the container WORKDIR (`/wor
 
 ## Group Creation Checklist
 
-The `register_group` MCP tool (and the `/add-internal-group` skill) registers a group in SQLite and creates the group folder. However, it does NOT automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
+The `register_group` MCP tool (admin group only) and the `/add-internal-group` skill register a group in SQLite and create the group folder. However, it does NOT automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
+
+> **Group removal** is CLI-operator-only via `setup/unregister.ts` (`npm run unregister`). There is no MCP/IPC removal verb. Removal transactionally handles active tasks (delete or relocate to another group) and keeps on-disk directories intact (soft removal).
 
 ### What `register_group` Creates
 

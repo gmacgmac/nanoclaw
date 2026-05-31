@@ -146,6 +146,7 @@ describe('delegate_to_group authorization', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -168,6 +169,7 @@ describe('delegate_to_group authorization', () => {
       },
       'other-group',
       false,
+      false,
       deps,
     );
 
@@ -185,6 +187,7 @@ describe('delegate_to_group authorization', () => {
         ttlSeconds: 300,
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -207,6 +210,7 @@ describe('delegate_to_group message injection', () => {
         ttlSeconds: 300,
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -233,6 +237,7 @@ describe('delegate_to_group message injection', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -249,6 +254,7 @@ describe('delegate_to_group message injection', () => {
         prompt: 'Default TTL test',
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -287,6 +293,7 @@ describe('respond_to_group', () => {
       },
       'other-group', // sourceGroup matches target_jid's folder
       false,
+      false,
       deps,
     );
 
@@ -317,6 +324,7 @@ describe('respond_to_group', () => {
       },
       'third-group', // Wrong group — delegation was for other-group
       false,
+      false,
       deps,
     );
 
@@ -333,6 +341,7 @@ describe('respond_to_group', () => {
         responseText: 'No such delegation',
       },
       'other-group',
+      false,
       false,
       deps,
     );
@@ -351,6 +360,7 @@ describe('respond_to_group', () => {
         responseText: 'Duplicate response',
       },
       'other-group',
+      false,
       false,
       deps,
     );
@@ -378,6 +388,7 @@ describe('respond_to_group', () => {
       },
       'other-group',
       false,
+      false,
       deps,
     );
 
@@ -402,6 +413,7 @@ describe('delegation edge cases', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -415,6 +427,7 @@ describe('delegation edge cases', () => {
         ttlSeconds: 300,
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );
@@ -435,6 +448,7 @@ describe('delegation edge cases', () => {
       },
       'whatsapp_main',
       true,
+      true,
       deps,
     );
 
@@ -448,6 +462,7 @@ describe('delegation edge cases', () => {
         // Missing uuid and responseText
       },
       'other-group',
+      false,
       false,
       deps,
     );
@@ -466,6 +481,7 @@ describe('delegation edge cases', () => {
         ttlSeconds: 5, // Below minimum of 30
       },
       'whatsapp_main',
+      true,
       true,
       deps,
     );

@@ -58,17 +58,21 @@ Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
 
 Messages and task operations are verified against group identity:
 
-| Operation | Main Group | Non-Main Group |
-|-----------|------------|----------------|
-| Send message to own chat | ✓ | ✓ |
-| Send message to other chats | ✓ | ✗ |
-| Schedule task for self | ✓ | ✓ |
-| Schedule task for others | ✓ | ✗ |
-| View all tasks | ✓ | Own only |
-| List registered groups | ✓ | ✗ |
-| Register new groups | ✓ | ✗ |
-| Delegate to other groups | ✓ | ✗ |
-| Respond to a delegation | ✓ | ✓ (reply only — requires delegation UUID) |
+| Operation | Admin Group | Main Group | Non-Main Group |
+|-----------|-------------|------------|----------------|
+| Send message to own chat | ✓ | ✓ | ✓ |
+| Send message to other chats | ✓ | ✓ | ✗ |
+| Schedule task for self | ✓ | ✓ | ✓ |
+| Schedule task for others | ✓ | ✓ | ✗ |
+| View all tasks | Own only | Own only | Own only |
+| List registered groups | ✓ | ✓ | ✗ |
+| Register new groups | ✓ | ✗ | ✗ |
+| Delegate to other groups | ✓ | ✓ | ✗ |
+| Respond to a delegation | ✓ | ✓ | ✓ (reply only — requires delegation UUID) |
+
+**Admin tier**: The `is_admin` column on `registered_groups` (set via `setup/register.ts --is-admin`) designates a group as the admin group. The admin group also carries `is_main=1` — admin is a superset of main. Only the admin group can register new groups via the `register_group` MCP tool/IPC verb.
+
+**Group removal is CLI-operator-only**: There is no MCP/IPC removal verb. Removal is performed by the host operator via `setup/unregister.ts` (`npm run unregister`), which transactionally deletes or relocates active tasks, drops the session row, and removes the registration. On-disk directories are kept (soft removal).
 
 ### 5. Credential Isolation (Credential Proxy)
 
@@ -151,14 +155,15 @@ Human-in-the-loop gate for dangerous shell commands in groups with write-access 
 
 ## Privilege Comparison
 
-| Capability | Main Group | Non-Main Group |
-|------------|------------|----------------|
-| Project root access | None (use `additionalMounts`) | None |
-| Group folder | `/workspace/group` (rw) | `/workspace/group` (rw) |
-| Global memory | None (use `additionalMounts`) | None |
-| Additional mounts | Configurable | Read-only unless allowed |
-| Network access | Unrestricted | Unrestricted |
-| MCP tools (`mcp__nanoclaw__*`) | All registered tools | All registered tools except main-only (conditionally registered at MCP server level based on `isMain`) |
+| Capability | Admin Group | Main Group | Non-Main Group |
+|------------|-------------|------------|----------------|
+| Project root access | None (use `additionalMounts`) | None (use `additionalMounts`) | None |
+| Group folder | `/workspace/group` (rw) | `/workspace/group` (rw) | `/workspace/group` (rw) |
+| Global memory | None (use `additionalMounts`) | None (use `additionalMounts`) | None |
+| Additional mounts | Configurable | Configurable | Read-only unless allowed |
+| Network access | Unrestricted | Unrestricted | Unrestricted |
+| Register new groups | Yes (`register_group` MCP tool) | No | No |
+| MCP tools (`mcp__nanoclaw__*`) | All registered tools | All registered tools except admin-only (`register_group`) | All registered tools except main-only and admin-only (conditionally registered at MCP server level based on `isMain` / `isAdmin`) |
 
 ## Security Architecture Diagram
 

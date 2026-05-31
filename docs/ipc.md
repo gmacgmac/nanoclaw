@@ -137,7 +137,7 @@ Agents inside containers access IPC through MCP tools (`mcp__nanoclaw__*`):
 | `get_task` | Get task details and run history | Own group only |
 | `search_tasks` | Search tasks by keyword | Own group only |
 | `get_registered_groups` | List registered groups (for `target_jid` discovery) | Main only |
-| `register_group` | Register a new chat/group | Main only |
+| `register_group` | Register a new chat/group (admin group only) | Admin only |
 | `delegate_to_group` | Delegate task to another group's agent | Main only |
 | `respond_to_group` | Respond to a delegation request | All groups |
 | `execute_command` | Execute a shell command (dangerous commands targeting write-mounted paths require user approval) | All groups |
@@ -330,7 +330,7 @@ Note: Changing schedule values recalculates `next_run` automatically.
 
 ### Register Group
 
-**Main group only** — creates a new registered group.
+**Admin group only** — creates a new registered group. Requires the `is_admin` flag on the calling group (set via `setup/register.ts --is-admin`).
 
 ```json
 {
@@ -435,6 +435,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `container_config` | TEXT | JSON config |
 | `requires_trigger` | INTEGER | Trigger required flag (default: 1) |
 | `is_main` | INTEGER | Main group flag (default: 0) |
+| `is_admin` | INTEGER | Admin group flag (default: 0) — gates `register_group` |
 | `multi_agent_router` | INTEGER | Hub routing flag (default: 0) |
 | `container_channel` | TEXT | Image channel: `stable` or `next` (default: `stable`) |
 

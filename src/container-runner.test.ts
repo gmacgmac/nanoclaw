@@ -145,6 +145,7 @@ const testInput = {
   groupFolder: 'test-group',
   chatJid: 'test@g.us',
   isMain: false,
+  isAdmin: false,
 };
 
 function emitOutputMarker(

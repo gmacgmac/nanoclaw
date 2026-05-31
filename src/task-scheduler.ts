@@ -153,13 +153,15 @@ async function runTask(
   );
 
   if (!group) {
+    // Stop retry churn for tasks whose group was removed.
+    updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
-      'Group not found for task',
+      'Group not found for task — pausing to stop retry churn',
     );
     updateTaskRunLog(runLogId, {
       status: 'error',
-      error: `Group not found: ${task.group_folder}`,
+      error: `Group not found: ${task.group_folder} (task paused)`,
       duration_ms: Date.now() - startTime,
     });
     return;
@@ -169,6 +171,7 @@ async function runTask(
   let error: string | null = null;
 
   const isMain = group.isMain === true;
+  const isAdmin = group.isAdmin === true;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -218,6 +221,7 @@ async function runTask(
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
         isMain,
+        isAdmin,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
         script: task.script || undefined,

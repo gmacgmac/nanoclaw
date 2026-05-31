@@ -328,6 +328,7 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
+  const isAdmin = group.isAdmin === true;
   const sessionId = sessions[group.folder];
 
   // Validate containerConfig — log warnings for invalid values, use safe defaults
@@ -434,6 +435,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        isAdmin,
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
         allowedTools: effectiveAllowedTools,
@@ -934,6 +936,7 @@ async function main(): Promise<void> {
                   groupFolder: group.folder,
                   chatJid,
                   isMain: group.isMain === true,
+                  isAdmin: group.isAdmin === true,
                   assistantName: ASSISTANT_NAME,
                   allowedTools: group.containerConfig?.allowedTools,
                   model: nightlyResolved.model,

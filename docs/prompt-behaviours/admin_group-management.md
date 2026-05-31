@@ -105,7 +105,19 @@ Notes:
 
 ### Removing a Group
 
-1. Read the `registered_groups` table to find the entry
-2. Remove the entry for that group
-3. The group folder and its files remain (don't delete them)
+Group removal is a **CLI-operator-only** action — it is NOT an agent capability. There is no MCP tool or IPC verb for removal.
+
+The host operator runs `setup/unregister.ts` (or `npm run unregister`) with:
+- `--jid <jid>` or `--folder <folder>` to identify the group
+- `--tasks delete` or `--tasks relocate --relocate-to <jid>` to handle active tasks
+- `--yes` to skip interactive confirmation
+
+The command transactionally:
+1. Deletes or relocates all tasks belonging to the group (updating both `group_folder` and `chat_jid`)
+2. Drops the `sessions` row
+3. Deletes the `registered_groups` row
+
+On-disk directories (`groups/{folder}/` and session data) are **kept** (soft removal) — the operator can clean them up manually if desired.
+
+If you are asked to remove a group, explain that this must be done by the operator on the host via the CLI command above.
 

@@ -56,7 +56,7 @@ For each due task, `runTask()`:
 
 1. Inserts a `'started'` sentinel row into `task_run_logs` (survives crashes — see "Run Audit Trail")
 2. Advances `next_run` to the next scheduled time **before** spawning the container (see "Metadata Update Timing")
-3. Resolves the group folder
+3. Resolves the group folder. **If the group no longer exists** (e.g., it was removed via `setup/unregister.ts`), the task is **paused** (`status: 'paused'`) and the run is aborted. This prevents zombie retry loops where a task for a removed group fires every 60 seconds indefinitely.
 4. Spawns a **fresh, dedicated task container** via `runContainerAgent()` with `isScheduledTask: true`. Tasks never reuse an existing chat container — every task run is its own `docker run --rm`.
 5. Prepends `[SCHEDULED TASK - ...]` to the prompt inside the container so the agent knows the message is automated, not from a real user
 6. Streams results back to the host; any text output is forwarded directly to the group's chat via `channel.sendMessage` (not piped through any other container — see "What you see in chat when a task fires" below)
@@ -308,6 +308,8 @@ The `isMain` flag on `registered_groups` determines what a group's agent can do 
 - Set **once** at registration time via `--is-main` flag in `setup/register.ts:66-67`
 - Stored in `registered_groups.is_main` column (`src/db.ts:654, 675, 710`)
 - **Cannot be changed by agents via IPC** — `src/ipc.ts` explicitly preserves `existingGroup?.isMain` when an agent calls `register_group`, ignoring any `isMain` value in the payload (defense in depth)
+
+> **Note on `register_group` gating**: The `register_group` capability is gated on `is_admin` (not `is_main`). Only the admin group (registered with `--is-admin`) can register new groups. The admin group also carries `is_main=1` — admin is a superset of main.
 
 ### Authorization Enforcement — Two Layers
 

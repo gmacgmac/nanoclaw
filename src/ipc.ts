@@ -530,14 +530,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    // Build folder→isMain lookup from registered groups
+    // Build folder→isMain and folder→isAdmin lookups from registered groups
     const folderIsMain = new Map<string, boolean>();
+    const folderIsAdmin = new Map<string, boolean>();
     for (const group of Object.values(registeredGroups)) {
       if (group.isMain) folderIsMain.set(group.folder, true);
+      if (group.isAdmin) folderIsAdmin.set(group.folder, true);
     }
 
     for (const sourceGroup of groupFolders) {
       const isMain = folderIsMain.get(sourceGroup) === true;
+      const isAdmin = folderIsAdmin.get(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -591,7 +594,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 fs.unlinkSync(filePath);
               } else {
                 // Fire-and-forget pattern (existing behavior)
-                await processTaskIpc(data, sourceGroup, isMain, deps);
+                await processTaskIpc(data, sourceGroup, isMain, isAdmin, deps);
                 fs.unlinkSync(filePath);
               }
             } catch (err) {
@@ -863,6 +866,7 @@ export async function processTaskIpc(
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
+  isAdmin: boolean, // Verified from directory path — admin tier
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
@@ -1010,11 +1014,11 @@ export async function processTaskIpc(
       break;
 
     case 'register_group':
-      // Only main group can register new groups
-      if (!isMain) {
+      // Only admin group can register new groups
+      if (!isAdmin) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized register_group attempt blocked',
+          'Unauthorized register_group attempt blocked (admin only)',
         );
         break;
       }
@@ -1026,9 +1030,20 @@ export async function processTaskIpc(
           );
           break;
         }
-        // Defense in depth: agent cannot set isMain via IPC.
-        // Preserve isMain from the existing registration so IPC config
-        // updates (e.g. adding additionalMounts) don't strip the flag.
+        // Folder-collision pre-check: reject if folder is already used by a different JID
+        const folderConflict = Object.entries(registeredGroups).some(
+          ([jid, g]) => g.folder === data.folder && jid !== data.jid,
+        );
+        if (folderConflict) {
+          logger.warn(
+            { sourceGroup, folder: data.folder },
+            'register_group rejected — folder already used by another group',
+          );
+          break;
+        }
+        // Defense in depth: agent cannot set isMain or isAdmin via IPC.
+        // Preserve isMain/isAdmin from the existing registration so IPC config
+        // updates (e.g. adding additionalMounts) don't strip the flags.
         const existingGroup = registeredGroups[data.jid];
         deps.registerGroup(data.jid, {
           name: data.name,
@@ -1039,6 +1054,7 @@ export async function processTaskIpc(
           requiresTrigger: data.requiresTrigger,
           multiAgentRouter: data.multiAgentRouter,
           isMain: existingGroup?.isMain,
+          isAdmin: existingGroup?.isAdmin,
         });
       } else {
         logger.warn(

@@ -1160,6 +1160,7 @@ describe('TelegramChannel', () => {
             description: 'Force stop container (emergency)',
           },
           { command: 'stop', description: 'Stop current container' },
+          { command: 'context', description: 'Show context window usage' },
           {
             command: 'newsession',
             description: 'Write memories and start fresh session',
@@ -1196,6 +1197,7 @@ describe('TelegramChannel', () => {
             description: 'Force stop container (emergency)',
           },
           { command: 'stop', description: 'Stop current container' },
+          { command: 'context', description: 'Show context window usage' },
           { command: 'model', description: 'Switch model preset' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
@@ -1228,6 +1230,7 @@ describe('TelegramChannel', () => {
             description: 'Force stop container (emergency)',
           },
           { command: 'stop', description: 'Stop current container' },
+          { command: 'context', description: 'Show context window usage' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );

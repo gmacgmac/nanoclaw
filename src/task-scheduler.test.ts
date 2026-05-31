@@ -58,6 +58,40 @@ describe('task scheduler', () => {
     expect(task?.status).toBe('paused');
   });
 
+  it('pauses due tasks whose group is not found to prevent zombie retry loop', async () => {
+    createTask({
+      id: 'task-missing-group',
+      group_folder: 'removed-group',
+      chat_jid: 'removed@g.us',
+      prompt: 'run',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({}), // no groups registered — simulates removal
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const task = getTaskById('task-missing-group');
+    expect(task?.status).toBe('paused');
+  });
+
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {
     const scheduledTime = new Date(Date.now() - 2000).toISOString(); // 2s ago
     const task = {

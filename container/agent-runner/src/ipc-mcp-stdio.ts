@@ -21,6 +21,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const isAdmin = process.env.NANOCLAW_IS_ADMIN === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -434,12 +435,12 @@ server.tool(
   },
 );
 
-// Main-only tools: only register when this group is the main group.
-// Non-main groups never see these tools (defense-in-depth: handler also checks isMain).
-if (isMain) {
+// Admin-only tools: only register when this group is the admin group.
+// Non-admin groups never see these tools (defense-in-depth: handler also checks isAdmin).
+if (isAdmin) {
 server.tool(
   'register_group',
-  `Register a new chat/group so the agent can respond to messages there. Main group only.
+  `Register a new chat/group so the agent can respond to messages there. Admin group only.
 
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
   {
@@ -451,9 +452,9 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     multi_agent_router: z.boolean().optional().describe('When true on a main group: scan incoming messages for other groups\' triggers and auto-delegate. Only works if this group is main. Default: false.'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!isAdmin) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
+        content: [{ type: 'text' as const, text: 'Only the admin group can register new groups.' }],
         isError: true,
       };
     }
@@ -476,7 +477,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     };
   },
 );
-} // end isMain gate for register_group
+} // end isAdmin gate for register_group
 
 server.tool(
   'pause_task',

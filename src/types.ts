@@ -175,6 +175,7 @@ export interface RegisteredGroup {
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   multiAgentRouter?: boolean; // When true (main groups only): scan incoming messages for other groups' triggers and auto-delegate
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  isAdmin?: boolean; // True for the admin group (superset of main — owns register_group)
   containerChannel?: ContainerChannel; // Which image channel this group uses (default: 'stable')
 }
 
