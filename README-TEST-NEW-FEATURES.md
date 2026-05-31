@@ -234,3 +234,110 @@ No code changes — skill-only update. No container rebuild required.
   - Binaries: `agent-browser: ✗`
   - System: Main channel yes/no, group memory yes/no
 - **Why**: End-to-end smoke test that the report is accurate and not showing phantom tools.
+
+---
+
+# Testing: Extra-Mount CLAUDE.md Loading vs. Scanning (Injection Scanner Alignment)
+
+Validation plan for a proposed change: **stop eagerly loading `CLAUDE.md` from `additionalMounts` into the agent's context**, while keeping the host-side injection scanner as the protection layer. This is exploratory — we do **not** change production behaviour until the observations below confirm what actually loads.
+
+## Background — what we're trying to settle
+
+The host mounts external directories at `/workspace/extra/*` (siblings of the agent's cwd `/workspace/group`). Two separate mechanisms decide what enters context:
+
+1. **cwd directory tree** — the group's own `CLAUDE.md` + `@import` chain load eagerly at spawn; `CLAUDE.md` in **subdirectories under cwd** load lazily on navigation (`nested_traversal`).
+2. **Additional directories** — governed entirely by the env var `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`. Docs state add-dir `CLAUDE.md` is "not loaded" by default. Set to `1`, it loads `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` from each add-dir at session start.
+
+Because the extra mounts sit **outside** the cwd tree, our hypothesis is that mechanism #1's lazy navigation-load never reaches them — so `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` is the **only** path that pulls extra-mount `CLAUDE.md` into context. **If that hypothesis holds, setting the var to `0` disables eager AND on-navigation loading for extra mounts in one move.** This test exists to prove or disprove that.
+
+> The desired end state: extra-mount `CLAUDE.md` does not auto-inject (saves context, shrinks attack surface), the mount stays *accessible*, and the host scans it independently.
+
+## What the scanner covers today (be precise)
+
+The host scanner (`context-scanner.ts`) runs at **container spawn** and scans:
+
+- The group's own `CLAUDE.md` (cwd root)
+- `memory/*.md` in the group folder
+- `extra/<name>/CLAUDE.md` — the **mount-root** `CLAUDE.md` for each resolved additional mount (added in IMPL_02)
+
+Important nuance: the scanner does **not** parse `@import` directives. It scans `memory/*.md` directly, which covers the group's conventional `@memory/MEMORY.md` import **by coincidence of layout**, not by following imports. A group `CLAUDE.md` that imported `@docs/foo.md` would NOT have `foo.md` scanned today. Likewise, nested `extra/<name>/sub/CLAUDE.md` and any `@import` targets inside an extra-mount `CLAUDE.md` are **not** scanned. Closing those is the open design question.
+
+So: scanning continues regardless of the env var. Disabling eager loading does **not** blind the scanner — it still scans the group `CLAUDE.md` + memory + mount-root `CLAUDE.md` at spawn. What disabling changes is only what the **agent** auto-loads into context.
+
+## Should we disable `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`?
+
+**Not yet — we run the experiment first.** Disabling is the likely outcome, but only after we confirm (below) that `=0` truly closes every load path for extra-mount `CLAUDE.md`. If the tripwire shows a residual lazy-load path, we need to handle that before flipping it.
+
+When we do change it, leave the `additionalDirectories` SDK arg in place — that controls *access* to the mount, which we want to keep. Only the env var (instruction auto-loading) is in question.
+
+---
+
+## The Tripwire: `InstructionsLoaded` hook
+
+`InstructionsLoaded` fires whenever a `CLAUDE.md` / `.claude/rules/*.md` enters context, with a `load_reason` of `session_start`, `nested_traversal`, `path_glob_match`, `include` (= `@import`), or `compact`. It cannot block (observability only) — perfect for proving what loads. We register it with `matcher: "*"` to log `file_path`, `load_reason`, `trigger_file_path` for every instruction-file load.
+
+### Setup
+
+1. Pick a test group with at least one `additionalMount`. **`fin` is ideal — it already has a mount, so no extra setup.** Any group with a mount works; the choice is not significant.
+2. In the mount root, place a **benign marker** `CLAUDE.md` containing a unique string, e.g. `MARKER-MOUNT-ROOT-<rand>`.
+3. Add a nested marker: `<mount>/sub/CLAUDE.md` containing `MARKER-MOUNT-NESTED-<rand>`.
+4. Add an `@import` to the mount-root `CLAUDE.md`: `@./imported.md`, and create `<mount>/imported.md` with `MARKER-MOUNT-IMPORT-<rand>`.
+5. Register an `InstructionsLoaded` hook (matcher `*`) that appends `{load_reason, file_path}` to a host-readable log (see below).
+
+### Where the evidence lands
+
+Three independent evidence sources, all host-readable:
+
+| Source | Location | What it shows |
+|--------|----------|---------------|
+| **InstructionsLoaded tripwire** | Configure the hook (command type) to append JSONL to `groups/<group>/logs/instructions-loaded.jsonl` (or write to `>&2` so it lands in the container log below) | Ground truth: every instruction file that loads, with `load_reason` + `file_path` |
+| **agent-runner stderr** | `groups/<group>/logs/container-<timestamp>.log` (written on container exit; also live at `LOG_LEVEL=debug` via the host logger) | The `[agent-runner] Additional directories: ...` line confirms which mounts were passed to the SDK |
+| **Agent chat responses** | The group's chat channel directly | Whether the agent can actually *see* the `MARKER-MOUNT-*` strings |
+
+> The tripwire is the authoritative source. The chat responses are a coarse confirmation; the container log confirms the mount was wired. Cross-check all three.
+
+**Which group**: stated above — any group with a mount; `fin` recommended. The marker files go in whichever mount that group uses.
+
+### Run A — `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` (current behaviour, baseline)
+
+- Spawn the container (send any message to the group).
+- **Agent-testable**: Ask the agent: *"Without reading any files, repeat any text you see that starts with MARKER-MOUNT."* 
+  - **Expected (baseline)**: agent echoes `MARKER-MOUNT-ROOT` (and `MARKER-MOUNT-IMPORT` if imports expand). This confirms eager loading is happening.
+- **Observation**: tripwire log should show the mount-root `CLAUDE.md` with `load_reason: session_start`.
+
+### Run B — `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=0` (proposed behaviour)
+
+- Rebuild settings.json / respawn so the var is `0`.
+- **Agent-testable (eager check)**: Same prompt: *"Without reading any files, repeat any text starting with MARKER-MOUNT."*
+  - **Expected (hypothesis)**: agent sees **none** of the markers at session start. Tripwire log shows **no** extra-mount `CLAUDE.md` load at `session_start`.
+- **Agent-testable (navigation check)**: Now ask: *"List the files in /workspace/extra and read one file inside the mount."* — drive the agent to navigate into the mount.
+  - **Watch the tripwire**: does an extra-mount `CLAUDE.md` fire with `load_reason: nested_traversal` once the agent reads files there?
+  - **Expected (hypothesis)**: it does NOT fire — additional dirs are outside the cwd tree, so the lazy nested-load path doesn't apply. **This is the key observation.**
+  - **If it DOES fire**: we've found a residual load path; the env var alone is insufficient and we must handle navigation-time loading before disabling.
+
+### What each outcome means
+
+| Observation in Run B | Interpretation | Action |
+|---|---|---|
+| No mount `CLAUDE.md` loads at session_start OR on navigation | Hypothesis confirmed — `=0` fully closes extra-mount auto-loading | Safe to disable the var; design host scanner as detect-layer for mount content |
+| Loads on navigation (`nested_traversal`) | Residual lazy path exists for add-dirs | Do NOT rely on var alone; need watch/scan-before-navigate or block design |
+| Loads via `include` (@import) even at `=0` | Import expansion independent of the var | Must follow @import in scanner; reconsider |
+
+---
+
+## Direct-chat script (for the human driving the agent)
+
+Run in the test group, once per env-var value:
+
+1. "Repeat verbatim any text in your context that begins with `MARKER-MOUNT`. Do not read files — only what you already see."  → tests **eager** load
+2. "Now list `/workspace/extra/` and read one file inside the mount." → triggers potential **navigation** load
+3. "Again, repeat any text beginning with `MARKER-MOUNT` you can now see." → tests **post-navigation** load
+4. Host-side: capture the `InstructionsLoaded` tripwire log for the session and attach to the observations.
+
+## Decision gate
+
+Only after Run A + Run B observations are recorded do we decide:
+- **If hypothesis holds** → disable `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`, then design the host-side independent scanner (watch-based vs. periodic; detect-only vs. detect+kill) as a separate task.
+- **If a residual load path is found** → that path becomes the thing the new design must protect, before we disable anything.
+
+> No production change lands from this doc. It is a validation experiment whose output feeds the real implementation task.

@@ -8,13 +8,10 @@
  * Extracted from index.ts lines 431–510 (BE_04 scan block).
  */
 
-import path from 'path';
-
 import { scanContextFiles, InjectionScanMode } from './context-scanner.js';
 import { findChannel, routeOutbound } from '../router.js';
 import { getChannelList } from '../group-registry.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
-import { GROUPS_DIR } from '../config.js';
 import { logger, log } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 
@@ -26,7 +23,8 @@ export interface InjectionScanArgs {
   group: RegisteredGroup;
   chatJid: string;
   scanMode: InjectionScanMode;
-  isMain: boolean;
+  /** Resolved host paths for additional mounts (from validateAdditionalMounts) */
+  additionalMountPaths?: string[];
 }
 
 export interface InjectionScanOutcome {
@@ -40,16 +38,15 @@ export interface InjectionScanOutcome {
 export async function runInjectionScan(
   args: InjectionScanArgs,
 ): Promise<InjectionScanOutcome> {
-  const { group, chatJid, scanMode, isMain } = args;
+  const { group, chatJid, scanMode, additionalMountPaths } = args;
 
   if (scanMode === 'off') {
     return { proceed: true };
   }
 
   const groupFolderPath = resolveGroupFolderPath(group.folder);
-  const globalFolderPath = isMain ? undefined : path.join(GROUPS_DIR, 'global');
 
-  const scanResult = scanContextFiles(groupFolderPath, globalFolderPath);
+  const scanResult = scanContextFiles(groupFolderPath, additionalMountPaths);
 
   if (scanResult.clean) {
     return { proceed: true };

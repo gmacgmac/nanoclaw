@@ -63,7 +63,7 @@ export interface ContainerConfig {
 
   /**
    * Per-group system prompt (appended to the claude_code preset).
-   * undefined = use global/CLAUDE.md only (backward compat).
+   * undefined = use group CLAUDE.md only (backward compat).
    * This is the agent's "soul" — persona, instructions, constraints.
    */
   systemPrompt?: string;

@@ -8,7 +8,7 @@
 | Non-main groups | Untrusted | Other users may be malicious |
 | Container agents | Sandboxed | Isolated execution environment |
 | WhatsApp messages | User input | Potential prompt injection |
-| Context files (CLAUDE.md, memory) | Scanned | Injection scanner runs before container launch |
+| Context files (CLAUDE.md, memory, additionalMounts CLAUDE.md) | Scanned | Injection scanner runs before container launch |
 | Outbound web requests | Validated | SSRF protection blocks internal/metadata targets |
 | Shell commands (write mounts) | Gated | Command approval on by default for groups with write mounts |
 
@@ -116,7 +116,7 @@ Prevents agents from making outbound web requests to internal networks, cloud me
 
 ### 7. Prompt Injection Scanning
 
-Scans context files on the host **before** container launch. Detects patterns in CLAUDE.md, memory/*.md, and global/CLAUDE.md that could manipulate agent behaviour.
+Scans context files on the host **before** container launch. Detects patterns in CLAUDE.md, memory/*.md, and CLAUDE.md files in additionalMounts directories that could manipulate agent behaviour.
 
 **Critical patterns detected:** instruction override attempts, credential exfiltration via curl/wget, secret file reads, base64-encoded command execution, Claude Code settings.json override.
 

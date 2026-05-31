@@ -188,7 +188,8 @@ Four memory layers:
 1. Claude Code built-in system prompt (`claude_code` preset)
 2. `containerConfig.systemPrompt` (appended to preset prompt)
 3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md`
-4. Session transcript (if resuming an existing session)
+4. `CLAUDE.md` in `additionalDirectories` (extra mounts, auto-loaded by SDK via `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`)
+5. Session transcript (if resuming an existing session)
 
 ## Skills
 
@@ -220,7 +221,7 @@ Each group gets a `CLAUDE.md` that defines its personality, rules, and capabilit
 - `scheduling_` — date/time awareness, task management
 - `builder_` — code, git, deployment patterns
 
-**Templates**: `groups/global/CLAUDE.md` (non-main) and `groups/main/CLAUDE.md` (main) serve as starting points. The `/customize-claude-md` skill layers snippets on top of these.
+**Templates**: `docs/prompt-behaviours/template-group.md` (non-main) and `docs/prompt-behaviours/template-main.md` (main) serve as starting points. The `/customize-claude-md` skill layers snippets on top of these.
 
 ## Multi-Agent Routing
 

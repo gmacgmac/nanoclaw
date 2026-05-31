@@ -39,13 +39,6 @@ describe('Per-Group Skill Isolation', () => {
       fs.writeFileSync(path.join(skillPath, 'SKILL.md'), `# ${skill} skill`);
     }
 
-    // Create global dir
-    const globalDir = path.join(groupsDir, 'global');
-    fs.mkdirSync(globalDir, { recursive: true });
-    fs.mkdirSync(path.join(globalDir, 'categories'), { recursive: true });
-    fs.mkdirSync(path.join(globalDir, 'projects'), { recursive: true });
-    fs.writeFileSync(path.join(globalDir, 'CLAUDE.md'), '# Global memory');
-
     originalCwd = process.cwd();
   });
 

@@ -237,7 +237,7 @@ if (TELEGRAM_BOT_POOL.length > 0) {
 
 #### 5a. Add formatting skill to Telegram groups
 
-Do NOT add formatting rules directly to `groups/global/CLAUDE.md` — this causes duplication and drift. Instead, ensure the `telegram-formatting` skill is included in each Telegram group's `containerConfig.skills` (handled in the `/add-telegram` skill, Phase 6).
+Do NOT add formatting rules directly to the group template — this causes duplication and drift. Instead, ensure the `telegram-formatting` skill is included in each Telegram group's `containerConfig.skills` (handled in the `/add-telegram` skill, Phase 6).
 
 For each Telegram group's `CLAUDE.md`, add response delivery behaviour only:
 
@@ -248,7 +248,7 @@ If you call send_message, wrap any follow-up text in <internal> tags so it is no
 <internal>Done.</internal>
 ```
 
-For each Telegram group that will use agent teams, create or update its `groups/{folder}/CLAUDE.md` with these instructions. Read the existing CLAUDE.md first (or `groups/global/CLAUDE.md` as a base) and add the Agent Teams section:
+For each Telegram group that will use agent teams, create or update its `groups/{folder}/CLAUDE.md` with these instructions. Read the existing CLAUDE.md first (or `docs/prompt-behaviours/template-group.md` as a base) and add the Agent Teams section:
 
 ```markdown
 ## Agent Teams

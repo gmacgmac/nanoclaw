@@ -187,8 +187,8 @@ Preserve all custom content (persona, core tenets, domain sections) that isn't i
 
 If `docs/prompt-behaviours/` is absent (e.g. a different repo without the library), fall back to copying a template as the base:
 
-- **Main groups**: copy `groups/main/CLAUDE.md`
-- **Non-main groups**: copy `groups/global/CLAUDE.md`
+- **Main groups**: copy `docs/prompt-behaviours/template-main.md`
+- **Non-main groups**: copy `docs/prompt-behaviours/template-group.md`
 
 Then customise the persona and add domain-specific content. Mention that the snippet library enables more granular control and offer to set it up.
 

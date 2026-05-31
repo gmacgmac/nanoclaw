@@ -21,6 +21,7 @@ import {
   runContainerAgent,
   writeGroupsSnapshot,
 } from './container-runner.js';
+import { validateAdditionalMounts } from './mount-security.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -374,11 +375,25 @@ async function runAgent(
   try {
     // --- Prompt injection scanning (BE_04) ---
     const scanMode = containerConfig.injectionScanMode ?? 'warn';
+
+    // Resolve extra-mount host paths for scanning (same validation as buildVolumeMounts)
+    let additionalMountPaths: string[] | undefined;
+    if (group.containerConfig?.additionalMounts?.length) {
+      const validated = validateAdditionalMounts(
+        group.containerConfig.additionalMounts,
+        group.name,
+        isMain,
+      );
+      if (validated.length > 0) {
+        additionalMountPaths = validated.map((m) => m.hostPath);
+      }
+    }
+
     const { proceed } = await runInjectionScan({
       group,
       chatJid,
       scanMode,
-      isMain,
+      additionalMountPaths,
     });
     if (!proceed) return 'error';
 

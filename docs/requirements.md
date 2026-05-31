@@ -96,7 +96,7 @@ A personal Claude assistant accessible via messaging channels (Telegram, WhatsAp
 - **Per-group memory**: Each group has a folder with its own `CLAUDE.md` and a `memory/` directory
 - **Three memory layers**: Session transcript (`.jsonl`), `MEMORY.md` (durable facts), and `CLAUDE.md` (instructions/personality)
 - `MEMORY.md` is loaded via an `@import` directive in CLAUDE.md — the SDK expands it at container spawn time
-- There is no global CLAUDE.md loaded at runtime — `groups/global/CLAUDE.md` exists as a template for new groups
+- There is no global CLAUDE.md loaded at runtime — `docs/prompt-behaviours/template-group.md` exists as a template for new groups
 - Agent runs in the group's folder at `/workspace/group`, loading only that group's CLAUDE.md
 
 ### Session Management

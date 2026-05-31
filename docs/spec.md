@@ -380,7 +380,7 @@ nanoclaw/
 │       └── qodo-pr-resolver/          # /qodo-pr-resolver - Qodo PR review
 │
 ├── groups/
-│   ├── CLAUDE.md                  # Global memory (all groups read this)
+│   ├── CLAUDE.md                  # Bootstrap template (copied at group creation, not loaded at runtime)
 │   ├── {channel}_main/             # Main control channel (e.g., whatsapp_main/)
 │   │   ├── CLAUDE.md              # Main channel memory
 │   │   └── logs/                  # Task execution logs
@@ -472,7 +472,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as JSON in th
 | `skills` | `string[]` | `undefined` = none | Per-group skill selection |
 | `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
-| `systemPrompt` | `string` | `undefined` = global CLAUDE.md | Appended after `claude_code` preset + global CLAUDE.md |
+| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
@@ -572,8 +572,8 @@ Use the `/model` host command (requires `allowedHostCommands: ['model']`) to swi
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | Use global/CLAUDE.md only (for non-main groups) |
-| `"You are X..."` | Appended after `claude_code` preset + global CLAUDE.md |
+| `undefined` / absent | No additional system prompt |
+| `"You are X..."` | Appended after `claude_code` preset prompt |
 
 #### `additionalMounts` — Extra Host Directories
 
@@ -1123,7 +1123,7 @@ Channel messages could contain malicious instructions attempting to manipulate C
 - Agents can only access their group's mounted directories
 - Main can configure additional directories per group
 - Claude's built-in safety training
-- **Prompt injection scanner** scans context files (CLAUDE.md, memory/*.md) before container launch — detects instruction overrides, credential exfiltration, obfuscated payloads. Configurable via `containerConfig.injectionScanMode` (`off`/`warn`/`block`).
+- **Prompt injection scanner** scans context files (CLAUDE.md, memory/*.md, and CLAUDE.md in additionalMounts directories) before container launch — detects instruction overrides, credential exfiltration, obfuscated payloads. Configurable via `containerConfig.injectionScanMode` (`off`/`warn`/`block`).
 
 **Recommendations:**
 - Only register trusted groups

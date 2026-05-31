@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { ASSISTANT_NAME, GROUPS_DIR } from './config.js';
+import { ASSISTANT_NAME, TEMPLATES_DIR } from './config.js';
 import type { AvailableGroup } from './container-runner.js';
 import { getAllChats, setRegisteredGroup, storeChatMetadata } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -81,9 +81,8 @@ export function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
     const templateFile = path.join(
-      GROUPS_DIR,
-      group.isMain ? 'main' : 'global',
-      'CLAUDE.md',
+      TEMPLATES_DIR,
+      group.isMain ? 'template-main.md' : 'template-group.md',
     );
     if (fs.existsSync(templateFile)) {
       let content = fs.readFileSync(templateFile, 'utf-8');

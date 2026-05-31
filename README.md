@@ -234,7 +234,8 @@ The `memory/` directory is created automatically during group registration, alon
 1. Claude Code built-in system prompt (`claude_code` preset)
 2. `containerConfig.systemPrompt` (appended to preset prompt)
 3. `CLAUDE.md` in the group folder (auto-loaded by SDK from `cwd`) — includes `@import` of `MEMORY.md`
-4. Session transcript (if resuming an existing session)
+4. `CLAUDE.md` in `additionalDirectories` (extra mounts, auto-loaded by SDK via `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`)
+5. Session transcript (if resuming an existing session)
 
 ### Image Vision
 
@@ -1150,7 +1151,7 @@ Config pipeline: `containerConfig.ssrfProtection` → `buildContainerArgs()` ser
 
 Scans context files on the host before container launch. Detects patterns that could manipulate agent behaviour via poisoned memory or CLAUDE.md files.
 
-**What it scans:** `CLAUDE.md`, `memory/*.md` (MEMORY.md, daily notes), and `global/CLAUDE.md` — discovered by `discoverContextFiles()` in `src/lib/context-scanner.ts`. Files are truncated at 100KB for scanning.
+**What it scans:** `CLAUDE.md`, `memory/*.md` (MEMORY.md, daily notes), and `CLAUDE.md` files in configured `additionalMounts` directories — discovered by `discoverContextFiles()` in `src/lib/context-scanner.ts`. Files are truncated at 100KB for scanning.
 
 **Detection patterns (critical):**
 - Instruction override attempts ("ignore previous instructions", "you are now", "new instructions")
@@ -1267,8 +1268,6 @@ Enables agents to extract reusable patterns from successful sessions and persist
 $NANOCLAW_ROOT/
 ├── .env                             ← timezone and non-secret config
 ├── groups/                          ← group folders (mounted into containers)
-│   ├── main/CLAUDE.md               ← main group personality
-│   ├── global/CLAUDE.md             ← shared context (non-main groups)
 │   ├── dashboard/
 │   └── telegram_main/
 │       ├── CLAUDE.md                ← group personality (includes @import for memory)
@@ -1354,7 +1353,7 @@ After registering a group, create these files:
 
 #### 1. `groups/{folder}/CLAUDE.md`
 
-Use the global template (`groups/global/CLAUDE.md`) as the base for non-main groups. Use the main template (`groups/main/CLAUDE.md`) for main groups. The key sections that MUST be present:
+Use the group template (`docs/prompt-behaviours/template-group.md`) as the base for non-main groups. Use the main template (`docs/prompt-behaviours/template-main.md`) for main groups. These are bootstrap templates — they are copied at group creation time and not loaded at runtime. The key sections that MUST be present:
 
 - Agent identity and personality
 - Response delivery paths (text output vs `send_message`)
@@ -1399,7 +1398,7 @@ For a new non-main group:
 ```bash
 FOLDER="telegram_mygroup"
 mkdir -p groups/$FOLDER/memory
-cp groups/global/CLAUDE.md groups/$FOLDER/CLAUDE.md
+cp docs/prompt-behaviours/template-group.md groups/$FOLDER/CLAUDE.md
 echo "# Memory" > groups/$FOLDER/memory/MEMORY.md
 ```
 

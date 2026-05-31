@@ -268,12 +268,12 @@ If missing, copy the appropriate template:
 
 - For main groups (registered with `--is-main`):
   ```bash
-  cp groups/main/CLAUDE.md groups/<folder>/CLAUDE.md
+  cp docs/prompt-behaviours/template-main.md groups/<folder>/CLAUDE.md
   ```
 
 - For non-main groups:
   ```bash
-  cp groups/global/CLAUDE.md groups/<folder>/CLAUDE.md
+  cp docs/prompt-behaviours/template-group.md groups/<folder>/CLAUDE.md
   ```
 
 After copying, tell the user: "Created `groups/<folder>/CLAUDE.md` from the template. Run `/customize-claude-md <folder>` to build a tailored CLAUDE.md using the prompt-behaviours snippet library, or edit the file manually."
