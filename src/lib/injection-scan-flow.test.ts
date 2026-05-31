@@ -333,89 +333,89 @@ describe('runInjectionScan', () => {
   });
 });
 
-  // -------------------------------------------------------------------------
-  // 10. additionalMountPaths passed to scanContextFiles
-  // -------------------------------------------------------------------------
-  it('passes additionalMountPaths to scanContextFiles', async () => {
-    mockScanContextFiles.mockReturnValue({
-      clean: true,
-      hasCritical: false,
-      findings: [],
-      scannedFiles: ['CLAUDE.md', 'extra/my-repo/CLAUDE.md'],
-      skippedFiles: [],
-    });
-
-    const mountPaths = ['/home/user/projects/my-repo'];
-    await runInjectionScan(
-      makeArgs({
-        scanMode: 'warn',
-        additionalMountPaths: mountPaths,
-      }),
-    );
-
-    expect(mockScanContextFiles).toHaveBeenCalledWith(
-      '/fake/groups/test-group',
-      mountPaths,
-    );
+// -------------------------------------------------------------------------
+// 10. additionalMountPaths passed to scanContextFiles
+// -------------------------------------------------------------------------
+it('passes additionalMountPaths to scanContextFiles', async () => {
+  mockScanContextFiles.mockReturnValue({
+    clean: true,
+    hasCritical: false,
+    findings: [],
+    scannedFiles: ['CLAUDE.md', 'extra/my-repo/CLAUDE.md'],
+    skippedFiles: [],
   });
 
-  // -------------------------------------------------------------------------
-  // 11. additionalMountPaths findings trigger block mode
-  // -------------------------------------------------------------------------
-  it('blocks on critical findings from extra mount CLAUDE.md', async () => {
-    const findings = [
-      makeFinding({
-        severity: 'critical',
-        file: 'extra/poisoned-repo/CLAUDE.md',
-        line: 1,
-      }),
-    ];
-    mockScanContextFiles.mockReturnValue({
-      clean: false,
-      hasCritical: true,
-      findings,
-      scannedFiles: ['CLAUDE.md', 'extra/poisoned-repo/CLAUDE.md'],
-      skippedFiles: [],
-    });
+  const mountPaths = ['/home/user/projects/my-repo'];
+  await runInjectionScan(
+    makeArgs({
+      scanMode: 'warn',
+      additionalMountPaths: mountPaths,
+    }),
+  );
 
-    const mockChannel = {
-      isConnected: () => true,
-      sendMessage: vi.fn().mockResolvedValue(undefined),
-    };
-    mockGetChannelList.mockReturnValue([mockChannel]);
-    mockFindChannel.mockReturnValue(mockChannel);
+  expect(mockScanContextFiles).toHaveBeenCalledWith(
+    '/fake/groups/test-group',
+    mountPaths,
+  );
+});
 
-    const result = await runInjectionScan(
-      makeArgs({
-        scanMode: 'block',
-        additionalMountPaths: ['/home/user/projects/poisoned-repo'],
-      }),
-    );
-
-    expect(result).toEqual({ proceed: false });
-    expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ group: 'TestGroup' }),
-      expect.stringContaining('blocked container launch'),
-    );
+// -------------------------------------------------------------------------
+// 11. additionalMountPaths findings trigger block mode
+// -------------------------------------------------------------------------
+it('blocks on critical findings from extra mount CLAUDE.md', async () => {
+  const findings = [
+    makeFinding({
+      severity: 'critical',
+      file: 'extra/poisoned-repo/CLAUDE.md',
+      line: 1,
+    }),
+  ];
+  mockScanContextFiles.mockReturnValue({
+    clean: false,
+    hasCritical: true,
+    findings,
+    scannedFiles: ['CLAUDE.md', 'extra/poisoned-repo/CLAUDE.md'],
+    skippedFiles: [],
   });
 
-  // -------------------------------------------------------------------------
-  // 12. undefined additionalMountPaths works (backward compat)
-  // -------------------------------------------------------------------------
-  it('works without additionalMountPaths (backward compat)', async () => {
-    mockScanContextFiles.mockReturnValue({
-      clean: true,
-      hasCritical: false,
-      findings: [],
-      scannedFiles: ['CLAUDE.md'],
-      skippedFiles: [],
-    });
+  const mockChannel = {
+    isConnected: () => true,
+    sendMessage: vi.fn().mockResolvedValue(undefined),
+  };
+  mockGetChannelList.mockReturnValue([mockChannel]);
+  mockFindChannel.mockReturnValue(mockChannel);
 
-    const result = await runInjectionScan(makeArgs({ scanMode: 'warn' }));
+  const result = await runInjectionScan(
+    makeArgs({
+      scanMode: 'block',
+      additionalMountPaths: ['/home/user/projects/poisoned-repo'],
+    }),
+  );
 
-    expect(result).toEqual({ proceed: true });
-    expect(mockScanContextFiles).toHaveBeenCalledWith(
-      '/fake/groups/test-group',
-      undefined,
-    );
+  expect(result).toEqual({ proceed: false });
+  expect(log.error).toHaveBeenCalledWith(
+    expect.objectContaining({ group: 'TestGroup' }),
+    expect.stringContaining('blocked container launch'),
+  );
+});
+
+// -------------------------------------------------------------------------
+// 12. undefined additionalMountPaths works (backward compat)
+// -------------------------------------------------------------------------
+it('works without additionalMountPaths (backward compat)', async () => {
+  mockScanContextFiles.mockReturnValue({
+    clean: true,
+    hasCritical: false,
+    findings: [],
+    scannedFiles: ['CLAUDE.md'],
+    skippedFiles: [],
   });
+
+  const result = await runInjectionScan(makeArgs({ scanMode: 'warn' }));
+
+  expect(result).toEqual({ proceed: true });
+  expect(mockScanContextFiles).toHaveBeenCalledWith(
+    '/fake/groups/test-group',
+    undefined,
+  );
+});

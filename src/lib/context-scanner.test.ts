@@ -423,7 +423,6 @@ describe('scanContextFiles — extra mount paths', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // parseImportRefs
 // ---------------------------------------------------------------------------
@@ -581,10 +580,7 @@ describe('resolveImports', () => {
 
   it('skips import targets outside the group folder (traversal guard)', () => {
     // Import tries to escape: @../../etc/passwd
-    fs.writeFileSync(
-      path.join(groupDir, 'CLAUDE.md'),
-      '@../../etc/passwd\n',
-    );
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), '@../../etc/passwd\n');
 
     const visited = new Set<string>();
     visited.add(fs.realpathSync(path.join(groupDir, 'CLAUDE.md')));
@@ -601,10 +597,7 @@ describe('resolveImports', () => {
   });
 
   it('records missing import targets as skipped without throwing', () => {
-    fs.writeFileSync(
-      path.join(groupDir, 'CLAUDE.md'),
-      '@./nonexistent.md\n',
-    );
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), '@./nonexistent.md\n');
 
     const visited = new Set<string>();
     visited.add(fs.realpathSync(path.join(groupDir, 'CLAUDE.md')));
@@ -660,8 +653,8 @@ describe('scanContextFiles — @import following', () => {
 
     const result = scanContextFiles(groupDir);
     // memory/MEMORY.md should appear once (as direct discovery), not also as imported:
-    const memoryEntries = result.scannedFiles.filter(
-      (f) => f.includes('MEMORY.md'),
+    const memoryEntries = result.scannedFiles.filter((f) =>
+      f.includes('MEMORY.md'),
     );
     expect(memoryEntries).toHaveLength(1);
     expect(memoryEntries[0]).toBe(path.join('memory', 'MEMORY.md'));
@@ -701,7 +694,11 @@ describe('scanContextFiles — @import following', () => {
   it('existing tests still pass — no regression to group/memory behaviour', () => {
     // Standard group with CLAUDE.md + memory — no imports
     writeFile(groupDir, 'CLAUDE.md', '# Agent\nYou are helpful.\n');
-    writeFile(groupDir, 'memory/MEMORY.md', '# Memory\nUser likes dark mode.\n');
+    writeFile(
+      groupDir,
+      'memory/MEMORY.md',
+      '# Memory\nUser likes dark mode.\n',
+    );
 
     const result = scanContextFiles(groupDir);
     expect(result.clean).toBe(true);

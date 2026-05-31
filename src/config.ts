@@ -35,7 +35,11 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
 export const HOME_DIR = process.env.HOME || os.homedir();
-export const TEMPLATES_DIR = path.resolve(PROJECT_ROOT, 'docs', 'prompt-behaviours');
+export const TEMPLATES_DIR = path.resolve(
+  PROJECT_ROOT,
+  'docs',
+  'prompt-behaviours',
+);
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(

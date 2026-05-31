@@ -58,7 +58,9 @@ export function parseImportRefs(content: string): string[] {
   for (const line of content.split('\n')) {
     // Match @path tokens: @ followed by a relative or absolute path
     // Skip @-mentions that look like usernames (no path separators, no extensions)
-    const matches = line.matchAll(/@(\.{0,2}\/[^\s]+|\/[^\s]+|[^\s]+\.[a-zA-Z]+)/g);
+    const matches = line.matchAll(
+      /@(\.{0,2}\/[^\s]+|\/[^\s]+|[^\s]+\.[a-zA-Z]+)/g,
+    );
     for (const m of matches) {
       refs.push(m[1]);
     }
@@ -120,7 +122,10 @@ export function resolveImports(
     const normalizedGroup = fs.existsSync(groupFolderPath)
       ? fs.realpathSync(groupFolderPath)
       : path.resolve(groupFolderPath);
-    if (!realTarget.startsWith(normalizedGroup + path.sep) && realTarget !== normalizedGroup) {
+    if (
+      !realTarget.startsWith(normalizedGroup + path.sep) &&
+      realTarget !== normalizedGroup
+    ) {
       skipped.push(ref);
       continue;
     }
@@ -138,7 +143,13 @@ export function resolveImports(
     resolved.push(realTarget);
 
     // Recurse into this import's own imports
-    const nested = resolveImports(realTarget, groupFolderPath, depth + 1, visited, skipped);
+    const nested = resolveImports(
+      realTarget,
+      groupFolderPath,
+      depth + 1,
+      visited,
+      skipped,
+    );
     resolved.push(...nested);
   }
 
@@ -213,7 +224,13 @@ export function discoverContextFiles(
     }
 
     const skipped: string[] = [];
-    const importTargets = resolveImports(claudeMdPath, groupFolderPath, 0, visited, skipped);
+    const importTargets = resolveImports(
+      claudeMdPath,
+      groupFolderPath,
+      0,
+      visited,
+      skipped,
+    );
 
     // Normalize group folder for relative path computation (handles symlinks like /var → /private/var on macOS)
     const normalizedGroupFolder = fs.existsSync(groupFolderPath)
