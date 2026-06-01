@@ -1115,7 +1115,7 @@ describe('register_group success', () => {
         name: 'Admin Group',
         folder: 'whatsapp_admin',
         trigger: '@Andy',
-        containerConfig: { additionalMounts: ['/extra'] },
+        containerConfig: { additionalMounts: [{ hostPath: '/extra' }] },
       },
       'whatsapp_admin',
       true,
