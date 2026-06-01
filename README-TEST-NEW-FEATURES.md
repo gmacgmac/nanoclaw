@@ -4,7 +4,7 @@ Practical test plan for the features introduced in the `feat(task-scheduler)` ba
 
 ---
 
-## 1. Runtime State (BE_01) — zero risk
+## 1. Runtime State (BE_01) — ✅ PASSED (2026-06-01)
 
 - Schedule a task with `next_run` a few minutes out
 - Call `list_tasks` — should show no annotation (idle)
@@ -12,17 +12,21 @@ Practical test plan for the features introduced in the `feat(task-scheduler)` ba
 - Start a chat in the same group so the container is active, then call `list_tasks` — expect `[blocked]`
 - Let the chat idle out, watch the task fire — call `get_task` mid-run if you're fast enough to see `Runtime State: running`
 
+**Observations**: All states confirmed on `testgroup_main`. idle → blocked (caught via `list tasks` while container active) → fired. ~1min delay expected (60s poll + container idle wait). `running` state not catchable via Telegram (container busy); terminal DB watch used instead.
+
 ---
 
-## 2. Audit Trail (BE_02) — low risk
+## 2. Audit Trail (BE_02) — ✅ PASSED (2026-06-01)
 
 - Run any task normally
 - After it completes, `get_task` should show the run in history with `status: success` and a `duration_ms`
 - Check the DB directly if you want: `SELECT * FROM task_run_logs ORDER BY id DESC LIMIT 5` — you should see `started` → `success` transitions (no lingering `started` rows)
 
+**Observations**: `get task` confirmed `status: completed`, `last_run` populated, `last_result` present. No lingering `started` rows.
+
 ---
 
-## 3. Crash Recovery (BE_02 + BE_03) — medium risk, do on a test group
+## 3. Crash Recovery (BE_02 + BE_03) — ✅ PASSED (2026-06-01)
 
 This is the interesting one:
 
@@ -35,9 +39,11 @@ This is the interesting one:
    - The task's `next_run` should already be advanced to the future (not re-triggering)
    - The task should fire again at its next scheduled time normally
 
+**Observations**: All checks passed on `testgroup_main`. Alert delivered on restart. `task_run_logs` shows `error | Host stopped mid-run`. Task was `once` type so `next_run` is null and status remains `active` — no re-trigger.
+
 ---
 
-## 4. Graceful Shutdown (BE_04) — medium risk
+## 4. Graceful Shutdown (BE_04) — ✅ PASSED (2026-06-01)
 
 1. Have a task running (or a chat container active)
 2. Send `SIGTERM` to the host (normal `kill <pid>` or Ctrl+C)
@@ -48,12 +54,16 @@ This is the interesting one:
    - Clean `process.exit(0)`
 4. Test the escape hatch: start shutdown, then hit Ctrl+C again — should exit immediately
 
+**Observations**: Must run via `node dist/index.js` directly — `npm start` causes double SIGINT (npm re-sends to process group), which triggers the escape hatch immediately. With direct node: single Ctrl+C → `GroupQueue shutting down` → `All containers exited cleanly` → all bots stopped → clean exit (~2.5s). In-flight message was not delivered — expected, container got `_close` mid-turn.
+
 ---
 
-## 5. Double-signal escape (BE_04) — low risk
+## 5. Double-signal escape (BE_04) — ✅ PASSED (2026-06-01)
 
 - Start the host, Ctrl+C once (graceful starts), Ctrl+C again immediately
 - Should see instant exit without waiting the 30s
+
+**Observations**: Confirmed via `npm start` (which naturally double-signals). Saw `Second signal received — forcing immediate exit` immediately after graceful shutdown initiated.
 
 ---
 
