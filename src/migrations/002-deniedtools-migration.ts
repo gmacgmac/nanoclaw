@@ -62,9 +62,7 @@ export function runDeniedToolsMigration(): void {
   const groupEntries = Object.entries(groups);
 
   if (groupEntries.length === 0) {
-    logger.info(
-      'No registered groups — migration complete (nothing to do)',
-    );
+    logger.info('No registered groups — migration complete (nothing to do)');
     fs.writeFileSync(MARKER_FILE, new Date().toISOString());
     return;
   }

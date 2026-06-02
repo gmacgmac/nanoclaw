@@ -18,7 +18,15 @@ vi.mock('./config.js', () => ({
   HOME_DIR: '/tmp/nanoclaw-test-home',
   IDLE_TIMEOUT: 1800000, // 30min
   TIMEZONE: 'America/Los_Angeles',
-  loadToolAllowlist: () => ['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'WebSearch', 'WebFetch'],
+  loadToolAllowlist: () => [
+    'Bash',
+    'Read',
+    'Write',
+    'Edit',
+    'MultiEdit',
+    'WebSearch',
+    'WebFetch',
+  ],
 }));
 
 // Mock logger

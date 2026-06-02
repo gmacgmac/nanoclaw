@@ -55,12 +55,17 @@ export function resolveSpawnConfig(
   const group = dbGroup ?? cacheGroup;
 
   if (!group) {
-    logger.warn({ chatJid }, 'resolveSpawnConfig: group not found in DB or cache');
+    logger.warn(
+      { chatJid },
+      'resolveSpawnConfig: group not found in DB or cache',
+    );
     return null;
   }
 
   // Strip the `jid` field that the DB getter adds (RegisteredGroup doesn't have it)
-  const { jid: _jid, ...groupWithoutJid } = group as RegisteredGroup & { jid?: string };
+  const { jid: _jid, ...groupWithoutJid } = group as RegisteredGroup & {
+    jid?: string;
+  };
   const cleanGroup: RegisteredGroup = groupWithoutJid;
 
   // Validate containerConfig — log warnings, use safe defaults

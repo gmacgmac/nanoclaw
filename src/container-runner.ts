@@ -405,7 +405,10 @@ function buildContainerArgs(
 
   // Tool governance env vars — consumed by agent-runner's allowlist-ceiling resolution.
   // Read fresh per-spawn so edits to tool-allowlist.json and deniedTools take effect live.
-  args.push('-e', `NANOCLAW_TOOL_ALLOWLIST=${JSON.stringify(loadToolAllowlist())}`);
+  args.push(
+    '-e',
+    `NANOCLAW_TOOL_ALLOWLIST=${JSON.stringify(loadToolAllowlist())}`,
+  );
   args.push(
     '-e',
     `NANOCLAW_DENIED_TOOLS=${JSON.stringify(group.containerConfig?.deniedTools ?? [])}`,

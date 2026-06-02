@@ -335,7 +335,12 @@ async function runAgent(
     return 'error';
   }
 
-  const { group: freshGroup, containerConfig, preset, effectiveAllowedTools } = spawnConfig;
+  const {
+    group: freshGroup,
+    containerConfig,
+    preset,
+    effectiveAllowedTools,
+  } = spawnConfig;
   const isMain = freshGroup.isMain === true;
   const isAdmin = freshGroup.isAdmin === true;
   const sessionId = sessions[freshGroup.folder];
@@ -909,14 +914,17 @@ async function main(): Promise<void> {
                 return;
               }
 
-              const { group: freshGroup, containerConfig, preset, effectiveAllowedTools } = spawnConfig;
+              const {
+                group: freshGroup,
+                containerConfig,
+                preset,
+                effectiveAllowedTools,
+              } = spawnConfig;
 
               const output = await runContainerAgent(
                 freshGroup,
                 {
-                  prompt: getNightlyNudgePrompt(
-                    containerConfig.learningLoop,
-                  ),
+                  prompt: getNightlyNudgePrompt(containerConfig.learningLoop),
                   sessionId: sessions[freshGroup.folder],
                   groupFolder: freshGroup.folder,
                   chatJid,

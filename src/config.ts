@@ -260,9 +260,7 @@ export function loadToolAllowlist(): string[] {
     }
 
     // Validate every entry is a non-empty string
-    const valid = tools.every(
-      (t) => typeof t === 'string' && t.length > 0,
-    );
+    const valid = tools.every((t) => typeof t === 'string' && t.length > 0);
     if (!valid) {
       logger.warn(
         { path: TOOL_ALLOWLIST_PATH },
