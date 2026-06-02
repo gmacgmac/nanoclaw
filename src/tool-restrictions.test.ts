@@ -101,13 +101,20 @@ interface ResolutionInput {
  * Pure-function mirror of the agent-runner's ceiling resolution.
  * Identical logic — testable without process.env mutation.
  */
-function resolveTools(input: ResolutionInput): { tools: string[]; allowedTools: string[] } {
+function resolveTools(input: ResolutionInput): {
+  tools: string[];
+  allowedTools: string[];
+} {
   // Parse ceiling
   let ceiling: string[];
   try {
     if (input.ceilingEnv) {
       const parsed = JSON.parse(input.ceilingEnv);
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((t: unknown) => typeof t === 'string')) {
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((t: unknown) => typeof t === 'string')
+      ) {
         ceiling = parsed;
       } else {
         ceiling = FALLBACK_CATALOG;
@@ -128,7 +135,7 @@ function resolveTools(input: ResolutionInput): { tools: string[]; allowedTools: 
   }
 
   // Resolve: ceiling minus all denies
-  const resolved = ceiling.filter(t => !denySet.has(t));
+  const resolved = ceiling.filter((t) => !denySet.has(t));
   return {
     tools: resolved,
     allowedTools: [...resolved, 'mcp__nanoclaw__*'],
@@ -604,5 +611,3 @@ describe('BE_04: agent-browser binary mounting', () => {
     expect(binMount?.hostPath).toContain('linux-x64');
   });
 });
-
-

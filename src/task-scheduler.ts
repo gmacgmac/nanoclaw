@@ -183,11 +183,7 @@ async function runTask(
     return;
   }
 
-  const {
-    group: freshGroup,
-    containerConfig,
-    preset,
-  } = spawnConfig;
+  const { group: freshGroup, containerConfig, preset } = spawnConfig;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();

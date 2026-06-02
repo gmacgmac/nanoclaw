@@ -335,11 +335,7 @@ async function runAgent(
     return 'error';
   }
 
-  const {
-    group: freshGroup,
-    containerConfig,
-    preset,
-  } = spawnConfig;
+  const { group: freshGroup, containerConfig, preset } = spawnConfig;
   const isMain = freshGroup.isMain === true;
   const isAdmin = freshGroup.isAdmin === true;
   const sessionId = sessions[freshGroup.folder];
