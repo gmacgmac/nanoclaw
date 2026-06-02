@@ -16,6 +16,8 @@ groups/*
 *.keys.json
 .env
 
+# tool-allowlist.json is intentionally TRACKED (security ceiling) — do not ignore
+
 # Prompt behaviour snippets (operational IP, not public — remove after de-fork)
 # docs/prompt-behaviours/
 

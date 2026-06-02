@@ -59,7 +59,6 @@ import {
 } from './group-registry.js';
 import { checkApprovalResponse, startIpcWatcher } from './ipc.js';
 import { getNightlyNudgePrompt } from './lib/nudge-prompt.js';
-import { validateContainerConfig } from './lib/config-validator.js';
 import { runInjectionScan } from './lib/injection-scan-flow.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -89,6 +88,7 @@ import {
   isHubMessage,
 } from './multi-agent-router.js';
 import { runPresetMigration } from './migrations/001-preset-migration.js';
+import { runDeniedToolsMigration } from './migrations/002-deniedtools-migration.js';
 import {
   getAvailablePresetNames,
   loadPresets,
@@ -97,6 +97,7 @@ import {
 } from './presets.js';
 import { EncodedImage } from './image.js';
 import { extractImagesFromMessages } from './lib/image-extraction.js';
+import { resolveSpawnConfig } from './spawn-config.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -327,21 +328,17 @@ async function runAgent(
   images: EncodedImage[],
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
-  const isMain = group.isMain === true;
-  const isAdmin = group.isAdmin === true;
-  const sessionId = sessions[group.folder];
-
-  // Validate containerConfig — log warnings for invalid values, use safe defaults
-  const { config: validatedConfig, warnings: configWarnings } =
-    validateContainerConfig(group.containerConfig);
-  for (const w of configWarnings) {
-    logger.warn(
-      { group: group.name, field: w.field, fallback: w.fallback },
-      `containerConfig validation: ${w.message}`,
-    );
+  // --- Per-spawn config resolution (single chokepoint) ---
+  const spawnConfig = resolveSpawnConfig(chatJid);
+  if (!spawnConfig) {
+    logger.error({ chatJid }, 'resolveSpawnConfig returned null — group gone');
+    return 'error';
   }
-  // Use validated config for the rest of this function
-  const containerConfig = validatedConfig;
+
+  const { group: freshGroup, containerConfig, preset, effectiveAllowedTools } = spawnConfig;
+  const isMain = freshGroup.isMain === true;
+  const isAdmin = freshGroup.isAdmin === true;
+  const sessionId = sessions[freshGroup.folder];
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
@@ -354,7 +351,7 @@ async function runAgent(
     }),
   );
   writeGroupsSnapshot(
-    group.folder,
+    freshGroup.folder,
     isMain,
     availableGroups,
     registeredGroupsList,
@@ -366,8 +363,8 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          sessions[freshGroup.folder] = output.newSessionId;
+          setSession(freshGroup.folder, output.newSessionId);
         }
         await onOutput(output);
       }
@@ -379,10 +376,10 @@ async function runAgent(
 
     // Resolve extra-mount host paths for scanning (same validation as buildVolumeMounts)
     let additionalMountPaths: string[] | undefined;
-    if (group.containerConfig?.additionalMounts?.length) {
+    if (freshGroup.containerConfig?.additionalMounts?.length) {
       const validated = validateAdditionalMounts(
-        group.containerConfig.additionalMounts,
-        group.name,
+        freshGroup.containerConfig.additionalMounts,
+        freshGroup.name,
         isMain,
       );
       if (validated.length > 0) {
@@ -391,7 +388,7 @@ async function runAgent(
     }
 
     const { proceed } = await runInjectionScan({
-      group,
+      group: freshGroup,
       chatJid,
       scanMode,
       additionalMountPaths,
@@ -399,52 +396,39 @@ async function runAgent(
     if (!proceed) return 'error';
 
     // Debug: log allowedTools being passed to container
-    if (containerConfig.allowedTools) {
+    if (effectiveAllowedTools) {
       logger.info(
-        { group: group.name, allowedTools: containerConfig.allowedTools },
+        { group: freshGroup.name, allowedTools: effectiveAllowedTools },
         'Passing allowedTools to container',
       );
     }
 
-    // Tool swapping: when approvalMode is active (default), remove Bash so the agent
-    // uses mcp__nanoclaw__execute_command instead (which has approval checks).
-    let effectiveAllowedTools = containerConfig.allowedTools;
-    if (containerConfig.approvalMode !== false && effectiveAllowedTools) {
-      effectiveAllowedTools = effectiveAllowedTools.filter((t) => t !== 'Bash');
-      logger.info(
-        { group: group.name },
-        'approvalMode active — Bash replaced with execute_command',
-      );
-    }
-
-    const resolved = resolvePreset(group.containerConfig?.preset);
-
-    if (!resolved) {
+    if (!preset) {
       logger.warn(
-        { group: group.name, preset: group.containerConfig?.preset },
+        { group: freshGroup.name, preset: freshGroup.containerConfig?.preset },
         'Preset resolution failed, container not spawned',
       );
       return 'error';
     }
 
     const output = await runContainerAgent(
-      group,
+      freshGroup,
       {
         prompt,
         sessionId,
-        groupFolder: group.folder,
+        groupFolder: freshGroup.folder,
         chatJid,
         isMain,
         isAdmin,
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
         allowedTools: effectiveAllowedTools,
-        model: resolved.model,
+        model: preset.model,
         systemPrompt: containerConfig.systemPrompt,
         mcpServers: containerConfig.mcpServers,
-        endpoint: resolved.endpoint,
-        webSearchVendor: resolved.webSearchVendor,
-        contextWindowSize: resolved.contextWindow,
+        endpoint: preset.endpoint,
+        webSearchVendor: preset.webSearchVendor,
+        contextWindowSize: preset.contextWindow,
         learningLoop: containerConfig.learningLoop,
         approvalTimeout: containerConfig.approvalTimeout,
         commandAllowlist: containerConfig.commandAllowlist,
@@ -452,7 +436,7 @@ async function runAgent(
         images: images.length > 0 ? images : undefined,
       },
       (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+        queue.registerProcess(chatJid, proc, containerName, freshGroup.folder),
       wrappedOnOutput,
     );
 
@@ -460,13 +444,13 @@ async function runAgent(
     // Post-exit actions in the queue drain AFTER this function returns,
     // so /newsession's clearSessionState correctly overwrites this write.
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      sessions[freshGroup.folder] = output.newSessionId;
+      setSession(freshGroup.folder, output.newSessionId);
     }
 
     if (output.status === 'error') {
       logger.error(
-        { group: group.name, error: output.error },
+        { group: freshGroup.name, error: output.error },
         'Container agent error',
       );
       return 'error';
@@ -689,6 +673,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   runPresetMigration();
+  runDeniedToolsMigration();
   loadState();
   restoreRemoteControl();
 
@@ -913,39 +898,39 @@ async function main(): Promise<void> {
           const taskId = `nightly-nudge-${group.folder}-${Date.now()}`;
           queue.enqueueTask(chatJid, taskId, async () => {
             try {
-              const nightlyResolved = resolvePreset(
-                group.containerConfig?.preset,
-              );
-
-              if (!nightlyResolved) {
+              // --- Per-spawn config resolution (single chokepoint) ---
+              const spawnConfig = resolveSpawnConfig(chatJid);
+              if (!spawnConfig || !spawnConfig.preset) {
                 logger.warn(
-                  { group: group.name, preset: group.containerConfig?.preset },
-                  'Preset resolution failed, nightly nudge skipped',
+                  { group: group.name, chatJid },
+                  'resolveSpawnConfig failed or preset missing, nightly nudge skipped',
                 );
                 resolve(false);
                 return;
               }
 
+              const { group: freshGroup, containerConfig, preset, effectiveAllowedTools } = spawnConfig;
+
               const output = await runContainerAgent(
-                group,
+                freshGroup,
                 {
                   prompt: getNightlyNudgePrompt(
-                    group.containerConfig?.learningLoop,
+                    containerConfig.learningLoop,
                   ),
-                  sessionId: sessions[group.folder],
-                  groupFolder: group.folder,
+                  sessionId: sessions[freshGroup.folder],
+                  groupFolder: freshGroup.folder,
                   chatJid,
-                  isMain: group.isMain === true,
-                  isAdmin: group.isAdmin === true,
+                  isMain: freshGroup.isMain === true,
+                  isAdmin: freshGroup.isAdmin === true,
                   assistantName: ASSISTANT_NAME,
-                  allowedTools: group.containerConfig?.allowedTools,
-                  model: nightlyResolved.model,
-                  systemPrompt: group.containerConfig?.systemPrompt,
-                  mcpServers: group.containerConfig?.mcpServers,
-                  endpoint: nightlyResolved.endpoint,
-                  webSearchVendor: nightlyResolved.webSearchVendor,
-                  contextWindowSize: nightlyResolved.contextWindow,
-                  learningLoop: group.containerConfig?.learningLoop,
+                  allowedTools: effectiveAllowedTools,
+                  model: preset.model,
+                  systemPrompt: containerConfig.systemPrompt,
+                  mcpServers: containerConfig.mcpServers,
+                  endpoint: preset.endpoint,
+                  webSearchVendor: preset.webSearchVendor,
+                  contextWindowSize: preset.contextWindow,
+                  learningLoop: containerConfig.learningLoop,
                   nudgeInterval: 0,
                 },
                 (proc, containerName) =>
@@ -953,21 +938,21 @@ async function main(): Promise<void> {
                     chatJid,
                     proc,
                     containerName,
-                    group.folder,
+                    freshGroup.folder,
                   ),
                 async (streamedOutput: ContainerOutput) => {
                   // Track session ID from streamed results.
                   // Post-exit actions in the queue guarantee /newsession correctness.
                   if (streamedOutput.newSessionId) {
-                    sessions[group.folder] = streamedOutput.newSessionId;
-                    setSession(group.folder, streamedOutput.newSessionId);
+                    sessions[freshGroup.folder] = streamedOutput.newSessionId;
+                    setSession(freshGroup.folder, streamedOutput.newSessionId);
                   }
                 },
               );
 
               if (output.status === 'error') {
                 logger.error(
-                  { group: group.name, error: output.error },
+                  { group: freshGroup.name, error: output.error },
                   'Nightly nudge container error',
                 );
                 resolve(false);

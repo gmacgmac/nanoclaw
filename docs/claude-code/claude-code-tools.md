@@ -31,12 +31,14 @@
 | Agent teams | `TeamCreate` | Spawn sub-agent team | Yes (within container) |
 | Agent teams | `TeamDelete` | Delete agent team | Yes (within container) |
 | Agent teams | `SendMessage` | Send message to sub-agent | Yes (within container) |
-| Agent teams | `Agent` | Invoke sub-agent | Yes (within container) |
+| Agent teams | `Task` ¹ | Invoke sub-agent (see note) | Yes (within container) |
 | Skills | `Skill` | Invoke SDK skill | Yes |
-| Skills | `RemoteTrigger` | Trigger remote skill | Yes |
 | User | `AskUserQuestion` | Prompt user for input | Yes (SDK internal) |
-| Misc | `TodoWrite` | Write todo items | Yes |
 | Misc | `ToolSearch` | Search available tools | Yes |
+
+> ¹ **`Task` / `Agent` naming split** (SDK ≥ v2.1.63): The subagent tool is registered in the `system:init` tools list (and therefore in `tool-allowlist.json` and `deniedTools`) as **`Task`**. However, the SDK emits **`Agent`** in `tool_use` blocks at invocation time. These are the same tool. The ceiling and `deniedTools` must reference **`Task`** to gate subagent spawning — empirically confirmed 2026-06-02 on SDK 0.3.147 (denying `Task` removed the `Agent` capability entirely).
+>
+> **`RemoteTrigger`** and **`TodoWrite`** are not in the ceiling (`tool-allowlist.json`) and are permanently blocked for all groups. They appeared in earlier SDK versions and are excluded by design.
 
 ## WebSearch & WebFetch — Anthropic Only
 

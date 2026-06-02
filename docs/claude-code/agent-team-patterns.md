@@ -33,6 +33,8 @@ The Agent SDK supports two patterns for spawning subagents **within a single con
 | **Solo Agent** | Executes initial prompt immediately | Independent tasks, parallel work | ✅ Works |
 | **Team Agent** | Waits for mailbox messages | Dynamic coordination | ❌ Broken in SDK mode |
 
+> **`Task` / `Agent` naming note**: The subagent tool is listed in the ceiling (`tool-allowlist.json`) and `deniedTools` as **`Task`**, but the model invokes it as **`Agent`** in tool_use blocks. They are the same tool (renamed in SDK v2.1.63). To enable subagent spawning, `Task` must be in the ceiling and not in `deniedTools`. To block it per-group, add `"Task"` to that group's `deniedTools`. Empirically confirmed 2026-06-02 on SDK 0.3.147.
+
 ---
 
 ### Pattern 1: Solo Agents

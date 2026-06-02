@@ -95,32 +95,43 @@ let turnsSinceLastNudge = 0;
 // Module-level flag to prevent repeated threshold nudges in a single session
 let thresholdNudgedThisSession = false;
 
-// All known tools (SDK + claude_code preset built-ins).
+// Verified tool catalog fallback (SDK 0.3.147).
+// Used only when NANOCLAW_TOOL_ALLOWLIST env var is absent or invalid.
 // Update this list when upgrading the Claude Agent SDK.
-// Source of truth: agentic-tools/nanoclaw/README.md tool reference table.
-const ALL_KNOWN_TOOLS = [
-  // File operations
-  'Read', 'Write', 'Edit', 'Glob', 'Grep',
-  // Execution
-  'Bash', 'NotebookEdit',
-  // Web
-  'WebSearch', 'WebFetch',
-  // Planning
-  'EnterPlanMode', 'ExitPlanMode',
-  // Tasks
-  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TaskOutput',
-  // Scheduling
-  'CronCreate', 'CronDelete', 'CronList',
-  // Git/Worktree
-  'EnterWorktree', 'ExitWorktree',
-  // Agent teams
-  'TeamCreate', 'TeamDelete', 'SendMessage',
-  // Agent & Skills
-  'Agent', 'Skill', 'RemoteTrigger',
-  // User interaction
+// Source of truth: repo/tool-allowlist.json (maintained via sdk-upgrade rediscovery procedure).
+const FALLBACK_CATALOG = [
   'AskUserQuestion',
-  // Misc
-  'TodoWrite', 'ToolSearch',
+  'Bash',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'Edit',
+  'EnterPlanMode',
+  'EnterWorktree',
+  'ExitPlanMode',
+  'ExitWorktree',
+  'Glob',
+  'Grep',
+  'Monitor',
+  'NotebookEdit',
+  'PushNotification',
+  'Read',
+  'ScheduleWakeup',
+  'SendMessage',
+  'Skill',
+  'Task',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'TaskUpdate',
+  'TeamCreate',
+  'TeamDelete',
+  'ToolSearch',
+  'WebFetch',
+  'WebSearch',
+  'Write',
 ];
 
 /**
@@ -512,32 +523,67 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Use per-group tools if configured, otherwise a secure default set.
+  // --- Allowlist-ceiling tool resolution ---
+  // The container is the authoritative gate. Resolution model:
+  //   ceiling   = NANOCLAW_TOOL_ALLOWLIST env (JSON array) ?? FALLBACK_CATALOG
+  //   resolved  = ceiling − deniedTools − Bash(if approvalMode) − WebSearch/WebFetch(if !nativeWebTools)
+  //   options.tools = resolved (the real gate — constrains preset-injected CLI tools too)
+  //   options.allowedTools = [...resolved, 'mcp__nanoclaw__*'] (auto-approve under bypassPermissions)
   // mcp__nanoclaw__* is always included so IPC works regardless of config.
-  //
-  // Default set excludes:
-  // - WebSearch/WebFetch: Anthropic-only, non-functional on Ollama. Use nanoclaw-web-search MCP.
-  // - Bash: When approvalMode is active, agents use mcp__nanoclaw__execute_command instead
-  //   (which has approval checks for write-mounted paths). Bash is only included in the
-  //   default set when approval mode is explicitly disabled.
+
   const approvalMode = process.env.NANOCLAW_APPROVAL_MODE === 'true';
-  const defaultTools = ALL_KNOWN_TOOLS.filter(t => {
-    if (t === 'WebSearch' || t === 'WebFetch') return false;
-    if (t === 'Bash' && approvalMode) return false;
-    return true;
-  });
+  const nativeWebTools = process.env.NANOCLAW_NATIVE_WEB_TOOLS === 'true';
 
-  const tools = containerInput.allowedTools
-    ? [...containerInput.allowedTools, 'mcp__nanoclaw__*']
-    : [...defaultTools, 'mcp__nanoclaw__*'];
+  // Parse ceiling from host-injected env var
+  let ceiling: string[];
+  try {
+    const raw = process.env.NANOCLAW_TOOL_ALLOWLIST;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((t: unknown) => typeof t === 'string')) {
+        ceiling = parsed;
+      } else {
+        log('NANOCLAW_TOOL_ALLOWLIST invalid — using FALLBACK_CATALOG');
+        ceiling = FALLBACK_CATALOG;
+      }
+    } else {
+      log('NANOCLAW_TOOL_ALLOWLIST absent — using FALLBACK_CATALOG');
+      ceiling = FALLBACK_CATALOG;
+    }
+  } catch {
+    log('NANOCLAW_TOOL_ALLOWLIST parse error — using FALLBACK_CATALOG');
+    ceiling = FALLBACK_CATALOG;
+  }
 
-  // Compute disallowedTools as the complement of allowedTools.
-  // The SDK's allowedTools only filters SDK-registered tools; preset-injected CLI tools
-  // (Agent, CronCreate, EnterPlanMode, etc.) bypass it. disallowedTools blocks everything.
-  // mcp__nanoclaw__* is never disallowed — IPC must always work.
-  const disallowedTools = containerInput.allowedTools
-    ? ALL_KNOWN_TOOLS.filter(t => !tools.includes(t))
-    : ALL_KNOWN_TOOLS.filter(t => !defaultTools.includes(t));
+  // Parse per-group denied tools
+  let deniedTools: string[] = [];
+  try {
+    const raw = process.env.NANOCLAW_DENIED_TOOLS;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        deniedTools = parsed.filter((t: unknown) => typeof t === 'string');
+      }
+    }
+  } catch {
+    log('NANOCLAW_DENIED_TOOLS parse error — ignoring');
+  }
+
+  // Build denied set (hard rules + per-group)
+  const denySet = new Set<string>(deniedTools);
+  if (approvalMode) denySet.add('Bash');
+  if (!nativeWebTools) {
+    denySet.add('WebSearch');
+    denySet.add('WebFetch');
+  }
+
+  // Resolve: ceiling minus all denies
+  const resolved = ceiling.filter(t => !denySet.has(t));
+
+  // options.tools = resolved (the authoritative gate)
+  // options.allowedTools = resolved + IPC wildcard (auto-approve)
+  const tools = resolved;
+  const allowedTools = [...resolved, 'mcp__nanoclaw__*'];
 
   // Apply model override if configured
   if (containerInput.model) {
@@ -579,8 +625,8 @@ async function runQuery(
         systemPrompt: appendPrompt
           ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendPrompt }
           : undefined,
-        allowedTools: tools,
-        disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
+        allowedTools: allowedTools,
+        tools: tools,
         env: sdkEnv,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,

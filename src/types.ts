@@ -151,6 +151,14 @@ export interface ContainerConfig {
    * - 'extract-only' → extract skills during nudge but do NOT load into next session (review before enabling full loop)
    */
   learningLoop?: boolean | 'extract-only';
+
+  /**
+   * Per-group denied tools — subtracted from the system allowlist ceiling
+   * (tool-allowlist.json). undefined/absent → [] (deny nothing extra).
+   * Hard security rules (Bash under approvalMode, web tools without
+   * nativeWebTools) are enforced separately and are NOT overridable here.
+   */
+  deniedTools?: string[];
 }
 
 export type ContainerChannel = 'stable' | 'next';

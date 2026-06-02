@@ -160,6 +160,32 @@ export function validateContainerConfig(
     config.learningLoop = false;
   }
 
+  // --- deniedTools ---
+  if (config.deniedTools !== undefined) {
+    if (!Array.isArray(config.deniedTools)) {
+      warnings.push({
+        field: 'deniedTools',
+        message: 'Must be an array of tool name strings',
+        fallback: [],
+      });
+      config.deniedTools = [];
+    } else {
+      const validTools: string[] = [];
+      for (const tool of config.deniedTools) {
+        if (typeof tool === 'string' && tool.length > 0) {
+          validTools.push(tool);
+        } else {
+          warnings.push({
+            field: 'deniedTools',
+            message: `Non-string or empty entry skipped: ${JSON.stringify(tool)}`,
+            fallback: '(skipped)',
+          });
+        }
+      }
+      config.deniedTools = validTools;
+    }
+  }
+
   // --- ssrfProtection ---
   if (config.ssrfProtection !== undefined) {
     if (typeof config.ssrfProtection === 'boolean') {

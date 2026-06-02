@@ -1,7 +1,9 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
+import { logger } from './logger.js';
 import { isValidTimezone } from './timezone.js';
 
 // Read config values from .env (falls back to process.env).
@@ -177,3 +179,111 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+// --- Tool Allowlist Ceiling ---
+
+// Path to the tracked allowlist file (repo root).
+export const TOOL_ALLOWLIST_PATH = path.resolve(
+  process.cwd(),
+  'tool-allowlist.json',
+);
+
+/**
+ * Hardcoded fallback: the verified 32-tool catalog from SDK 0.3.147.
+ * Used when tool-allowlist.json is missing, unreadable, or invalid.
+ */
+export const VERIFIED_CATALOG: string[] = [
+  'Task',
+  'AskUserQuestion',
+  'Bash',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'Edit',
+  'EnterPlanMode',
+  'EnterWorktree',
+  'ExitPlanMode',
+  'ExitWorktree',
+  'Glob',
+  'Grep',
+  'Monitor',
+  'NotebookEdit',
+  'PushNotification',
+  'Read',
+  'ScheduleWakeup',
+  'SendMessage',
+  'Skill',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'TaskUpdate',
+  'TeamCreate',
+  'TeamDelete',
+  'ToolSearch',
+  'WebFetch',
+  'WebSearch',
+  'Write',
+];
+
+/**
+ * Load the tool allowlist ceiling from tool-allowlist.json.
+ * Reads fresh on each call (no module-load cache) — supports per-spawn use.
+ *
+ * Fallback: returns VERIFIED_CATALOG with a warning if the file is missing,
+ * unreadable, or contains invalid data. Never fails-open (all tools) or
+ * fails-closed (no tools).
+ */
+export function loadToolAllowlist(): string[] {
+  try {
+    const raw = fs.readFileSync(TOOL_ALLOWLIST_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (typeof parsed !== 'object' || parsed === null) {
+      logger.warn(
+        { path: TOOL_ALLOWLIST_PATH },
+        'tool-allowlist.json is not an object — using VERIFIED_CATALOG fallback',
+      );
+      return VERIFIED_CATALOG;
+    }
+
+    const obj = parsed as Record<string, unknown>;
+    const tools = obj.tools;
+
+    if (!Array.isArray(tools) || tools.length === 0) {
+      logger.warn(
+        { path: TOOL_ALLOWLIST_PATH },
+        'tool-allowlist.json "tools" is missing, not an array, or empty — using VERIFIED_CATALOG fallback',
+      );
+      return VERIFIED_CATALOG;
+    }
+
+    // Validate every entry is a non-empty string
+    const valid = tools.every(
+      (t) => typeof t === 'string' && t.length > 0,
+    );
+    if (!valid) {
+      logger.warn(
+        { path: TOOL_ALLOWLIST_PATH },
+        'tool-allowlist.json "tools" contains non-string entries — using VERIFIED_CATALOG fallback',
+      );
+      return VERIFIED_CATALOG;
+    }
+
+    return tools as string[];
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      logger.warn(
+        { path: TOOL_ALLOWLIST_PATH },
+        'tool-allowlist.json not found — using VERIFIED_CATALOG fallback',
+      );
+    } else {
+      logger.warn(
+        { err, path: TOOL_ALLOWLIST_PATH },
+        'Failed to load tool-allowlist.json — using VERIFIED_CATALOG fallback',
+      );
+    }
+    return VERIFIED_CATALOG;
+  }
+}

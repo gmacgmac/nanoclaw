@@ -19,8 +19,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { resolvePreset } from './presets.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+import { resolveSpawnConfig } from './spawn-config.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -170,8 +170,20 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  const isMain = group.isMain === true;
-  const isAdmin = group.isAdmin === true;
+  // --- Per-spawn config resolution (single chokepoint) ---
+  const spawnConfig = resolveSpawnConfig(task.chat_jid);
+  if (!spawnConfig) {
+    error = 'resolveSpawnConfig returned null — group config unavailable';
+    logger.error({ taskId: task.id, chatJid: task.chat_jid }, error);
+    updateTaskRunLog(runLogId, {
+      status: 'error',
+      error,
+      duration_ms: Date.now() - startTime,
+    });
+    return;
+  }
+
+  const { group: freshGroup, containerConfig, preset, effectiveAllowedTools } = spawnConfig;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -193,15 +205,14 @@ async function runTask(
   };
 
   try {
-    const resolved = resolvePreset(group.containerConfig?.preset);
-    if (!resolved) {
-      const presetName = group.containerConfig?.preset ?? '(none)';
+    if (!preset) {
+      const presetName = freshGroup.containerConfig?.preset ?? '(none)';
       error = `Preset '${presetName}' not found, task container not spawned`;
       logger.warn(
         {
           taskId: task.id,
-          group: group.name,
-          preset: group.containerConfig?.preset,
+          group: freshGroup.name,
+          preset: freshGroup.containerConfig?.preset,
         },
         'Preset resolution failed, task container not spawned',
       );
@@ -214,16 +225,24 @@ async function runTask(
     }
 
     const output = await runContainerAgent(
-      group,
+      freshGroup,
       {
         prompt: substitutePromptVars(task.prompt),
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain,
-        isAdmin,
+        isMain: freshGroup.isMain === true,
+        isAdmin: freshGroup.isAdmin === true,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        allowedTools: effectiveAllowedTools,
+        model: preset.model,
+        systemPrompt: containerConfig.systemPrompt,
+        mcpServers: containerConfig.mcpServers,
+        endpoint: preset.endpoint,
+        webSearchVendor: preset.webSearchVendor,
+        contextWindowSize: preset.contextWindow,
+        learningLoop: containerConfig.learningLoop,
         script: task.script || undefined,
       },
       (proc, containerName) =>

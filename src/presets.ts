@@ -15,6 +15,12 @@ export interface ModelCapabilities {
   vision: boolean;
   thinking?: boolean;
   tools?: boolean;
+  /**
+   * Native WebSearch/WebFetch execute server-side at the provider
+   * (Anthropic/Bedrock-hosted Claude). Default false — non-Anthropic
+   * endpoints must use the nanoclaw-web-search MCP.
+   */
+  nativeWebTools?: boolean;
 }
 
 export interface ModelPreset {
@@ -70,6 +76,8 @@ function validateCapabilities(
     vision: obj.vision,
     thinking: typeof obj.thinking === 'boolean' ? obj.thinking : undefined,
     tools: typeof obj.tools === 'boolean' ? obj.tools : undefined,
+    nativeWebTools:
+      typeof obj.nativeWebTools === 'boolean' ? obj.nativeWebTools : undefined,
   };
 }
 

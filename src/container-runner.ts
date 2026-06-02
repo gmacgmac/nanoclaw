@@ -14,6 +14,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
+  loadToolAllowlist,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -123,7 +124,7 @@ function buildVolumeMounts(group: RegisteredGroup): VolumeMount[] {
         autoCompactWindow,
         env: {
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '0',
           CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
           ANTHROPIC_MODEL: resolved?.model ?? '',
         },
@@ -400,6 +401,17 @@ function buildContainerArgs(
       )
       .map((m) => m.containerPath);
     args.push('-e', `NANOCLAW_WRITE_MOUNTS=${JSON.stringify(writeMountPaths)}`);
+  }
+
+  // Tool governance env vars — consumed by agent-runner's allowlist-ceiling resolution.
+  // Read fresh per-spawn so edits to tool-allowlist.json and deniedTools take effect live.
+  args.push('-e', `NANOCLAW_TOOL_ALLOWLIST=${JSON.stringify(loadToolAllowlist())}`);
+  args.push(
+    '-e',
+    `NANOCLAW_DENIED_TOOLS=${JSON.stringify(group.containerConfig?.deniedTools ?? [])}`,
+  );
+  if (resolvedPreset?.capabilities?.nativeWebTools === true) {
+    args.push('-e', 'NANOCLAW_NATIVE_WEB_TOOLS=true');
   }
 
   // Run as host user so bind-mounted files are accessible.
