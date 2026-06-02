@@ -187,7 +187,6 @@ async function runTask(
     group: freshGroup,
     containerConfig,
     preset,
-    effectiveAllowedTools,
   } = spawnConfig;
 
   // For group context mode, use the group's current session
@@ -240,7 +239,6 @@ async function runTask(
         isAdmin: freshGroup.isAdmin === true,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
-        allowedTools: effectiveAllowedTools,
         model: preset.model,
         systemPrompt: containerConfig.systemPrompt,
         mcpServers: containerConfig.mcpServers,

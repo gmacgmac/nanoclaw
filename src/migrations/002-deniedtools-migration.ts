@@ -87,7 +87,8 @@ export function runDeniedToolsMigration(): void {
       continue;
     }
 
-    const updatedConfig = { ...group.containerConfig };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updatedConfig: Record<string, any> = { ...group.containerConfig };
 
     // Add deniedTools: [] if absent
     if (updatedConfig.deniedTools === undefined) {
@@ -98,11 +99,11 @@ export function runDeniedToolsMigration(): void {
     // Remove phantom tools from allowedTools
     if (
       updatedConfig.allowedTools &&
-      updatedConfig.allowedTools.some((t) => PHANTOM_TOOLS.has(t))
+      updatedConfig.allowedTools.some((t: string) => PHANTOM_TOOLS.has(t))
     ) {
       const before = updatedConfig.allowedTools.length;
       updatedConfig.allowedTools = updatedConfig.allowedTools.filter(
-        (t) => !PHANTOM_TOOLS.has(t),
+        (t: string) => !PHANTOM_TOOLS.has(t),
       );
       const removed = before - updatedConfig.allowedTools.length;
       logger.info(

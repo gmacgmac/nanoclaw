@@ -1,6 +1,10 @@
 /**
- * VERIFY_01: Logic tests for tool restrictions, Brave Search MCP injection,
- * and agent-browser binary mounting (BE_01, BE_03, BE_04).
+ * Tool-governance tests: ceiling-model resolution, Brave Search MCP injection,
+ * and agent-browser binary mounting.
+ *
+ * The ceiling-model resolution mirrors agent-runner/src/index.ts:
+ *   resolved = ceiling − deniedTools − Bash(if approvalMode) − WebSearch/WebFetch(if !nativeWebTools)
+ *   allowedTools = [...resolved, 'mcp__nanoclaw__*']
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
@@ -8,130 +12,284 @@ import path from 'path';
 import os from 'os';
 
 // ---------------------------------------------------------------------------
-// BE_01: disallowedTools complement computation
+// Ceiling-model tool resolution (mirrors agent-runner/src/index.ts)
 // ---------------------------------------------------------------------------
 
-// Mirror of ALL_KNOWN_TOOLS from agent-runner/src/index.ts
-const ALL_KNOWN_TOOLS = [
-  'Read',
-  'Write',
-  'Edit',
-  'Glob',
-  'Grep',
+/** Matches the FALLBACK_CATALOG in agent-runner/src/index.ts */
+const FALLBACK_CATALOG = [
+  'AskUserQuestion',
   'Bash',
-  'NotebookEdit',
-  'WebSearch',
-  'WebFetch',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'TaskCreate',
-  'TaskGet',
-  'TaskList',
-  'TaskUpdate',
-  'TaskStop',
-  'TaskOutput',
   'CronCreate',
   'CronDelete',
   'CronList',
+  'Edit',
+  'EnterPlanMode',
   'EnterWorktree',
+  'ExitPlanMode',
   'ExitWorktree',
+  'Glob',
+  'Grep',
+  'Monitor',
+  'NotebookEdit',
+  'PushNotification',
+  'Read',
+  'ScheduleWakeup',
+  'SendMessage',
+  'Skill',
+  'Task',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'TaskUpdate',
   'TeamCreate',
   'TeamDelete',
-  'SendMessage',
-  'Agent',
-  'Skill',
-  'RemoteTrigger',
-  'AskUserQuestion',
-  'TodoWrite',
   'ToolSearch',
+  'WebFetch',
+  'WebSearch',
+  'Write',
 ];
 
-/** Mirrors the disallowedTools logic in agent-runner/src/index.ts */
-function computeDisallowedTools(allowedTools: string[] | undefined): string[] {
-  if (!allowedTools) return [];
-  const tools = [...allowedTools, 'mcp__nanoclaw__*'];
-  return ALL_KNOWN_TOOLS.filter((t) => !tools.includes(t));
+/** The ceiling from tool-allowlist.json (same items, different order) */
+const TOOL_ALLOWLIST_CEILING = [
+  'Task',
+  'AskUserQuestion',
+  'Bash',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'Edit',
+  'EnterPlanMode',
+  'EnterWorktree',
+  'ExitPlanMode',
+  'ExitWorktree',
+  'Glob',
+  'Grep',
+  'Monitor',
+  'NotebookEdit',
+  'PushNotification',
+  'Read',
+  'ScheduleWakeup',
+  'SendMessage',
+  'Skill',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'TaskUpdate',
+  'TeamCreate',
+  'TeamDelete',
+  'ToolSearch',
+  'WebSearch',
+  'Write',
+];
+
+interface ResolutionInput {
+  /** JSON array string or undefined (simulates NANOCLAW_TOOL_ALLOWLIST env var) */
+  ceilingEnv?: string;
+  /** Per-group denied tools (simulates NANOCLAW_DENIED_TOOLS env var content) */
+  deniedTools?: string[];
+  /** Whether approval mode is active */
+  approvalMode?: boolean;
+  /** Whether native web tools are enabled */
+  nativeWebTools?: boolean;
 }
 
-describe('BE_01: disallowedTools complement', () => {
-  it('returns empty array when allowedTools is undefined (no restrictions)', () => {
-    expect(computeDisallowedTools(undefined)).toEqual([]);
-  });
-
-  it('blocks all tools when allowedTools is empty array', () => {
-    const disallowed = computeDisallowedTools([]);
-    expect(disallowed).toEqual(ALL_KNOWN_TOOLS);
-    expect(disallowed).toContain('WebSearch');
-    expect(disallowed).toContain('WebFetch');
-    expect(disallowed).toContain('Agent');
-    expect(disallowed).toContain('Bash');
-  });
-
-  it('blocks only tools not in allowedTools', () => {
-    const allowed = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
-    const disallowed = computeDisallowedTools(allowed);
-
-    // Allowed tools must NOT appear in disallowed
-    for (const t of allowed) {
-      expect(disallowed).not.toContain(t);
+/**
+ * Pure-function mirror of the agent-runner's ceiling resolution.
+ * Identical logic — testable without process.env mutation.
+ */
+function resolveTools(input: ResolutionInput): { tools: string[]; allowedTools: string[] } {
+  // Parse ceiling
+  let ceiling: string[];
+  try {
+    if (input.ceilingEnv) {
+      const parsed = JSON.parse(input.ceilingEnv);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((t: unknown) => typeof t === 'string')) {
+        ceiling = parsed;
+      } else {
+        ceiling = FALLBACK_CATALOG;
+      }
+    } else {
+      ceiling = FALLBACK_CATALOG;
     }
+  } catch {
+    ceiling = FALLBACK_CATALOG;
+  }
 
-    // Non-allowed tools MUST appear in disallowed
-    expect(disallowed).toContain('WebSearch');
-    expect(disallowed).toContain('WebFetch');
-    expect(disallowed).toContain('Agent');
-    expect(disallowed).toContain('CronCreate');
-    expect(disallowed).toContain('EnterPlanMode');
+  // Build deny set
+  const denySet = new Set<string>(input.deniedTools ?? []);
+  if (input.approvalMode) denySet.add('Bash');
+  if (!input.nativeWebTools) {
+    denySet.add('WebSearch');
+    denySet.add('WebFetch');
+  }
+
+  // Resolve: ceiling minus all denies
+  const resolved = ceiling.filter(t => !denySet.has(t));
+  return {
+    tools: resolved,
+    allowedTools: [...resolved, 'mcp__nanoclaw__*'],
+  };
+}
+
+describe('Ceiling-model tool resolution', () => {
+  it('ceiling with empty deniedTools, approval off, nativeWebTools on → resolved == ceiling', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(TOOL_ALLOWLIST_CEILING);
   });
 
-  it('mcp__nanoclaw__* is never in disallowedTools', () => {
-    // Even with empty allowedTools, nanoclaw IPC must always work
-    const disallowed = computeDisallowedTools([]);
-    expect(disallowed).not.toContain('mcp__nanoclaw__*');
+  it('deniedTools removes a named tool', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: ['Task'],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).not.toContain('Task');
+    expect(result.tools).toContain('Bash');
+    expect(result.tools).toContain('WebSearch');
   });
 
-  it('telegram_main config: blocks web and planning tools', () => {
-    // Actual telegram_main allowedTools from DB
-    const telegramMainAllowed = [
-      'Bash',
-      'Read',
-      'Write',
-      'Edit',
-      'Glob',
-      'Grep',
-      'Task',
-      'TaskOutput',
-      'TaskStop',
-      'TeamCreate',
-      'TeamDelete',
-      'SendMessage',
-      'TodoWrite',
-      'ToolSearch',
-      'Skill',
-      'NotebookEdit',
-    ];
-    const disallowed = computeDisallowedTools(telegramMainAllowed);
-
-    expect(disallowed).toContain('WebSearch');
-    expect(disallowed).toContain('WebFetch');
-    expect(disallowed).toContain('Agent');
-    expect(disallowed).toContain('CronCreate');
-    expect(disallowed).toContain('EnterPlanMode');
-    expect(disallowed).toContain('RemoteTrigger');
+  it('deniedTools removes multiple tools', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: ['Task', 'CronCreate', 'CronDelete'],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).not.toContain('Task');
+    expect(result.tools).not.toContain('CronCreate');
+    expect(result.tools).not.toContain('CronDelete');
+    expect(result.tools).toContain('CronList');
   });
 
-  it('disallowed + allowed covers all known tools (no gaps)', () => {
-    const allowed = ['Bash', 'Read', 'Write'];
-    const disallowed = computeDisallowedTools(allowed);
-    const tools = [...allowed, 'mcp__nanoclaw__*'];
+  it('approvalMode true → Bash removed', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: [],
+      approvalMode: true,
+      nativeWebTools: true,
+    });
+    expect(result.tools).not.toContain('Bash');
+    expect(result.tools).toContain('Read');
+    expect(result.tools).toContain('Write');
+  });
 
-    // Every known tool must be in exactly one of: tools or disallowed
-    for (const t of ALL_KNOWN_TOOLS) {
-      const inAllowed = tools.includes(t);
-      const inDisallowed = disallowed.includes(t);
-      expect(inAllowed || inDisallowed).toBe(true);
-      expect(inAllowed && inDisallowed).toBe(false); // no duplicates
-    }
+  it('nativeWebTools false → WebSearch + WebFetch removed', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: false,
+    });
+    expect(result.tools).not.toContain('WebSearch');
+    expect(result.tools).not.toContain('WebFetch');
+    expect(result.tools).toContain('Bash');
+  });
+
+  it('nativeWebTools true → WebSearch retained (WebFetch not in allowlist ceiling but in fallback)', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toContain('WebSearch');
+    // WebFetch is NOT in tool-allowlist.json ceiling (only in fallback)
+    expect(result.tools).not.toContain('WebFetch');
+  });
+
+  it('combined: approvalMode + !nativeWebTools + deniedTools', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: ['TeamCreate', 'TeamDelete'],
+      approvalMode: true,
+      nativeWebTools: false,
+    });
+    expect(result.tools).not.toContain('Bash');
+    expect(result.tools).not.toContain('WebSearch');
+    expect(result.tools).not.toContain('WebFetch');
+    expect(result.tools).not.toContain('TeamCreate');
+    expect(result.tools).not.toContain('TeamDelete');
+    expect(result.tools).toContain('Read');
+    expect(result.tools).toContain('Write');
+    expect(result.tools).toContain('Edit');
+  });
+
+  it('mcp__nanoclaw__* always in allowedTools, never gated by ceiling', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: [],
+      approvalMode: true,
+      nativeWebTools: false,
+    });
+    expect(result.allowedTools).toContain('mcp__nanoclaw__*');
+    // It's NOT in tools (the ceiling), only in allowedTools (auto-approve list)
+    expect(result.tools).not.toContain('mcp__nanoclaw__*');
+  });
+
+  it('invalid ceiling env → falls back to FALLBACK_CATALOG', () => {
+    const result = resolveTools({
+      ceilingEnv: 'not-valid-json',
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(FALLBACK_CATALOG);
+  });
+
+  it('empty array ceiling env → falls back to FALLBACK_CATALOG', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify([]),
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(FALLBACK_CATALOG);
+  });
+
+  it('absent ceiling env → falls back to FALLBACK_CATALOG', () => {
+    const result = resolveTools({
+      ceilingEnv: undefined,
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(FALLBACK_CATALOG);
+  });
+
+  it('non-string-array ceiling env → falls back to FALLBACK_CATALOG', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify([1, 2, 3]),
+      deniedTools: [],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(FALLBACK_CATALOG);
+  });
+
+  it('deniedTools that are not in ceiling are harmlessly ignored', () => {
+    const result = resolveTools({
+      ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+      deniedTools: ['NonExistentTool'],
+      approvalMode: false,
+      nativeWebTools: true,
+    });
+    expect(result.tools).toEqual(TOOL_ALLOWLIST_CEILING);
+  });
+
+  it('FALLBACK_CATALOG includes WebFetch (not in ceiling file)', () => {
+    // The fallback has WebFetch for backward compat, but tool-allowlist.json does not
+    expect(FALLBACK_CATALOG).toContain('WebFetch');
+    expect(TOOL_ALLOWLIST_CEILING).not.toContain('WebFetch');
   });
 });
 
@@ -447,51 +605,4 @@ describe('BE_04: agent-browser binary mounting', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Integration: telegram_main group config verification
-// ---------------------------------------------------------------------------
 
-describe('telegram_main group config verification', () => {
-  const telegramMainConfig = {
-    allowedTools: [
-      'Bash',
-      'Read',
-      'Write',
-      'Edit',
-      'Glob',
-      'Grep',
-      'Task',
-      'TaskOutput',
-      'TaskStop',
-      'TeamCreate',
-      'TeamDelete',
-      'SendMessage',
-      'TodoWrite',
-      'ToolSearch',
-      'Skill',
-      'NotebookEdit',
-    ],
-    skills: ['capabilities', 'slack-formatting', 'status'],
-  };
-
-  it('WebSearch and WebFetch are blocked', () => {
-    const disallowed = computeDisallowedTools(telegramMainConfig.allowedTools);
-    expect(disallowed).toContain('WebSearch');
-    expect(disallowed).toContain('WebFetch');
-  });
-
-  it('agent-browser is not in allowed skills', () => {
-    expect(telegramMainConfig.skills).not.toContain('agent-browser');
-  });
-
-  it('mcp__nanoclaw__* is always available (IPC)', () => {
-    const disallowed = computeDisallowedTools(telegramMainConfig.allowedTools);
-    expect(disallowed).not.toContain('mcp__nanoclaw__*');
-  });
-
-  it('brave-search MCP is not configured for telegram_main (no mcpServers key)', () => {
-    // telegram_main DB config has no mcpServers — Brave Search not enabled
-    const config = telegramMainConfig as { mcpServers?: unknown };
-    expect(config.mcpServers).toBeUndefined();
-  });
-});

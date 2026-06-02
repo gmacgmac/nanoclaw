@@ -1,6 +1,7 @@
 {
   "_comment": "Allowlist CEILING for agent built-in tools. Anything NOT listed here can never resolve, regardless of group config. Per-group denial is via container_config.deniedTools. mcp__nanoclaw__* is always available (IPC) and not listed here.",
   "_reloadNote": "Read per-spawn — edits take effect on the next container launch with NO host restart. (If this ever changes to module-load caching, update this note to say a restart is required.)",
+  "_taskNote": "\"Task\" is the internal SDK tool name for subagent spawning. The model sees it surfaced as \"Agent\" (Explore, Plan, etc). The naming mismatch is a Claude SDK convention — Task here governs the Agent tool the model invokes.",
   "tools": [
     "Task",
     "AskUserQuestion",

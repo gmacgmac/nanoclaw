@@ -9,7 +9,7 @@ import os from 'os';
 // We need to test:
 // 1. Skill filtering (skills: undefined vs [] vs ["x"] vs ["nonexistent"])
 // 2. Backward compatibility (no containerConfig, only timeout)
-// 3. Agent customisation (allowedTools, model, systemPrompt)
+// 3. Agent customisation (model, systemPrompt)
 
 // The buildVolumeMounts function is private, so we'll test it by creating
 // temporary directories and checking what gets copied/mounted.
@@ -167,121 +167,9 @@ describe('Per-Group Skill Isolation', () => {
 describe('Agent Customisation (BE_04)', () => {
   // Test the logic from agent-runner/src/index.ts
 
-  it('should use default tools when allowedTools is undefined', () => {
-    // Default tools exclude WebSearch/WebFetch (Anthropic-only, use nanoclaw-web-search MCP)
-    // and exclude Bash when approval mode is active (use execute_command MCP instead).
-    // This test assumes approval mode is NOT active (Bash included in defaults).
-    const defaultTools = [
-      'Bash',
-      'Read',
-      'Write',
-      'Edit',
-      'Glob',
-      'Grep',
-      'NotebookEdit',
-      'EnterPlanMode',
-      'ExitPlanMode',
-      'TaskCreate',
-      'TaskGet',
-      'TaskList',
-      'TaskUpdate',
-      'TaskStop',
-      'TaskOutput',
-      'CronCreate',
-      'CronDelete',
-      'CronList',
-      'EnterWorktree',
-      'ExitWorktree',
-      'TeamCreate',
-      'TeamDelete',
-      'SendMessage',
-      'Agent',
-      'Skill',
-      'RemoteTrigger',
-      'AskUserQuestion',
-      'TodoWrite',
-      'ToolSearch',
-      'mcp__nanoclaw__*',
-    ];
-
-    const allowedTools: string[] | undefined = undefined;
-    const tools = allowedTools
-      ? [...allowedTools, 'mcp__nanoclaw__*']
-      : defaultTools;
-
-    expect(tools).toEqual(defaultTools);
-    expect(tools).not.toContain('WebSearch');
-    expect(tools).not.toContain('WebFetch');
-  });
-
-  it('should merge allowedTools with mcp__nanoclaw__* when provided', () => {
-    const defaultTools = [
-      'Bash',
-      'Read',
-      'Write',
-      'Edit',
-      'Glob',
-      'Grep',
-      'WebSearch',
-      'WebFetch',
-      'Task',
-      'TaskOutput',
-      'TaskStop',
-      'TeamCreate',
-      'TeamDelete',
-      'SendMessage',
-      'TodoWrite',
-      'ToolSearch',
-      'Skill',
-      'NotebookEdit',
-      'mcp__nanoclaw__*',
-    ];
-
-    const allowedTools = ['Read', 'Grep', 'Glob'];
-    const tools = allowedTools
-      ? [...allowedTools, 'mcp__nanoclaw__*']
-      : defaultTools;
-
-    expect(tools).toEqual(['Read', 'Grep', 'Glob', 'mcp__nanoclaw__*']);
-    expect(tools).not.toContain('Bash');
-    expect(tools).not.toContain('Write');
-  });
-
-  it('should only include mcp__nanoclaw__* when allowedTools is empty array', () => {
-    const defaultTools = [
-      'Bash',
-      'Read',
-      'Write',
-      'Edit',
-      'Glob',
-      'Grep',
-      'WebSearch',
-      'WebFetch',
-      'Task',
-      'TaskOutput',
-      'TaskStop',
-      'TeamCreate',
-      'TeamDelete',
-      'SendMessage',
-      'TodoWrite',
-      'ToolSearch',
-      'Skill',
-      'NotebookEdit',
-      'mcp__nanoclaw__*',
-    ];
-
-    const allowedTools: string[] = [];
-    const tools = allowedTools
-      ? [...allowedTools, 'mcp__nanoclaw__*']
-      : defaultTools;
-
-    expect(tools).toEqual(['mcp__nanoclaw__*']);
-  });
-
   it('should apply model override when provided', () => {
     const containerInput = {
       model: 'haiku',
-      allowedTools: undefined,
       systemPrompt: undefined,
     };
 
@@ -299,7 +187,6 @@ describe('Agent Customisation (BE_04)', () => {
   it('should not override model when undefined', () => {
     const containerInput = {
       model: undefined,
-      allowedTools: undefined,
       systemPrompt: undefined,
     };
 
@@ -317,7 +204,6 @@ describe('Agent Customisation (BE_04)', () => {
   it('should set appendPrompt to systemPrompt when provided', () => {
     const systemPrompt = 'You are a research assistant. Be concise.';
 
-    // Simulating agent-runner/src/index.ts post-BE_03: only systemPrompt is used
     let appendPrompt = '';
     if (systemPrompt) {
       appendPrompt = systemPrompt;
@@ -338,11 +224,9 @@ describe('Agent Customisation (BE_04)', () => {
   });
 });
 
-describe('ContainerInput threading', () => {
-  // Verify that ContainerInput fields are correctly passed through
-
-  it('should include allowedTools, model, and systemPrompt in ContainerInput', () => {
-    // This verifies the type definition matches what we expect
+describe('ContainerInput shape', () => {
+  it('should include model and systemPrompt but not allowedTools', () => {
+    // Mirrors the current ContainerInput interface (post-BE_01)
     interface ContainerInput {
       prompt: string;
       sessionId?: string;
@@ -352,7 +236,6 @@ describe('ContainerInput threading', () => {
       isAdmin: boolean;
       isScheduledTask?: boolean;
       assistantName?: string;
-      allowedTools?: string[];
       model?: string;
       systemPrompt?: string;
     }
@@ -363,21 +246,20 @@ describe('ContainerInput threading', () => {
       chatJid: 'test@g.us',
       isMain: false,
       isAdmin: false,
-      allowedTools: ['Read', 'Grep'],
       model: 'sonnet',
       systemPrompt: 'Be concise.',
     };
 
-    expect(input.allowedTools).toEqual(['Read', 'Grep']);
     expect(input.model).toBe('sonnet');
     expect(input.systemPrompt).toBe('Be concise.');
+    // allowedTools no longer exists on ContainerInput
+    expect('allowedTools' in input).toBe(false);
   });
 });
 
-describe('ContainerConfig type extension', () => {
-  // Verify ContainerConfig has all the new fields
-
-  it('should include skills, allowedTools, model, systemPrompt', () => {
+describe('ContainerConfig type (post-BE_01)', () => {
+  it('should include skills, deniedTools, model, systemPrompt — not allowedTools', () => {
+    // Mirrors the current ContainerConfig interface
     interface ContainerConfig {
       additionalMounts?: Array<{
         hostPath: string;
@@ -386,24 +268,26 @@ describe('ContainerConfig type extension', () => {
       }>;
       timeout?: number;
       skills?: string[];
-      allowedTools?: string[];
-      model?: string;
+      deniedTools?: string[];
+      preset?: string;
       systemPrompt?: string;
     }
 
     const config: ContainerConfig = {
       skills: ['status'],
-      allowedTools: ['Read', 'Grep'],
-      model: 'haiku',
+      deniedTools: ['Task'],
+      preset: 'haiku',
       systemPrompt: 'Be helpful.',
       timeout: 60000,
     };
 
     expect(config.skills).toEqual(['status']);
-    expect(config.allowedTools).toEqual(['Read', 'Grep']);
-    expect(config.model).toBe('haiku');
+    expect(config.deniedTools).toEqual(['Task']);
+    expect(config.preset).toBe('haiku');
     expect(config.systemPrompt).toBe('Be helpful.');
     expect(config.timeout).toBe(60000);
+    // allowedTools no longer exists on ContainerConfig
+    expect('allowedTools' in config).toBe(false);
   });
 
   it('should work with minimal config (backward compat)', () => {
@@ -415,9 +299,7 @@ describe('ContainerConfig type extension', () => {
       }>;
       timeout?: number;
       skills?: string[];
-      allowedTools?: string[];
-      model?: string;
-      systemPrompt?: string;
+      deniedTools?: string[];
     }
 
     // Groups with no containerConfig
@@ -428,8 +310,6 @@ describe('ContainerConfig type extension', () => {
     const config2: ContainerConfig = { timeout: 60000 };
     expect(config2.timeout).toBe(60000);
     expect(config2.skills).toBeUndefined();
-    expect(config2.allowedTools).toBeUndefined();
-    expect(config2.model).toBeUndefined();
-    expect(config2.systemPrompt).toBeUndefined();
+    expect(config2.deniedTools).toBeUndefined();
   });
 });

@@ -36,8 +36,6 @@ export interface ResolvedSpawnConfig {
   nativeWebTools: boolean;
   /** Approval mode (from containerConfig, defaults true). */
   approvalMode: boolean;
-  /** Effective allowedTools after approval swap (Bash removed if approvalMode). */
-  effectiveAllowedTools: string[] | undefined;
 }
 
 /**
@@ -93,12 +91,6 @@ export function resolveSpawnConfig(
   // Approval mode (defaults true)
   const approvalMode = validatedConfig.approvalMode !== false;
 
-  // Effective allowedTools: remove Bash when approvalMode is active
-  let effectiveAllowedTools = validatedConfig.allowedTools;
-  if (approvalMode && effectiveAllowedTools) {
-    effectiveAllowedTools = effectiveAllowedTools.filter((t) => t !== 'Bash');
-  }
-
   return {
     group: cleanGroup,
     containerConfig: validatedConfig,
@@ -108,6 +100,5 @@ export function resolveSpawnConfig(
     deniedTools,
     nativeWebTools,
     approvalMode,
-    effectiveAllowedTools,
   };
 }

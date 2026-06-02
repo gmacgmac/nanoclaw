@@ -339,7 +339,6 @@ async function runAgent(
     group: freshGroup,
     containerConfig,
     preset,
-    effectiveAllowedTools,
   } = spawnConfig;
   const isMain = freshGroup.isMain === true;
   const isAdmin = freshGroup.isAdmin === true;
@@ -400,14 +399,6 @@ async function runAgent(
     });
     if (!proceed) return 'error';
 
-    // Debug: log allowedTools being passed to container
-    if (effectiveAllowedTools) {
-      logger.info(
-        { group: freshGroup.name, allowedTools: effectiveAllowedTools },
-        'Passing allowedTools to container',
-      );
-    }
-
     if (!preset) {
       logger.warn(
         { group: freshGroup.name, preset: freshGroup.containerConfig?.preset },
@@ -427,7 +418,6 @@ async function runAgent(
         isAdmin,
         assistantName: ASSISTANT_NAME,
         // Agent customisation from containerConfig
-        allowedTools: effectiveAllowedTools,
         model: preset.model,
         systemPrompt: containerConfig.systemPrompt,
         mcpServers: containerConfig.mcpServers,
@@ -918,7 +908,6 @@ async function main(): Promise<void> {
                 group: freshGroup,
                 containerConfig,
                 preset,
-                effectiveAllowedTools,
               } = spawnConfig;
 
               const output = await runContainerAgent(
@@ -931,7 +920,6 @@ async function main(): Promise<void> {
                   isMain: freshGroup.isMain === true,
                   isAdmin: freshGroup.isAdmin === true,
                   assistantName: ASSISTANT_NAME,
-                  allowedTools: effectiveAllowedTools,
                   model: preset.model,
                   systemPrompt: containerConfig.systemPrompt,
                   mcpServers: containerConfig.mcpServers,

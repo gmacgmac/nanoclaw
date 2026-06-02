@@ -502,7 +502,7 @@ Configure group behaviour via the `containerConfig` JSON column in the `register
 {
   "preset": "sonnet_4.5",
   "skills": ["status", "browser"],
-  "allowedTools": ["Read", "Grep", "WebSearch"],
+  "deniedTools": [],
   "mcpServers": {
     "brave-search": {
       "command": "node",
@@ -578,48 +578,52 @@ Use the `/model` host command (requires `allowedHostCommands: ['model']`) to swi
 
 Similarly, include `slack-formatting` for Slack groups. Discord groups do not need a formatting skill (standard markdown works).
 
-#### `allowedTools` — Per-Group Tool Restrictions
+#### Tool Governance — Allowlist Ceiling Model
+
+Tools are governed by a **ceiling model**: `tool-allowlist.json` defines the maximum set of tools any agent can ever resolve. Per-group `deniedTools` subtracts from the ceiling. Conditional rules further restrict based on mode.
+
+**Resolution formula (agent-runner, container-side):**
+
+```
+ceiling   = tool-allowlist.json  ??  VERIFIED_CATALOG (code fallback)
+resolved  = ceiling
+            − deniedTools              (per-group, from container_config)
+            − Bash                     (if approvalMode active)
+            − WebSearch, WebFetch      (if !nativeWebTools)
+            + mcp__nanoclaw__*         (IPC — always available, cannot be denied)
+```
+
+The resolved set is passed as `options.tools` to the SDK — the only primitive that acts as a whitelist gate.
+
+**`deniedTools` — Per-Group Denial**
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | Secure default set — excludes `WebSearch`, `WebFetch` (Anthropic-only), and `Bash` when approval mode is active (use `execute_command` MCP instead) |
-| `["Read", "Grep", "WebSearch"]` | Only named tools |
-| `[]` | No tools — only MCP IPC |
+| `undefined` / absent / `[]` | No per-group denial — full ceiling available (minus conditional removals) |
+| `["Task", "Bash"]` | Named tools removed from resolved set for this group |
 
-`mcp__nanoclaw__*` is always included regardless of config (IPC must work).
-
-**How it actually works — `disallowedTools` complement:**
-
-The SDK's `allowedTools` parameter only filters SDK-registered tools. The `claude_code` preset injects additional CLI tools (`Agent`, `CronCreate`, `EnterPlanMode`, etc.) that bypass `allowedTools` entirely. To make the whitelist actually work, the agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime:
-
-```
-disallowedTools = ALL_KNOWN_TOOLS − allowedTools
-```
-
-`disallowedTools` reliably blocks any tool, including preset-injected ones. This is computed automatically — you never configure `disallowedTools` directly. When `allowedTools` is absent, `disallowedTools` is empty (all tools allowed).
-
-Full tool reference — use these names in `allowedTools`. This list is also the `ALL_KNOWN_TOOLS` constant in `container/agent-runner/src/index.ts` (update both when upgrading the SDK):
+**Tool reference** — the ceiling (`tool-allowlist.json`):
 
 | Category | Tools |
 |----------|-------|
 | File Operations | `Read`, `Write`, `Edit`, `Glob`, `Grep` |
 | Execution | `Bash`, `NotebookEdit` |
-| Web | `WebSearch`, `WebFetch` |
+| Web | `WebSearch` |
 | Planning | `EnterPlanMode`, `ExitPlanMode` |
 | Tasks | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TaskOutput` |
 | Scheduling | `CronCreate`, `CronDelete`, `CronList` |
 | Git/Worktree | `EnterWorktree`, `ExitWorktree` |
 | Agent Teams | `TeamCreate`, `TeamDelete`, `SendMessage` |
-| Agent & Skills | `Agent`, `Skill`, `RemoteTrigger` |
+| Subagent & Skills | `Task`¹, `Skill` |
 | User Interaction | `AskUserQuestion` |
-| Misc | `TodoWrite`, `ToolSearch` |
-| Always included | `mcp__nanoclaw__*` (IPC — cannot be removed) |
+| Monitoring | `Monitor`, `PushNotification`, `ScheduleWakeup`, `ToolSearch` |
+| Always available | `mcp__nanoclaw__*` (IPC — not in ceiling, always injected) |
 
-> **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, review the tool list and update `ALL_KNOWN_TOOLS` in `container/agent-runner/src/index.ts` and the table above.
+¹ **Task/Agent naming split**: The subagent tool resolves as `Task` in `options.tools` and `tool-allowlist.json`, but appears as `Agent` in `tool_use` invocation blocks. Denying `Task` removes subagent capability entirely.
 
-#### `disallowedTools` — Auto-Computed, Not Configured
+**Permanently denied (not in ceiling):** `RemoteTrigger`, `TodoWrite`, `WebFetch` — blocked for all groups regardless of config.
 
-This field is never set manually in `containerConfig`. It is computed at runtime by the agent-runner as the complement of `allowedTools`. Documented here for reference only.
+> **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, run the probe procedure in `docs/sdk-tool-catalog-rediscovery.md` to detect new/removed tools. Update `tool-allowlist.json` and `VERIFIED_CATALOG`/`FALLBACK_CATALOG` in code. New tools are denied-by-default until explicitly admitted.
 
 #### Bundled Skills — Known Limitation
 
@@ -829,8 +833,7 @@ The agent-runner inside each container uses the Claude Agent SDK (`@anthropic-ai
 
 | Option | Source | Default | Per-Group? |
 |--------|--------|---------|------------|
-| `allowedTools` | `containerConfig.allowedTools` | Full tool list | Yes |
-| `disallowedTools` | Auto-computed as complement of `allowedTools` | Empty (all allowed) | Yes |
+| `tools` | Resolved from ceiling model: `tool-allowlist.json` − `deniedTools` − conditional removals | Full ceiling | Yes (via `deniedTools`) |
 | `model` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.model` | (from preset) | Yes |
 | `contextWindow` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.contextWindow` (default: 128000) | 128000 | Yes |
 | `systemPrompt` | `claude_code` preset + `containerConfig.systemPrompt` | Preset only | Yes |
@@ -1046,7 +1049,7 @@ The format is newline-delimited `Header-Name: value` pairs. Note: `ANTHROPIC_DEF
 Claude's built-in `WebSearch` and `WebFetch` tools are Anthropic server-side tools (`type: "server_tool_use"`). Anthropic executes them during `/v1/messages` processing. **Non-Anthropic endpoints (Ollama, Z.ai, etc.) do not implement this mechanism — built-in web search silently fails.**
 
 > **Critical for non-Anthropic groups:** You MUST:
-> 1. Remove `WebSearch` and `WebFetch` from `allowedTools` (or explicitly exclude them)
+> 1. Ensure `WebSearch` and `WebFetch` are excluded (they are removed by default when `nativeWebTools` is not set)
 > 2. Add the `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
 > 3. Ensure the resolved preset's `webSearchVendor` field is set
 >
@@ -1186,7 +1189,7 @@ Adds a human-in-the-loop gate for dangerous shell commands in groups with write-
 **When it applies:** Groups with write-access `additionalMounts`. Approval mode is on by default; set `approvalMode: false` explicitly to disable. If a group has no write mounts, approval mode has no practical effect (all commands target container-internal paths, which are always allowed).
 
 **How it works:**
-1. When approval mode is active (default), `Bash` is excluded from the tool set — both stripped from any explicit `allowedTools` list on the host side, and excluded from the default tool set in the agent-runner when `allowedTools` is undefined. The agent uses `mcp__nanoclaw__execute_command` instead — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
+1. When approval mode is active (default), `Bash` is excluded from the resolved tool set by the ceiling model (see [Tool Governance](#tool-governance--allowlist-ceiling-model)). The agent uses `mcp__nanoclaw__execute_command` instead — an MCP tool defined in `container/agent-runner/src/ipc-mcp-stdio.ts`.
 2. The agent uses `execute_command` instead of `Bash`. The tool runs `isDangerousCommand()` from `src/lib/command-approval.ts` against the command.
 3. If the command is dangerous AND targets a write-mounted path (under `/workspace/extra/`), the tool pauses and writes an `approval_request` to the IPC messages directory.
 4. The host's `processIpcMessageData()` picks up the request, formats it, and sends it to the user's messaging channel.
@@ -1413,7 +1416,7 @@ For groups using a non-Anthropic endpoint (e.g. preset with `endpoint: "ollama"`
 1. Ensure `ANTHROPIC_API_KEY=placeholder` is in `secrets.env` (see [Auth Modes](#auth-modes-api-key-vs-oauth))
 2. Add `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
 3. Ensure the preset's `webSearchVendor` field is set
-4. `WebSearch` and `WebFetch` are excluded from the default tool set — no action needed. If you have an explicit `allowedTools` list, ensure they are not included.
+4. `WebSearch` and `WebFetch` are excluded from the resolved tool set by default (ceiling model removes them when `nativeWebTools` is not set) — no action needed. If you explicitly set `nativeWebTools: true`, you must add these to `deniedTools` instead.
 
 ---
 

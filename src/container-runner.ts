@@ -47,7 +47,6 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   // Agent customisation (from containerConfig, threaded through to agent-runner)
-  allowedTools?: string[];
   model?: string;
   systemPrompt?: string;
   script?: string;

@@ -48,13 +48,6 @@ export interface ContainerConfig {
   // --- SDK-level agent customisation ---
 
   /**
-   * Per-group tool restrictions.
-   * undefined = use default allowedTools list (backward compat).
-   * Accepts same tool names as the Claude Agent SDK: Bash, Read, Write, Edit, etc.
-   */
-  allowedTools?: string[];
-
-  /**
    * Preset name from model-presets.json.
    * Replaces endpoint/model/webSearchVendor/contextWindowSize — those are now
    * resolved at runtime via resolvePreset(). Set during registration or /model switch.
