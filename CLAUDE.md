@@ -133,6 +133,11 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `contextWindow` | `number` | no | `128000` |
 | `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
+| `transform` | `"openai"` \| absent | no | absent (passthrough) |
+
+`transform: "openai"` activates bidirectional Anthropic Messages ↔ OpenAI ChatCompletions translation in the credential proxy. Required for open-source models on the Bedrock `bedrockoss` endpoint. See `repo/docs/credential-proxy-extensions.md` §"Amazon Bedrock via Mantle".
+
+> **Mantle proxy note**: For non-`anthropic` vendors, the proxy automatically strips `anthropic-beta` (SDK beta negotiation header) and `context_management` (SDK body field) — Mantle rejects these with 400; Ollama ignores them. Auto-compaction is unaffected (driven by `settings.json`).
 
 **Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 

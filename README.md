@@ -551,6 +551,11 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
 | `contextWindow` | `number` | no | `128000` |
 | `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
+| `transform` | `"openai"` \| absent | no | absent (passthrough) |
+
+The `transform` field activates bidirectional API shape translation in the credential proxy. Currently only `"openai"` is supported — reshapes Anthropic Messages → OpenAI ChatCompletions for Mantle open-source models (`endpoint: "bedrockoss"`). Absent means passthrough (all existing presets). See [Credential Proxy Extensions — Amazon Bedrock via Mantle](docs/credential-proxy-extensions.md#amazon-bedrock-via-mantle-claude--open-source-models) for details.
+
+> **Mantle proxy note**: For non-`anthropic` vendors, the proxy automatically strips two SDK-injected fields that strict upstreams like Mantle reject: the `anthropic-beta` request header (beta feature negotiation) and the `context_management` request body field (server-side compaction hint). Auto-compaction is unaffected — it is driven by `settings.json` locally. Ollama is lenient and ignores these fields; this stripping is a no-op for Ollama.
 
 **Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 
@@ -973,6 +978,14 @@ OLLAMA_API_KEY=ollama
 # Z.ai
 ZAI_BASE_URL=https://api.z.ai
 ZAI_API_KEY=...
+
+# Amazon Bedrock via Mantle — Claude track (/anthropic prefix, no transform)
+BEDROCK_BASE_URL=https://bedrock-mantle.us-east-1.api.aws/anthropic
+BEDROCK_API_KEY=<short-term-bedrock-api-key>
+
+# Amazon Bedrock via Mantle — open-source track (bare host, transform: "openai")
+BEDROCKOSS_BASE_URL=https://bedrock-mantle.us-east-1.api.aws
+BEDROCKOSS_API_KEY=<same-bedrock-api-key>
 ```
 
 Each request from a container includes an `X-Nanoclaw-Endpoint` header with the vendor name. The proxy reads this header, selects the matching upstream URL and API key, strips the header before forwarding, and injects the real credential. If the header is absent or the vendor is unknown, it falls back to `anthropic`.
@@ -1001,6 +1014,8 @@ The Claude Agent SDK sends requests to paths like `/v1/messages`. The proxy prep
 | `http://localhost:11434/v1` | `/v1/messages` | `/v1/v1/messages` | **BROKEN — double /v1** |
 | `https://api.anthropic.com` | `/v1/messages` | `/v1/messages` | Correct |
 | `https://api.z.ai/api/anthropic` | `/v1/messages` | `/api/anthropic/v1/messages` | Correct (Z.ai needs the prefix) |
+| `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | `/anthropic/v1/messages` | Correct (Mantle Claude track) |
+| `https://bedrock-mantle.us-east-1.api.aws` | `/v1/chat/completions` (transform) | `/v1/chat/completions` | Correct (Mantle open-source track) |
 
 **Rule for Ollama:** Use `http://localhost:11434` — no `/v1`, no trailing slash. The SDK adds `/v1/messages` itself.
 

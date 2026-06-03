@@ -23,6 +23,10 @@ export interface ModelCapabilities {
   nativeWebTools?: boolean;
 }
 
+export type TransformName = 'openai';
+
+const VALID_TRANSFORMS: readonly TransformName[] = ['openai'];
+
 export interface ModelPreset {
   endpoint: string;
   model: string;
@@ -30,6 +34,7 @@ export interface ModelPreset {
   contextWindow?: number;
   compactThreshold?: number;
   webSearchVendor?: string;
+  transform?: TransformName;
 }
 
 export interface ResolvedPreset extends ModelPreset {
@@ -122,6 +127,21 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
       ? obj.webSearchVendor
       : DEFAULT_WEB_SEARCH_VENDOR;
 
+  let transform: TransformName | undefined;
+  if (obj.transform !== undefined) {
+    if (
+      typeof obj.transform === 'string' &&
+      VALID_TRANSFORMS.includes(obj.transform as TransformName)
+    ) {
+      transform = obj.transform as TransformName;
+    } else {
+      logger.warn(
+        { preset: key, transform: obj.transform },
+        'Invalid transform; ignoring (passthrough)',
+      );
+    }
+  }
+
   return {
     endpoint: obj.endpoint,
     model: obj.model,
@@ -129,6 +149,7 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
     contextWindow,
     ...(compactThreshold !== undefined && { compactThreshold }),
     webSearchVendor,
+    ...(transform !== undefined && { transform }),
   };
 }
 

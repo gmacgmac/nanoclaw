@@ -32,6 +32,8 @@ import { logger } from './logger.js';
 import { transcribeAudio } from './transcription.js';
 import { createProxyPlugins } from './proxy-plugins/registry.js';
 import './proxy-plugins/index.js'; // trigger self-registration
+import './proxy-plugins/transforms/index.js'; // trigger transform self-registration
+import { getTransform } from './proxy-plugins/transforms/registry.js';
 
 /**
  * Resolve an audio file path that may be a container path
@@ -73,6 +75,9 @@ export const ENDPOINT_HEADER = 'x-nanoclaw-endpoint';
 
 /** Header containers use to select a web search vendor. */
 export const WEB_SEARCH_VENDOR_HEADER = 'x-nanoclaw-web-search-vendor';
+
+/** Header containers use to request a body transform (e.g. 'openai'). */
+export const TRANSFORM_HEADER = 'x-nanoclaw-transform';
 
 /** Default vendor when header is absent or vendor is unknown. */
 const DEFAULT_VENDOR = 'anthropic';
@@ -262,6 +267,7 @@ export function startCredentialProxy(
           delete headers['transfer-encoding'];
           delete headers[WEB_SEARCH_VENDOR_HEADER];
           delete headers[ENDPOINT_HEADER];
+          delete headers[TRANSFORM_HEADER];
           delete headers['x-api-key'];
 
           const basePath = wsUpstream.pathname.replace(/\/$/, '');
@@ -312,6 +318,9 @@ export function startCredentialProxy(
           (req.headers[ENDPOINT_HEADER] as string) || DEFAULT_VENDOR
         ).toLowerCase();
 
+        // Read and strip the transform header before forwarding
+        const transformName = req.headers[TRANSFORM_HEADER] as string | undefined;
+
         const { upstreamUrl, apiKey, oauthToken, authMode } = resolveEndpoint(
           requestedVendor,
           routingTable,
@@ -347,39 +356,114 @@ export function startCredentialProxy(
         // Strip the routing header — upstream doesn't need it
         delete headers[ENDPOINT_HEADER];
 
-        if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
-          // Strip any Authorization header from OAuth-style SDK requests
-          delete headers['x-api-key'];
-          delete headers['authorization'];
-          headers['x-api-key'] = apiKey;
-        } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
+        // Always strip the transform header — upstream doesn't need it
+        delete headers[TRANSFORM_HEADER];
+
+        // Strip Anthropic-specific beta negotiation headers for non-Anthropic vendors.
+        // The Claude Code SDK auto-negotiates beta features (interleaved-thinking, etc.)
+        // that Anthropic's API accepts but other upstreams (Mantle, Ollama, Z.ai) reject.
+        if (requestedVendor !== 'anthropic') {
+          delete headers['anthropic-beta'];
+        }
+
+        // Resolve transform (if requested)
+        const transform = transformName ? getTransform(transformName) : undefined;
+
+        // Strip Anthropic-specific request body fields for non-Anthropic vendors.
+        // The Claude Code SDK injects fields like `context_management` that
+        // Anthropic's API supports but strict upstreams (Mantle, etc.) reject with 400.
+        // Ollama is lenient and ignores them; Mantle is not.
+        // Auto-compaction still works — it's driven by local settings.json, not this field.
+        let sanitisedBody = body;
+        if (requestedVendor !== 'anthropic' && !transform) {
+          try {
+            const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+            if ('context_management' in parsed) {
+              delete parsed['context_management'];
+              sanitisedBody = Buffer.from(JSON.stringify(parsed));
             }
+          } catch {
+            // not JSON or parse failed — forward as-is
           }
         }
 
-        // Combine base URL pathname with request path
-        const basePath = upstreamUrl.pathname.replace(/\/$/, '');
-        const requestPath = basePath + req.url;
+        // Determine outbound body, path, and auth based on transform presence
+        let outBody: Buffer = sanitisedBody;
+        let requestPath: string;
 
-        logger.info(
-          {
-            method: req.method,
-            path: req.url,
-            basePath,
-            requestPath,
-            upstreamHost: upstreamUrl.hostname,
-            authMode,
-            authHeader: req.headers['authorization'] ? 'present' : 'none',
-            xApiKeyHeader: req.headers['x-api-key'] ? 'present' : 'none',
-          },
-          'Proxy forwarding request',
-        );
+        if (transform) {
+          // --- Transform path (e.g. OpenAI ChatCompletions) ---
+          let transformed: { body: Buffer; path: string; contentType?: string };
+          try {
+            transformed = transform.transformRequest(body);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error({ err: msg, transform: transformName }, 'Transform request error');
+            res.writeHead(502, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Transform request failed' }));
+            return;
+          }
+
+          outBody = transformed.body;
+          const basePath = upstreamUrl.pathname.replace(/\/$/, '');
+          requestPath = basePath + transformed.path;
+
+          // Update content-length and content-type for transformed body
+          headers['content-length'] = outBody.length;
+          if (transformed.contentType) {
+            headers['content-type'] = transformed.contentType;
+          }
+
+          // Auth for transform track: use Authorization: Bearer (ChatCompletions style)
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          if (apiKey) {
+            headers['authorization'] = `Bearer ${apiKey}`;
+          }
+
+          logger.info(
+            { vendor: requestedVendor, transform: transformName, path: requestPath },
+            'Proxy applying transform',
+          );
+        } else {
+          // --- Passthrough path (Claude track / all existing vendors) ---
+          if (sanitisedBody.length !== body.length) {
+            headers['content-length'] = sanitisedBody.length;
+          }
+          if (authMode === 'api-key') {
+            // API key mode: inject x-api-key on every request
+            // Strip any Authorization header from OAuth-style SDK requests
+            delete headers['x-api-key'];
+            delete headers['authorization'];
+            headers['x-api-key'] = apiKey;
+          } else {
+            // OAuth mode: replace placeholder Bearer token with the real one
+            if (headers['authorization']) {
+              delete headers['authorization'];
+              if (oauthToken) {
+                headers['authorization'] = `Bearer ${oauthToken}`;
+              }
+            }
+          }
+
+          // Combine base URL pathname with request path
+          const basePath = upstreamUrl.pathname.replace(/\/$/, '');
+          requestPath = basePath + req.url;
+
+          logger.info(
+            {
+              method: req.method,
+              path: req.url,
+              basePath,
+              requestPath,
+              upstreamHost: upstreamUrl.hostname,
+              authMode,
+              authHeader: req.headers['authorization'] ? 'present' : 'none',
+              xApiKeyHeader: req.headers['x-api-key'] ? 'present' : 'none',
+            },
+            'Proxy forwarding request',
+          );
+        }
 
         const upstream = makeRequest(
           {
@@ -390,8 +474,54 @@ export function startCredentialProxy(
             headers,
           } as RequestOptions,
           (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+            if (!transform) {
+              // Passthrough: pipe unchanged (existing behavior)
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            } else {
+              // Transform path: reshape the response
+              const isStreaming = upRes.headers['content-type']?.includes('text/event-stream');
+
+              if (isStreaming) {
+                // Streaming: pipe through the stream transformer
+                const streamTransformer = transform.createStreamTransformer();
+                const streamHeaders = { ...upRes.headers, 'content-type': 'text/event-stream' };
+                delete streamHeaders['content-length']; // chunks are transformed, length changes
+                res.writeHead(upRes.statusCode!, streamHeaders);
+                upRes.on('data', (chunk: Buffer) => {
+                  const transformed = streamTransformer(chunk);
+                  if (transformed.length > 0) {
+                    res.write(transformed);
+                  }
+                });
+                upRes.on('end', () => {
+                  res.end();
+                });
+              } else {
+                // Non-streaming: buffer, transform, send
+                const chunks: Buffer[] = [];
+                upRes.on('data', (c: Buffer) => chunks.push(c));
+                upRes.on('end', () => {
+                  const upBody = Buffer.concat(chunks);
+                  let responseBody: Buffer;
+                  try {
+                    responseBody = transform.transformResponse(upBody);
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    logger.error({ err: msg, transform: transformName }, 'Transform response error');
+                    res.writeHead(502, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Transform response failed' }));
+                    return;
+                  }
+                  // Build response headers, replacing content-type and content-length
+                  const resHeaders = { ...upRes.headers };
+                  resHeaders['content-type'] = 'application/json';
+                  resHeaders['content-length'] = String(responseBody.length);
+                  res.writeHead(upRes.statusCode!, resHeaders);
+                  res.end(responseBody);
+                });
+              }
+            }
           },
         );
 
@@ -406,7 +536,7 @@ export function startCredentialProxy(
           }
         });
 
-        upstream.write(body);
+        upstream.write(outBody);
         upstream.end();
       });
     });

@@ -36,6 +36,7 @@ interface ContainerInput {
   systemPrompt?: string;
   script?: string;
   endpoint?: string;
+  transform?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
   learningLoop?: boolean | 'extract-only';
@@ -782,10 +783,15 @@ async function main(): Promise<void> {
   // The proxy uses X-Nanoclaw-Endpoint to route to the correct upstream.
   const endpoint = containerInput.endpoint || process.env.NANOCLAW_ENDPOINT || 'anthropic';
   const webSearchVendor = containerInput.webSearchVendor || process.env.NANOCLAW_WEB_SEARCH_VENDOR || 'ollama';
-  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = [
+  const transform = containerInput.transform || process.env.NANOCLAW_TRANSFORM;
+  const headerLines = [
     `X-Nanoclaw-Endpoint: ${endpoint}`,
     `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
-  ].join('\n');
+  ];
+  if (transform) {
+    headerLines.push(`X-Nanoclaw-Transform: ${transform}`);
+  }
+  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

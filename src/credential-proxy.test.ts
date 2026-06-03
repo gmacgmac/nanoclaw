@@ -668,4 +668,295 @@ describe('credential-proxy', () => {
       expect(res.body).toBe('Bad Gateway');
     });
   });
+
+  // --- Transform routing tests ---
+
+  describe('transform routing', () => {
+    let transformServer: http.Server;
+    let transformPort: number;
+    let lastTransformHeaders: http.IncomingHttpHeaders;
+    let lastTransformBody: string;
+    let lastTransformUrl: string;
+
+    beforeEach(async () => {
+      lastTransformHeaders = {};
+      lastTransformBody = '';
+      lastTransformUrl = '';
+    });
+
+    afterEach(async () => {
+      await new Promise<void>((r) => transformServer?.close(() => r()));
+    });
+
+    function createMockOpenAIServer(
+      responseBody: Record<string, unknown>,
+      headers: Record<string, string> = { 'content-type': 'application/json' },
+    ): Promise<number> {
+      return new Promise((resolve) => {
+        transformServer = http.createServer((req, res) => {
+          lastTransformHeaders = { ...req.headers };
+          lastTransformUrl = req.url || '';
+          const chunks: Buffer[] = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', () => {
+            lastTransformBody = Buffer.concat(chunks).toString();
+            const body = JSON.stringify(responseBody);
+            res.writeHead(200, { ...headers, 'content-length': String(body.length) });
+            res.end(body);
+          });
+        });
+        transformServer.listen(0, '127.0.0.1', () => {
+          resolve((transformServer.address() as AddressInfo).port);
+        });
+      });
+    }
+
+    function createMockStreamingOpenAIServer(sseChunks: string[]): Promise<number> {
+      return new Promise((resolve) => {
+        transformServer = http.createServer((req, res) => {
+          lastTransformHeaders = { ...req.headers };
+          lastTransformUrl = req.url || '';
+          const chunks: Buffer[] = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', () => {
+            lastTransformBody = Buffer.concat(chunks).toString();
+            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            for (const chunk of sseChunks) {
+              res.write(chunk);
+            }
+            res.end();
+          });
+        });
+        transformServer.listen(0, '127.0.0.1', () => {
+          resolve((transformServer.address() as AddressInfo).port);
+        });
+      });
+    }
+
+    it('transforms request to OpenAI ChatCompletions and response back to Anthropic Messages', async () => {
+      // Mock OpenAI-style upstream response
+      const openaiResponse = {
+        id: 'chatcmpl-123',
+        model: 'deepseek-r1',
+        choices: [{
+          message: { role: 'assistant', content: 'Hello from OpenAI format' },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      };
+      transformPort = await createMockOpenAIServer(openaiResponse);
+
+      mockEndpoints = {
+        bedrock: {
+          baseUrl: `http://127.0.0.1:${transformPort}`,
+          apiKey: 'bedrock-api-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      // Anthropic Messages format request with transform header
+      const anthropicReq = {
+        model: 'deepseek-r1',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 1024,
+      };
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock',
+            'x-nanoclaw-transform': 'openai',
+            'x-api-key': 'placeholder',
+          },
+        },
+        JSON.stringify(anthropicReq),
+      );
+
+      expect(res.statusCode).toBe(200);
+
+      // Verify upstream received OpenAI-format request at /v1/chat/completions
+      expect(lastTransformUrl).toBe('/v1/chat/completions');
+      const upstreamReq = JSON.parse(lastTransformBody);
+      expect(upstreamReq.model).toBe('deepseek-r1');
+      expect(upstreamReq.messages).toEqual([{ role: 'user', content: 'Hello' }]);
+      expect(upstreamReq.max_tokens).toBe(1024);
+
+      // Verify auth is Bearer-style
+      expect(lastTransformHeaders['authorization']).toBe('Bearer bedrock-api-key');
+      expect(lastTransformHeaders['x-api-key']).toBeUndefined();
+
+      // Verify transform header was stripped
+      expect(lastTransformHeaders['x-nanoclaw-transform']).toBeUndefined();
+      expect(lastTransformHeaders['x-nanoclaw-endpoint']).toBeUndefined();
+
+      // Verify response was reshaped to Anthropic Messages format
+      const anthropicRes = JSON.parse(res.body);
+      expect(anthropicRes.type).toBe('message');
+      expect(anthropicRes.role).toBe('assistant');
+      expect(anthropicRes.content).toEqual([{ type: 'text', text: 'Hello from OpenAI format' }]);
+      expect(anthropicRes.stop_reason).toBe('end_turn');
+      expect(anthropicRes.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
+    });
+
+    it('transforms streaming OpenAI SSE to Anthropic SSE', async () => {
+      const sseChunks = [
+        'data: {"id":"chatcmpl-1","model":"deepseek-r1","choices":[{"delta":{"role":"assistant","content":"Hi"},"index":0,"finish_reason":null}]}\n\n',
+        'data: {"id":"chatcmpl-1","model":"deepseek-r1","choices":[{"delta":{"content":" there"},"index":0,"finish_reason":null}]}\n\n',
+        'data: {"id":"chatcmpl-1","model":"deepseek-r1","choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}\n\n',
+        'data: [DONE]\n\n',
+      ];
+      transformPort = await createMockStreamingOpenAIServer(sseChunks);
+
+      mockEndpoints = {
+        bedrock: {
+          baseUrl: `http://127.0.0.1:${transformPort}`,
+          apiKey: 'bedrock-api-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const anthropicReq = {
+        model: 'deepseek-r1',
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 1024,
+        stream: true,
+      };
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock',
+            'x-nanoclaw-transform': 'openai',
+          },
+        },
+        JSON.stringify(anthropicReq),
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/event-stream');
+
+      // Verify upstream received stream:true in the body
+      const upstreamReq = JSON.parse(lastTransformBody);
+      expect(upstreamReq.stream).toBe(true);
+
+      // Response should contain Anthropic SSE events
+      expect(res.body).toContain('event: message_start');
+      expect(res.body).toContain('event: content_block_start');
+      expect(res.body).toContain('event: content_block_delta');
+      expect(res.body).toContain('"text_delta"');
+      expect(res.body).toContain('Hi');
+      expect(res.body).toContain(' there');
+      expect(res.body).toContain('event: message_stop');
+    });
+
+    it('falls back to passthrough for unknown transform name', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'anthropic',
+            'x-nanoclaw-transform': 'nonexistent',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Falls through to passthrough path (no transform found)
+      expect(res.statusCode).toBe(200);
+      // Used x-api-key auth (passthrough mode)
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+      // Transform header stripped
+      expect(lastUpstreamHeaders['x-nanoclaw-transform']).toBeUndefined();
+    });
+
+    it('strips transform header even when no transform is applied', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-transform': 'openai',
+            'x-api-key': 'placeholder',
+          },
+        },
+        JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 10 }),
+      );
+
+      // Transform header must never reach upstream
+      expect(lastUpstreamHeaders['x-nanoclaw-transform']).toBeUndefined();
+    });
+
+    it('uses base URL path prefix when transform overrides path', async () => {
+      // Set up base URL with a path prefix (simulating bare Mantle host with subpath)
+      const openaiResponse = {
+        id: 'chatcmpl-456',
+        model: 'test-model',
+        choices: [{
+          message: { role: 'assistant', content: 'OK' },
+          finish_reason: 'stop',
+        }],
+      };
+      transformPort = await createMockOpenAIServer(openaiResponse);
+
+      mockEndpoints = {
+        bedrock: {
+          baseUrl: `http://127.0.0.1:${transformPort}/prefix`,
+          apiKey: 'bedrock-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock',
+            'x-nanoclaw-transform': 'openai',
+          },
+        },
+        JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 10 }),
+      );
+
+      // basePath (/prefix) + transform path (/v1/chat/completions)
+      expect(lastTransformUrl).toBe('/prefix/v1/chat/completions');
+    });
+  });
 });

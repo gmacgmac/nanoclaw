@@ -21,14 +21,21 @@ function buildCustomHeaders(
   envEndpoint?: string,
   containerWebSearchVendor?: string,
   envWebSearchVendor?: string,
+  containerTransform?: string,
+  envTransform?: string,
 ): string {
   const endpoint = containerEndpoint || envEndpoint || 'anthropic';
   const webSearchVendor =
     containerWebSearchVendor || envWebSearchVendor || 'ollama';
-  return [
+  const transform = containerTransform || envTransform;
+  const lines = [
     `X-Nanoclaw-Endpoint: ${endpoint}`,
     `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
-  ].join('\n');
+  ];
+  if (transform) {
+    lines.push(`X-Nanoclaw-Transform: ${transform}`);
+  }
+  return lines.join('\n');
 }
 
 describe('agent-runner custom headers', () => {
@@ -90,6 +97,28 @@ describe('agent-runner custom headers', () => {
     const headers = buildCustomHeaders(undefined, 'ollama', undefined, 'brave');
     expect(headers).toContain('X-Nanoclaw-Endpoint: ollama');
     expect(headers).toContain('X-Nanoclaw-Web-Search-Vendor: brave');
+  });
+
+  it('includes X-Nanoclaw-Transform header when transform is set', () => {
+    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined, 'openai');
+    expect(headers).toContain('X-Nanoclaw-Transform: openai');
+  });
+
+  it('does NOT include X-Nanoclaw-Transform header when transform is absent', () => {
+    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined);
+    expect(headers).not.toContain('X-Nanoclaw-Transform');
+    const lines = headers.split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('containerInput.transform takes priority over env', () => {
+    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined, 'openai', 'other');
+    expect(headers).toContain('X-Nanoclaw-Transform: openai');
+  });
+
+  it('falls back to env transform when containerInput.transform is absent', () => {
+    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined, undefined, 'openai');
+    expect(headers).toContain('X-Nanoclaw-Transform: openai');
   });
 });
 

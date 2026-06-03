@@ -51,6 +51,7 @@ export interface ContainerInput {
   systemPrompt?: string;
   script?: string;
   endpoint?: string;
+  transform?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
   learningLoop?: boolean | 'extract-only';
