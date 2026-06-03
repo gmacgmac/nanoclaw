@@ -2,6 +2,10 @@
 
 Personal Claude assistant. See [README.md](README.md) for setup, architecture, and security configuration. See [docs/requirements.md](docs/requirements.md) for architecture decisions.
 
+## Safety Note
+
+You are FORBIDDEN from reading secrets.env
+
 ## Quick Context
 
 Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in isolated Docker containers. Each group has its own filesystem, session state, and memory. Credentials never reach containers — a host-side proxy injects them at request time. Per-group behaviour is controlled via `containerConfig` stored in SQLite.

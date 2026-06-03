@@ -544,3 +544,56 @@ The transform integration is strictly additive. When `X-Nanoclaw-Transform` is a
 ---
 
 *Added 2026-06-03. Source tasks: `cortex-tasks/nanoclaw/nanoclaw-mcp_proxy_2026-06-02_bedrock-mantle-and-transform/` (BE_01–MANUAL_01).*
+
+
+### Curl Test Bedrock Endpoints
+
+Here you go — replace `YOUR_KEY` with your Bedrock API key in each:
+
+**List all available models (OpenAI-shaped endpoint):**
+```bash
+curl -s 'https://bedrock-mantle.us-east-1.api.aws/v1/models' \
+  -H 'x-api-key: YOUR_KEY'
+```
+
+**List models (Anthropic-shaped endpoint — may return empty):**
+```bash
+curl -s 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/models' \
+  -H 'x-api-key: YOUR_KEY' \
+  -H 'anthropic-version: 2023-06-01'
+```
+
+**Claude track — Haiku (Messages API):**
+```bash
+curl -s -X POST 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages' \
+  -H 'x-api-key: YOUR_KEY' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'content-type: application/json' \
+  -d '{"model":"anthropic.claude-haiku-4-5","max_tokens":50,"messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+**Open-source track — DeepSeek (ChatCompletions API):**
+```bash
+curl -s -X POST 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions' \
+  -H 'Authorization: Bearer YOUR_KEY' \
+  -H 'content-type: application/json' \
+  -d '{"model":"deepseek.v3.2","max_tokens":50,"messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+**Open-source track — Kimi K2.5 (ChatCompletions API):**
+```bash
+curl -s -X POST 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions' \
+  -H 'Authorization: Bearer YOUR_KEY' \
+  -H 'content-type: application/json' \
+  -d '{"model":"moonshotai.kimi-k2.5","max_tokens":50,"messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+**Open-source track — MiniMax (ChatCompletions API):**
+```bash
+curl -s -X POST 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions' \
+  -H 'Authorization: Bearer YOUR_KEY' \
+  -H 'content-type: application/json' \
+  -d '{"model":"minimax.minimax-m2.5","max_tokens":50,"messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+Key difference: Claude track uses `x-api-key` + `/anthropic/v1/messages`. Open-source track uses `Authorization: Bearer` + `/v1/chat/completions`.
