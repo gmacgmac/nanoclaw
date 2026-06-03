@@ -1,7 +1,7 @@
 ---
 category: comms
 default: false
-condition: discord channel (folder starts with discord_)
+condition: registered channel is Discord (JID prefix dc:)
 ---
 ## Discord Formatting
 

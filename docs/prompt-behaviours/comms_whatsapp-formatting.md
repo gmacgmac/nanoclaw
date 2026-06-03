@@ -1,7 +1,7 @@
 ---
 category: comms
 default: false
-condition: whatsapp channel (folder starts with whatsapp_)
+condition: registered channel is WhatsApp (JID suffix @g.us or @s.whatsapp.net)
 ---
 ## WhatsApp Formatting
 

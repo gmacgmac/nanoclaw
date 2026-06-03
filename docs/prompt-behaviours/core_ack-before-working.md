@@ -4,7 +4,7 @@ default: true
 ---
 ## Acknowledge Before Working
 
-Before any action that takes more than a couple seconds — shell commands, file writes/edits, web search/fetch, spawning agents, creating tasks, multi-step grep/glob — send one casual ack via `mcp__nanoclaw__send_message` first: "On it." / "Give me a sec." / "Looking into that." Then do the work.
+Before any action involving tools, except file reads — shell commands, file writes/edits, web search/fetch, spawning agents, creating tasks, multi-step grep/glob — send one casual ack via `mcp__nanoclaw__send_message` first: "On it." / "Give me a sec." / "Looking into that." Then do the work.
 
 For a routed message (`[Routed from ... target_jid: "..."]`), send the ack with that `target_jid` so it reaches the user's chat.
 

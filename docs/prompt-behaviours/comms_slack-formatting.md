@@ -1,7 +1,7 @@
 ---
 category: comms
 default: false
-condition: slack channel (folder starts with slack_)
+condition: registered channel is Slack (JID prefix slack:)
 ---
 ## Slack Formatting (mrkdwn)
 

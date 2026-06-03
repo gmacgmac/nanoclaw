@@ -13,7 +13,7 @@ Build or upgrade a group's `CLAUDE.md` by assembling modular behaviour snippets 
 docs/prompt-behaviours/
 ```
 
-Each file is a self-contained markdown section starting with frontmatter, then a `##` heading, ending with two newlines. Snippets are written to be concatenated directly into a CLAUDE.md — no transformation needed. Tool names already carry the `mcp__nanoclaw__` prefix, and `core_memory-protocol.md` already includes the `@memory/MEMORY.md` import line.
+Each file is a self-contained markdown section starting with frontmatter, then a `##` heading, ending with two newlines. Snippets are written to be concatenated directly into a CLAUDE.md — no transformation needed. Tool names already carry the `mcp__nanoclaw__` prefix. The `@memory/MEMORY.md` import goes at the very bottom of the assembled CLAUDE.md, after all other content.
 
 **If the folder doesn't exist or is empty**, use the Quick Start fallback (see bottom) — copy a template CLAUDE.md instead.
 
@@ -39,7 +39,7 @@ Derive these facts about the group, then match them against each conditional sni
 
 | Profile fact | How to determine it |
 |--------------|---------------------|
-| Channel | Folder prefix: `telegram_` / `slack_` / `whatsapp_` / `discord_`. Pick the one matching formatting snippet. |
+| Channel | Registered JID prefix: `tg:` = Telegram, `dc:` = Discord, `slack:` = Slack. JID suffix `@g.us` / `@s.whatsapp.net` = WhatsApp. Ask the user or check the group's JID in `registered_groups`. Pick the matching formatting snippet. |
 | Main group | `isMain` in the group's config (ask, or check `configure-group` / registered_groups). Gates `comms_cross-group`. |
 | Cross-group routing | Group sits behind a multi-agent router hub. Gates `comms_routed-messages`. |
 | Attachments | Channel supports file attachments (Telegram/Slack/WhatsApp/Discord all do). Gates `comms_send-attachments`. |
@@ -126,8 +126,9 @@ Order:
 6. **Scheduling** (`scheduling_` snippets)
 7. **Builder** (selected `builder_` snippets)
 8. **Domain-specific** (custom sections unique to this group)
+9. **`@memory/MEMORY.md`** (always last — bare import on its own line)
 
-Read each selected snippet and concatenate in order. Strip the frontmatter block from each snippet during assembly — it's metadata for selection, not content for the CLAUDE.md. The two trailing newlines handle spacing. No other transformation: tool prefixes and the memory import are already baked in.
+Read each selected snippet and concatenate in order. Strip the frontmatter block from each snippet during assembly — it's metadata for selection, not content for the CLAUDE.md. The two trailing newlines handle spacing. No other transformation: tool prefixes are already baked in. Append `@memory/MEMORY.md` as the very last line.
 
 ### Step 5: Review and Write
 
