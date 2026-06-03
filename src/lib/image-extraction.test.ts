@@ -5,14 +5,18 @@ describe('PHOTO_MESSAGE_REGEX', () => {
   // --- Matching cases ---
 
   it('matches a bare path with no caption', () => {
-    const m = '[Photo]: /workspace/group/media/img.jpg'.match(PHOTO_MESSAGE_REGEX);
+    const m = '[Photo]: /workspace/group/media/img.jpg'.match(
+      PHOTO_MESSAGE_REGEX,
+    );
     expect(m).not.toBeNull();
     expect(m![1]).toBe('/workspace/group/media/img.jpg');
     expect(m![2]).toBeUndefined();
   });
 
   it('matches a path with a single-line caption', () => {
-    const m = '[Photo]: /workspace/group/media/img.jpg look at this'.match(PHOTO_MESSAGE_REGEX);
+    const m = '[Photo]: /workspace/group/media/img.jpg look at this'.match(
+      PHOTO_MESSAGE_REGEX,
+    );
     expect(m).not.toBeNull();
     expect(m![1]).toBe('/workspace/group/media/img.jpg');
     expect(m![2]).toBe('look at this');
@@ -32,7 +36,16 @@ describe('PHOTO_MESSAGE_REGEX', () => {
   });
 
   it('matches all supported extensions', () => {
-    for (const ext of ['jpg', 'jpeg', 'png', 'webp', 'gif', 'JPG', 'JPEG', 'PNG']) {
+    for (const ext of [
+      'jpg',
+      'jpeg',
+      'png',
+      'webp',
+      'gif',
+      'JPG',
+      'JPEG',
+      'PNG',
+    ]) {
       const m = `/workspace/media/file.${ext}`;
       expect(`[Photo]: ${m}`.match(PHOTO_MESSAGE_REGEX)).not.toBeNull();
     }
