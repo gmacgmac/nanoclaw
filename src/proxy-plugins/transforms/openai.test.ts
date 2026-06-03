@@ -33,11 +33,13 @@ describe('transform registry', () => {
 
   it('transform.transformRequest returns path /v1/chat/completions', () => {
     const t = getTransform('openai')!;
-    const body = Buffer.from(JSON.stringify({
-      model: 'test',
-      messages: [{ role: 'user', content: 'hi' }],
-      max_tokens: 100,
-    }));
+    const body = Buffer.from(
+      JSON.stringify({
+        model: 'test',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 100,
+      }),
+    );
     const result = t.transformRequest(body);
     expect(result.path).toBe('/v1/chat/completions');
     expect(result.contentType).toBe('application/json');
@@ -247,7 +249,10 @@ describe('buildOpenAIRequest', () => {
     const msgs = result.messages as Array<{ content: unknown }>;
     expect(msgs[0].content).toEqual([
       { type: 'text', text: 'Describe this' },
-      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+      {
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+      },
     ]);
   });
 });
@@ -261,7 +266,11 @@ describe('buildAnthropicResponse', () => {
       model: 'deepseek-v3',
       choices: [
         {
-          message: { role: 'assistant', content: 'Hello!', tool_calls: undefined },
+          message: {
+            role: 'assistant',
+            content: 'Hello!',
+            tool_calls: undefined,
+          },
           finish_reason: 'stop',
         },
       ],
@@ -317,7 +326,12 @@ describe('buildAnthropicResponse', () => {
       const r = buildAnthropicResponse({
         id: 'x',
         model: 'm',
-        choices: [{ message: { role: 'assistant', content: 'x' }, finish_reason: reason }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'x' },
+            finish_reason: reason,
+          },
+        ],
       });
       expect(r.stop_reason).toBe(expected);
     };
@@ -352,7 +366,12 @@ describe('buildAnthropicResponse', () => {
 
     expect(result.content).toEqual([
       { type: 'text', text: 'Let me check the weather.' },
-      { type: 'tool_use', id: 'call_1', name: 'get_weather', input: { city: 'NYC' } },
+      {
+        type: 'tool_use',
+        id: 'call_1',
+        name: 'get_weather',
+        input: { city: 'NYC' },
+      },
     ]);
   });
 });
@@ -369,7 +388,9 @@ describe('createOpenAIStreamTransformer', () => {
     return output;
   }
 
-  function parseSSEEvents(raw: string): Array<{ event: string; data: unknown }> {
+  function parseSSEEvents(
+    raw: string,
+  ): Array<{ event: string; data: unknown }> {
     const events: Array<{ event: string; data: unknown }> = [];
     const blocks = raw.split('\n\n').filter(Boolean);
     for (const block of blocks) {
@@ -402,25 +423,38 @@ describe('createOpenAIStreamTransformer', () => {
     expect(events[0].event).toBe('message_start');
     // content_block_start
     expect(events[1].event).toBe('content_block_start');
-    expect((events[1].data as Record<string, unknown>).content_block).toEqual({ type: 'text', text: '' });
+    expect((events[1].data as Record<string, unknown>).content_block).toEqual({
+      type: 'text',
+      text: '',
+    });
     // text deltas
     expect(events[2].event).toBe('content_block_delta');
-    expect((events[2].data as Record<string, unknown>).delta).toEqual({ type: 'text_delta', text: 'Hello' });
+    expect((events[2].data as Record<string, unknown>).delta).toEqual({
+      type: 'text_delta',
+      text: 'Hello',
+    });
     expect(events[3].event).toBe('content_block_delta');
-    expect((events[3].data as Record<string, unknown>).delta).toEqual({ type: 'text_delta', text: ' world' });
+    expect((events[3].data as Record<string, unknown>).delta).toEqual({
+      type: 'text_delta',
+      text: ' world',
+    });
     // content_block_stop
     expect(events[4].event).toBe('content_block_stop');
     // message_delta with stop_reason
     expect(events[5].event).toBe('message_delta');
-    expect((events[5].data as Record<string, unknown>).delta).toEqual({ stop_reason: 'end_turn' });
+    expect((events[5].data as Record<string, unknown>).delta).toEqual({
+      stop_reason: 'end_turn',
+    });
     // message_stop
     expect(events[6].event).toBe('message_stop');
   });
 
   it('handles chunks split across buffer boundaries', () => {
     // The SSE line is split across two chunks
-    const part1 = 'data: {"id":"chatcmpl-1","model":"test","choices":[{"delta":{"con';
-    const part2 = 'tent":"Hi"},"index":0,"finish_reason":null}]}\n\ndata: [DONE]\n\n';
+    const part1 =
+      'data: {"id":"chatcmpl-1","model":"test","choices":[{"delta":{"con';
+    const part2 =
+      'tent":"Hi"},"index":0,"finish_reason":null}]}\n\ndata: [DONE]\n\n';
 
     const output = feedChunks([part1, part2]);
     const events = parseSSEEvents(output);
@@ -428,7 +462,10 @@ describe('createOpenAIStreamTransformer', () => {
     expect(events[0].event).toBe('message_start');
     expect(events[1].event).toBe('content_block_start');
     expect(events[2].event).toBe('content_block_delta');
-    expect((events[2].data as Record<string, unknown>).delta).toEqual({ type: 'text_delta', text: 'Hi' });
+    expect((events[2].data as Record<string, unknown>).delta).toEqual({
+      type: 'text_delta',
+      text: 'Hi',
+    });
   });
 
   it('transforms tool_calls streaming', () => {
@@ -447,20 +484,29 @@ describe('createOpenAIStreamTransformer', () => {
     expect(events[0].event).toBe('message_start');
     // content_block_start for tool_use
     expect(events[1].event).toBe('content_block_start');
-    const toolBlock = (events[1].data as Record<string, unknown>).content_block as Record<string, unknown>;
+    const toolBlock = (events[1].data as Record<string, unknown>)
+      .content_block as Record<string, unknown>;
     expect(toolBlock.type).toBe('tool_use');
     expect(toolBlock.name).toBe('get_weather');
     expect(toolBlock.id).toBe('call_1');
     // input_json_delta chunks
     expect(events[2].event).toBe('content_block_delta');
-    expect((events[2].data as Record<string, unknown>).delta).toEqual({ type: 'input_json_delta', partial_json: '{"city"' });
+    expect((events[2].data as Record<string, unknown>).delta).toEqual({
+      type: 'input_json_delta',
+      partial_json: '{"city"',
+    });
     expect(events[3].event).toBe('content_block_delta');
-    expect((events[3].data as Record<string, unknown>).delta).toEqual({ type: 'input_json_delta', partial_json: ':"London"}' });
+    expect((events[3].data as Record<string, unknown>).delta).toEqual({
+      type: 'input_json_delta',
+      partial_json: ':"London"}',
+    });
     // content_block_stop for tool
     expect(events[4].event).toBe('content_block_stop');
     // message_delta
     expect(events[5].event).toBe('message_delta');
-    expect((events[5].data as Record<string, unknown>).delta).toEqual({ stop_reason: 'tool_use' });
+    expect((events[5].data as Record<string, unknown>).delta).toEqual({
+      stop_reason: 'tool_use',
+    });
     // message_stop
     expect(events[6].event).toBe('message_stop');
   });
@@ -492,32 +538,43 @@ describe('round-trip transform', () => {
     const t = getTransform('openai')!;
 
     // Transform request
-    const anthropicReqBody = Buffer.from(JSON.stringify({
-      model: 'deepseek-v3',
-      system: 'Be concise.',
-      messages: [{ role: 'user', content: 'Say hi' }],
-      max_tokens: 50,
-    }));
+    const anthropicReqBody = Buffer.from(
+      JSON.stringify({
+        model: 'deepseek-v3',
+        system: 'Be concise.',
+        messages: [{ role: 'user', content: 'Say hi' }],
+        max_tokens: 50,
+      }),
+    );
     const { body: openaiReqBuf, path } = t.transformRequest(anthropicReqBody);
     const openaiReq = JSON.parse(openaiReqBuf.toString());
 
     expect(path).toBe('/v1/chat/completions');
     expect(openaiReq.model).toBe('deepseek-v3');
-    expect(openaiReq.messages[0]).toEqual({ role: 'system', content: 'Be concise.' });
+    expect(openaiReq.messages[0]).toEqual({
+      role: 'system',
+      content: 'Be concise.',
+    });
 
     // Mock OpenAI response
-    const mockOpenAIResp = Buffer.from(JSON.stringify({
-      id: 'chatcmpl-roundtrip',
-      model: 'deepseek-v3',
-      choices: [{
-        message: { role: 'assistant', content: 'Hi!' },
-        finish_reason: 'stop',
-      }],
-      usage: { prompt_tokens: 8, completion_tokens: 2 },
-    }));
+    const mockOpenAIResp = Buffer.from(
+      JSON.stringify({
+        id: 'chatcmpl-roundtrip',
+        model: 'deepseek-v3',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'Hi!' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 8, completion_tokens: 2 },
+      }),
+    );
 
     // Transform response
-    const anthropicResp = JSON.parse(t.transformResponse(mockOpenAIResp).toString());
+    const anthropicResp = JSON.parse(
+      t.transformResponse(mockOpenAIResp).toString(),
+    );
 
     expect(anthropicResp.type).toBe('message');
     expect(anthropicResp.role).toBe('assistant');

@@ -100,24 +100,49 @@ describe('agent-runner custom headers', () => {
   });
 
   it('includes X-Nanoclaw-Transform header when transform is set', () => {
-    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined, 'openai');
+    const headers = buildCustomHeaders(
+      'anthropic',
+      undefined,
+      'ollama',
+      undefined,
+      'openai',
+    );
     expect(headers).toContain('X-Nanoclaw-Transform: openai');
   });
 
   it('does NOT include X-Nanoclaw-Transform header when transform is absent', () => {
-    const headers = buildCustomHeaders('anthropic', undefined, 'ollama', undefined);
+    const headers = buildCustomHeaders(
+      'anthropic',
+      undefined,
+      'ollama',
+      undefined,
+    );
     expect(headers).not.toContain('X-Nanoclaw-Transform');
     const lines = headers.split('\n');
     expect(lines).toHaveLength(2);
   });
 
   it('containerInput.transform takes priority over env', () => {
-    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined, 'openai', 'other');
+    const headers = buildCustomHeaders(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'openai',
+      'other',
+    );
     expect(headers).toContain('X-Nanoclaw-Transform: openai');
   });
 
   it('falls back to env transform when containerInput.transform is absent', () => {
-    const headers = buildCustomHeaders(undefined, undefined, undefined, undefined, undefined, 'openai');
+    const headers = buildCustomHeaders(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'openai',
+    );
     expect(headers).toContain('X-Nanoclaw-Transform: openai');
   });
 });

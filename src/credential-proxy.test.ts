@@ -701,7 +701,10 @@ describe('credential-proxy', () => {
           req.on('end', () => {
             lastTransformBody = Buffer.concat(chunks).toString();
             const body = JSON.stringify(responseBody);
-            res.writeHead(200, { ...headers, 'content-length': String(body.length) });
+            res.writeHead(200, {
+              ...headers,
+              'content-length': String(body.length),
+            });
             res.end(body);
           });
         });
@@ -711,7 +714,9 @@ describe('credential-proxy', () => {
       });
     }
 
-    function createMockStreamingOpenAIServer(sseChunks: string[]): Promise<number> {
+    function createMockStreamingOpenAIServer(
+      sseChunks: string[],
+    ): Promise<number> {
       return new Promise((resolve) => {
         transformServer = http.createServer((req, res) => {
           lastTransformHeaders = { ...req.headers };
@@ -720,7 +725,10 @@ describe('credential-proxy', () => {
           req.on('data', (c) => chunks.push(c));
           req.on('end', () => {
             lastTransformBody = Buffer.concat(chunks).toString();
-            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            res.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+            });
             for (const chunk of sseChunks) {
               res.write(chunk);
             }
@@ -738,10 +746,12 @@ describe('credential-proxy', () => {
       const openaiResponse = {
         id: 'chatcmpl-123',
         model: 'deepseek-r1',
-        choices: [{
-          message: { role: 'assistant', content: 'Hello from OpenAI format' },
-          finish_reason: 'stop',
-        }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'Hello from OpenAI format' },
+            finish_reason: 'stop',
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       };
       transformPort = await createMockOpenAIServer(openaiResponse);
@@ -783,11 +793,15 @@ describe('credential-proxy', () => {
       expect(lastTransformUrl).toBe('/v1/chat/completions');
       const upstreamReq = JSON.parse(lastTransformBody);
       expect(upstreamReq.model).toBe('deepseek-r1');
-      expect(upstreamReq.messages).toEqual([{ role: 'user', content: 'Hello' }]);
+      expect(upstreamReq.messages).toEqual([
+        { role: 'user', content: 'Hello' },
+      ]);
       expect(upstreamReq.max_tokens).toBe(1024);
 
       // Verify auth is Bearer-style
-      expect(lastTransformHeaders['authorization']).toBe('Bearer bedrock-api-key');
+      expect(lastTransformHeaders['authorization']).toBe(
+        'Bearer bedrock-api-key',
+      );
       expect(lastTransformHeaders['x-api-key']).toBeUndefined();
 
       // Verify transform header was stripped
@@ -798,9 +812,14 @@ describe('credential-proxy', () => {
       const anthropicRes = JSON.parse(res.body);
       expect(anthropicRes.type).toBe('message');
       expect(anthropicRes.role).toBe('assistant');
-      expect(anthropicRes.content).toEqual([{ type: 'text', text: 'Hello from OpenAI format' }]);
+      expect(anthropicRes.content).toEqual([
+        { type: 'text', text: 'Hello from OpenAI format' },
+      ]);
       expect(anthropicRes.stop_reason).toBe('end_turn');
-      expect(anthropicRes.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
+      expect(anthropicRes.usage).toEqual({
+        input_tokens: 10,
+        output_tokens: 5,
+      });
     });
 
     it('transforms streaming OpenAI SSE to Anthropic SSE', async () => {
@@ -913,7 +932,11 @@ describe('credential-proxy', () => {
             'x-api-key': 'placeholder',
           },
         },
-        JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 10 }),
+        JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 10,
+        }),
       );
 
       // Transform header must never reach upstream
@@ -925,10 +948,12 @@ describe('credential-proxy', () => {
       const openaiResponse = {
         id: 'chatcmpl-456',
         model: 'test-model',
-        choices: [{
-          message: { role: 'assistant', content: 'OK' },
-          finish_reason: 'stop',
-        }],
+        choices: [
+          {
+            message: { role: 'assistant', content: 'OK' },
+            finish_reason: 'stop',
+          },
+        ],
       };
       transformPort = await createMockOpenAIServer(openaiResponse);
 
@@ -952,7 +977,11 @@ describe('credential-proxy', () => {
             'x-nanoclaw-transform': 'openai',
           },
         },
-        JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 10 }),
+        JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 10,
+        }),
       );
 
       // basePath (/prefix) + transform path (/v1/chat/completions)

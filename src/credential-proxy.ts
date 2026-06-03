@@ -319,7 +319,9 @@ export function startCredentialProxy(
         ).toLowerCase();
 
         // Read and strip the transform header before forwarding
-        const transformName = req.headers[TRANSFORM_HEADER] as string | undefined;
+        const transformName = req.headers[TRANSFORM_HEADER] as
+          | string
+          | undefined;
 
         const { upstreamUrl, apiKey, oauthToken, authMode } = resolveEndpoint(
           requestedVendor,
@@ -367,7 +369,9 @@ export function startCredentialProxy(
         }
 
         // Resolve transform (if requested)
-        const transform = transformName ? getTransform(transformName) : undefined;
+        const transform = transformName
+          ? getTransform(transformName)
+          : undefined;
 
         // Strip Anthropic-specific request body fields for non-Anthropic vendors.
         // The Claude Code SDK injects fields like `context_management` that
@@ -377,7 +381,10 @@ export function startCredentialProxy(
         let sanitisedBody = body;
         if (requestedVendor !== 'anthropic' && !transform) {
           try {
-            const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+            const parsed = JSON.parse(body.toString()) as Record<
+              string,
+              unknown
+            >;
             if ('context_management' in parsed) {
               delete parsed['context_management'];
               sanitisedBody = Buffer.from(JSON.stringify(parsed));
@@ -398,7 +405,10 @@ export function startCredentialProxy(
             transformed = transform.transformRequest(body);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            logger.error({ err: msg, transform: transformName }, 'Transform request error');
+            logger.error(
+              { err: msg, transform: transformName },
+              'Transform request error',
+            );
             res.writeHead(502, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: 'Transform request failed' }));
             return;
@@ -422,7 +432,11 @@ export function startCredentialProxy(
           }
 
           logger.info(
-            { vendor: requestedVendor, transform: transformName, path: requestPath },
+            {
+              vendor: requestedVendor,
+              transform: transformName,
+              path: requestPath,
+            },
             'Proxy applying transform',
           );
         } else {
@@ -480,12 +494,16 @@ export function startCredentialProxy(
               upRes.pipe(res);
             } else {
               // Transform path: reshape the response
-              const isStreaming = upRes.headers['content-type']?.includes('text/event-stream');
+              const isStreaming =
+                upRes.headers['content-type']?.includes('text/event-stream');
 
               if (isStreaming) {
                 // Streaming: pipe through the stream transformer
                 const streamTransformer = transform.createStreamTransformer();
-                const streamHeaders = { ...upRes.headers, 'content-type': 'text/event-stream' };
+                const streamHeaders = {
+                  ...upRes.headers,
+                  'content-type': 'text/event-stream',
+                };
                 delete streamHeaders['content-length']; // chunks are transformed, length changes
                 res.writeHead(upRes.statusCode!, streamHeaders);
                 upRes.on('data', (chunk: Buffer) => {
@@ -507,10 +525,16 @@ export function startCredentialProxy(
                   try {
                     responseBody = transform.transformResponse(upBody);
                   } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    logger.error({ err: msg, transform: transformName }, 'Transform response error');
+                    const msg =
+                      err instanceof Error ? err.message : String(err);
+                    logger.error(
+                      { err: msg, transform: transformName },
+                      'Transform response error',
+                    );
                     res.writeHead(502, { 'content-type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Transform response failed' }));
+                    res.end(
+                      JSON.stringify({ error: 'Transform response failed' }),
+                    );
                     return;
                   }
                   // Build response headers, replacing content-type and content-length

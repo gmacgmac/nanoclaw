@@ -7,10 +7,7 @@
  * Pure functions — no HTTP, no env, no external dependencies.
  */
 
-import {
-  registerTransform,
-  type InferenceTransform,
-} from './registry.js';
+import { registerTransform, type InferenceTransform } from './registry.js';
 
 // ----- Anthropic → OpenAI (Request) -----
 
@@ -121,9 +118,10 @@ function mapAnthropicMessage(msg: AnthropicMessage): OpenAIMessage[] {
           type: 'function',
           function: {
             name: block.name!,
-            arguments: typeof block.input === 'string'
-              ? block.input
-              : JSON.stringify(block.input ?? {}),
+            arguments:
+              typeof block.input === 'string'
+                ? block.input
+                : JSON.stringify(block.input ?? {}),
           },
         });
         break;
@@ -131,9 +129,10 @@ function mapAnthropicMessage(msg: AnthropicMessage): OpenAIMessage[] {
         toolResults.push({
           role: 'tool',
           tool_call_id: block.tool_use_id!,
-          content: typeof block.content === 'string'
-            ? block.content
-            : JSON.stringify(block.content ?? ''),
+          content:
+            typeof block.content === 'string'
+              ? block.content
+              : JSON.stringify(block.content ?? ''),
         });
         break;
     }
@@ -145,9 +144,10 @@ function mapAnthropicMessage(msg: AnthropicMessage): OpenAIMessage[] {
   if (toolCalls.length > 0) {
     const main: OpenAIMessage = { role: msg.role, tool_calls: toolCalls };
     if (contentParts.length > 0) {
-      main.content = contentParts.length === 1 && contentParts[0].type === 'text'
-        ? contentParts[0].text!
-        : contentParts;
+      main.content =
+        contentParts.length === 1 && contentParts[0].type === 'text'
+          ? contentParts[0].text!
+          : contentParts;
     } else {
       main.content = null;
     }
@@ -166,7 +166,9 @@ function mapAnthropicMessage(msg: AnthropicMessage): OpenAIMessage[] {
   return messages;
 }
 
-function mapTools(tools: AnthropicTool[] | undefined): OpenAITool[] | undefined {
+function mapTools(
+  tools: AnthropicTool[] | undefined,
+): OpenAITool[] | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.map((t) => ({
     type: 'function' as const,
@@ -193,7 +195,9 @@ function mapToolChoice(
   return undefined;
 }
 
-export function buildOpenAIRequest(anthropicBody: AnthropicRequest): Record<string, unknown> {
+export function buildOpenAIRequest(
+  anthropicBody: AnthropicRequest,
+): Record<string, unknown> {
   const messages: OpenAIMessage[] = [
     ...mapSystemToMessages(anthropicBody.system),
     ...anthropicBody.messages.flatMap(mapAnthropicMessage),
@@ -205,7 +209,8 @@ export function buildOpenAIRequest(anthropicBody: AnthropicRequest): Record<stri
     max_tokens: anthropicBody.max_tokens,
   };
 
-  if (anthropicBody.temperature !== undefined) req.temperature = anthropicBody.temperature;
+  if (anthropicBody.temperature !== undefined)
+    req.temperature = anthropicBody.temperature;
   if (anthropicBody.top_p !== undefined) req.top_p = anthropicBody.top_p;
   if (anthropicBody.stop_sequences) req.stop = anthropicBody.stop_sequences;
   if (anthropicBody.stream) req.stream = true;
@@ -234,20 +239,31 @@ interface OpenAIResponse {
   id: string;
   model: string;
   choices: OpenAIChoice[];
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens?: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens?: number;
+  };
 }
 
 function mapFinishReason(reason: string): string {
   switch (reason) {
-    case 'stop': return 'end_turn';
-    case 'length': return 'max_tokens';
-    case 'tool_calls': return 'tool_use';
-    case 'content_filter': return 'end_turn';
-    default: return 'end_turn';
+    case 'stop':
+      return 'end_turn';
+    case 'length':
+      return 'max_tokens';
+    case 'tool_calls':
+      return 'tool_use';
+    case 'content_filter':
+      return 'end_turn';
+    default:
+      return 'end_turn';
   }
 }
 
-export function buildAnthropicResponse(openaiBody: OpenAIResponse): Record<string, unknown> {
+export function buildAnthropicResponse(
+  openaiBody: OpenAIResponse,
+): Record<string, unknown> {
   const choice = openaiBody.choices[0];
   const content: unknown[] = [];
 
@@ -303,7 +319,8 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
   let contentBlockIndex = 0;
   let inContentBlock = false;
   // Track tool call state for multi-chunk tool_calls
-  let activeToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
+  let activeToolCalls: Map<number, { id: string; name: string; args: string }> =
+    new Map();
   let model = 'unknown';
   let messageId = `msg_${Date.now()}`;
 
@@ -328,13 +345,19 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
       if (dataStr === '[DONE]') {
         // Close any open content block
         if (inContentBlock) {
-          output += sseEvent('content_block_stop', { type: 'content_block_stop', index: contentBlockIndex - 1 });
+          output += sseEvent('content_block_stop', {
+            type: 'content_block_stop',
+            index: contentBlockIndex - 1,
+          });
           inContentBlock = false;
         }
         // Flush any pending tool calls
         for (const [idx, tc] of activeToolCalls) {
           // Close the tool_use content block
-          output += sseEvent('content_block_stop', { type: 'content_block_stop', index: idx });
+          output += sseEvent('content_block_stop', {
+            type: 'content_block_stop',
+            index: idx,
+          });
         }
         activeToolCalls.clear();
         // Emit message_delta + message_stop
@@ -355,9 +378,12 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
       }
 
       if (parsed.model) model = parsed.model as string;
-      if (parsed.id) messageId = `msg_${(parsed.id as string).replace('chatcmpl-', '')}`;
+      if (parsed.id)
+        messageId = `msg_${(parsed.id as string).replace('chatcmpl-', '')}`;
 
-      const choices = parsed.choices as Array<Record<string, unknown>> | undefined;
+      const choices = parsed.choices as
+        | Array<Record<string, unknown>>
+        | undefined;
       if (!choices || choices.length === 0) continue;
 
       const choice = choices[0];
@@ -404,7 +430,10 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
       if (delta?.tool_calls) {
         // Close text content block if open
         if (inContentBlock) {
-          output += sseEvent('content_block_stop', { type: 'content_block_stop', index: contentBlockIndex });
+          output += sseEvent('content_block_stop', {
+            type: 'content_block_stop',
+            index: contentBlockIndex,
+          });
           contentBlockIndex++;
           inContentBlock = false;
         }
@@ -417,9 +446,14 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
           if (!activeToolCalls.has(tcIndex)) {
             // New tool call — emit content_block_start
             const toolBlockIndex = contentBlockIndex + tcIndex;
-            const toolId = (tc.id as string) || `toolu_${Date.now()}_${tcIndex}`;
+            const toolId =
+              (tc.id as string) || `toolu_${Date.now()}_${tcIndex}`;
             const toolName = fn?.name ?? '';
-            activeToolCalls.set(tcIndex, { id: toolId, name: toolName, args: '' });
+            activeToolCalls.set(tcIndex, {
+              id: toolId,
+              name: toolName,
+              args: '',
+            });
 
             output += sseEvent('content_block_start', {
               type: 'content_block_start',
@@ -446,13 +480,19 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
       if (finishReason) {
         // Close text block if open
         if (inContentBlock) {
-          output += sseEvent('content_block_stop', { type: 'content_block_stop', index: contentBlockIndex });
+          output += sseEvent('content_block_stop', {
+            type: 'content_block_stop',
+            index: contentBlockIndex,
+          });
           inContentBlock = false;
         }
         // Close tool call blocks
         for (const [tcIndex] of activeToolCalls) {
           const toolBlockIndex = contentBlockIndex + tcIndex;
-          output += sseEvent('content_block_stop', { type: 'content_block_stop', index: toolBlockIndex });
+          output += sseEvent('content_block_stop', {
+            type: 'content_block_stop',
+            index: toolBlockIndex,
+          });
         }
         activeToolCalls.clear();
 
@@ -475,7 +515,11 @@ export function createOpenAIStreamTransformer(): (chunk: Buffer) => Buffer {
 class OpenAITransform implements InferenceTransform {
   name = 'openai';
 
-  transformRequest(body: Buffer): { body: Buffer; path: string; contentType?: string } {
+  transformRequest(body: Buffer): {
+    body: Buffer;
+    path: string;
+    contentType?: string;
+  } {
     const anthropicReq = JSON.parse(body.toString()) as AnthropicRequest;
     const openaiReq = buildOpenAIRequest(anthropicReq);
     return {
