@@ -1163,7 +1163,7 @@ describe('TelegramChannel', () => {
           { command: 'context', description: 'Show context window usage' },
           {
             command: 'newsession',
-            description: 'Write memories and start fresh session',
+            description: 'Start fresh session',
           },
           { command: 'model', description: 'Switch model preset' },
         ],
@@ -1281,7 +1281,7 @@ describe('TelegramChannel', () => {
           { command: 'model', description: 'Switch model preset' },
           {
             command: 'newsession',
-            description: 'Write memories and start fresh session',
+            description: 'Start fresh session',
           },
         ]),
         { scope: { type: 'chat', chat_id: '100200300' } },

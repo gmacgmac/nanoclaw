@@ -17,9 +17,17 @@ import { NewMessage } from '../types.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Regex to match photo messages: `[Photo]: /path/to/image.jpg optional caption` */
+/**
+ * Regex to match photo messages: `[Photo]: /path/to/image.jpg optional caption`
+ *
+ * Path group uses a non-greedy match up to the file extension, so paths
+ * containing spaces (e.g. "Dropbox (Personal)/...") are handled correctly.
+ * The extension boundary `\b` ensures the match ends at the extension.
+ * Caption group uses `[\s\S]+` to capture across newlines — Telegram captions
+ * frequently contain line breaks which would cause `.+$` to fail.
+ */
 export const PHOTO_MESSAGE_REGEX =
-  /^\[Photo\]:\s*(.+\.(?:jpe?g|png|webp|gif))(?:\s(.+))?$/i;
+  /^\[Photo\]:\s*(.+?\.(?:jpe?g|png|webp|gif))(?:\s([\s\S]+))?$/i;
 
 /** Default max payload size for encoded images (10MB) */
 export const DEFAULT_IMAGE_PAYLOAD_LIMIT = 10 * 1024 * 1024;

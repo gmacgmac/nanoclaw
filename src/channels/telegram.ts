@@ -622,7 +622,7 @@ export class TelegramChannel implements Channel {
     if (allowedHostCommands.includes('newsession')) {
       commands.push({
         command: 'newsession',
-        description: 'Write memories and start fresh session',
+        description: 'Start fresh session',
       });
     }
 
