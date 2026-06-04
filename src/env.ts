@@ -71,9 +71,9 @@ export type AuthScheme = 'x-api-key' | 'bearer' | 'sigv4';
  */
 export interface EndpointEntry {
   baseUrl: string;
-  apiKey?: string;       // optional — sigv4 vendors have no key
-  auth?: AuthScheme;     // absent ⇒ treated as 'x-api-key' downstream
-  region?: string;       // only consumed when auth === 'sigv4'
+  apiKey?: string; // optional — sigv4 vendors have no key
+  auth?: AuthScheme; // absent ⇒ treated as 'x-api-key' downstream
+  region?: string; // only consumed when auth === 'sigv4'
 }
 
 /**
@@ -119,8 +119,10 @@ export function scanEndpoints(): Record<string, EndpointEntry> {
   // Also check process.env for _BASE_URL/_API_KEY/_AUTH/_REGION values
   for (const key of Object.keys(process.env)) {
     if (
-      (key.endsWith('_BASE_URL') || key.endsWith('_API_KEY') ||
-       key.endsWith('_AUTH') || key.endsWith('_REGION')) &&
+      (key.endsWith('_BASE_URL') ||
+        key.endsWith('_API_KEY') ||
+        key.endsWith('_AUTH') ||
+        key.endsWith('_REGION')) &&
       !allVars[key]
     ) {
       if (process.env[key]) allVars[key] = process.env[key]!;

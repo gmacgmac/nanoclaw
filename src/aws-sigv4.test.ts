@@ -254,7 +254,9 @@ describe('signRequestV4', () => {
     it('same inputs produce identical output', () => {
       const input: SignInput = {
         method: 'POST',
-        url: new URL('https://bedrock-runtime.us-east-1.amazonaws.com/model/x/invoke'),
+        url: new URL(
+          'https://bedrock-runtime.us-east-1.amazonaws.com/model/x/invoke',
+        ),
         headers: {
           host: 'bedrock-runtime.us-east-1.amazonaws.com',
           'content-type': 'application/json',

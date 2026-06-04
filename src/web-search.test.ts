@@ -451,7 +451,6 @@ describe('MCP server proxy callers', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // 3. Agent-runner: Bedrock SDK mode env assembly
 //    Mirrors the sdkMode branch logic from container/agent-runner/src/index.ts main()
@@ -502,8 +501,7 @@ function buildSdkEnv(
   if (sdkMode === 'bedrock') {
     const proxyBase =
       processEnv.ANTHROPIC_BASE_URL || 'http://host.docker.internal:3001';
-    const awsRegion =
-      input.awsRegion || processEnv.AWS_REGION || 'us-east-1';
+    const awsRegion = input.awsRegion || processEnv.AWS_REGION || 'us-east-1';
 
     sdkEnv.CLAUDE_CODE_USE_BEDROCK = '1';
     sdkEnv.AWS_REGION = awsRegion;
@@ -592,7 +590,9 @@ describe('agent-runner Bedrock SDK mode env assembly', () => {
   it('absent sdkMode (undefined) behaves like anthropic', () => {
     const env = buildSdkEnv({});
     expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Nanoclaw-Endpoint: anthropic');
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain(
+      'X-Nanoclaw-Endpoint: anthropic',
+    );
   });
 
   it('explicit sdkMode "anthropic" does NOT set Bedrock vars', () => {

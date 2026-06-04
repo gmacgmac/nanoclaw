@@ -332,11 +332,14 @@ export function startCredentialProxy(
           | string
           | undefined;
 
-        const { upstreamUrl, apiKey, oauthToken, authMode, vendorAuth, region: vendorRegion } = resolveEndpoint(
-          requestedVendor,
-          routingTable,
-          legacySecrets,
-        );
+        const {
+          upstreamUrl,
+          apiKey,
+          oauthToken,
+          authMode,
+          vendorAuth,
+          region: vendorRegion,
+        } = resolveEndpoint(requestedVendor, routingTable, legacySecrets);
 
         logger.info(
           {
@@ -567,7 +570,12 @@ export function startCredentialProxy(
           }
 
           logger.info(
-            { vendor: requestedVendor, auth: 'sigv4', region: vendorRegion, signed: true },
+            {
+              vendor: requestedVendor,
+              auth: 'sigv4',
+              region: vendorRegion,
+              signed: true,
+            },
             'SigV4 request signed',
           );
         }

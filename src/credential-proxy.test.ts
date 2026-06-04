@@ -3,7 +3,10 @@ import http from 'http';
 import type { AddressInfo } from 'net';
 
 const mockEnv: Record<string, string> = {};
-let mockEndpoints: Record<string, { baseUrl: string; apiKey?: string; auth?: string; region?: string }> = {};
+let mockEndpoints: Record<
+  string,
+  { baseUrl: string; apiKey?: string; auth?: string; region?: string }
+> = {};
 let mockWebSearchEndpoints: Record<
   string,
   { baseUrl: string; apiKey: string }
@@ -1105,7 +1108,8 @@ describe('credential-proxy', () => {
         secretAccessKey: 'testsecret',
       });
       mockSignRequestV4.mockReturnValue({
-        Authorization: 'AWS4-HMAC-SHA256 Credential=AKIATEST/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=..., Signature=abc',
+        Authorization:
+          'AWS4-HMAC-SHA256 Credential=AKIATEST/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=..., Signature=abc',
         'x-amz-date': '20260603T000000Z',
         'x-amz-content-sha256': 'bodyhash',
       });
@@ -1137,7 +1141,9 @@ describe('credential-proxy', () => {
       );
 
       // Inbound placeholders stripped, SigV4 Authorization injected
-      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+      expect(lastUpstreamHeaders['authorization']).toContain(
+        'AWS4-HMAC-SHA256',
+      );
       expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
       expect(lastUpstreamHeaders['x-amz-date']).toBe('20260603T000000Z');
     });
@@ -1194,9 +1200,11 @@ describe('credential-proxy', () => {
         secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
       });
       mockSignRequestV4.mockReturnValue({
-        Authorization: 'AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=abcdef1234567890',
+        Authorization:
+          'AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=abcdef1234567890',
         'x-amz-date': '20260603T120000Z',
-        'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'x-amz-content-sha256':
+          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       });
 
       mockEndpoints = {
@@ -1225,7 +1233,9 @@ describe('credential-proxy', () => {
       );
 
       // Signed headers injected
-      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+      expect(lastUpstreamHeaders['authorization']).toContain(
+        'AWS4-HMAC-SHA256',
+      );
       expect(lastUpstreamHeaders['x-amz-date']).toBe('20260603T120000Z');
       expect(lastUpstreamHeaders['x-amz-content-sha256']).toBe(
         'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
@@ -1276,7 +1286,9 @@ describe('credential-proxy', () => {
       expect(lastUpstreamHeaders['x-amz-security-token']).toBe(
         'FwoGZXIvYXdzE...session-token',
       );
-      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+      expect(lastUpstreamHeaders['authorization']).toContain(
+        'AWS4-HMAC-SHA256',
+      );
     });
 
     it('sigv4 vendor missing region: returns 500', async () => {

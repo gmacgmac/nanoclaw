@@ -61,7 +61,10 @@ function uriEncode(value: string, encodeSlash = true): string {
 }
 
 function formatAmzDate(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  return date
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
 }
 
 function formatDateStamp(date: Date): string {

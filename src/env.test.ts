@@ -187,7 +187,6 @@ describe('scanWebSearchEndpoints', () => {
   });
 });
 
-
 describe('scanEndpoints', () => {
   const secretsPath = path.join(HOME, '.config', 'nanoclaw', 'secrets.env');
   let cwdSpy: ReturnType<typeof vi.spyOn>;
@@ -292,9 +291,7 @@ describe('scanEndpoints', () => {
 
   it('skips vendor with base URL only, no key, no sigv4 (unchanged behavior)', () => {
     mockFiles({
-      [secretsPath]: [
-        'ORPHAN_BASE_URL=https://orphan.example.com',
-      ].join('\n'),
+      [secretsPath]: ['ORPHAN_BASE_URL=https://orphan.example.com'].join('\n'),
     });
 
     const result = scanEndpoints();
@@ -316,7 +313,8 @@ describe('scanEndpoints', () => {
 
   it('reads _AUTH and _REGION from process.env fallback', () => {
     mockFiles({});
-    process.env['BEDROCK_BASE_URL'] = 'https://bedrock-runtime.us-east-1.amazonaws.com';
+    process.env['BEDROCK_BASE_URL'] =
+      'https://bedrock-runtime.us-east-1.amazonaws.com';
     process.env['BEDROCK_AUTH'] = 'sigv4';
     process.env['BEDROCK_REGION'] = 'us-west-2';
 

@@ -50,17 +50,21 @@ describe('aws-credentials', () => {
   describe('static-env provider', () => {
     it('returns credentials from process.env', async () => {
       process.env.AWS_ACCESS_KEY_ID = 'AKIAIOSFODNN7EXAMPLE';
-      process.env.AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+      process.env.AWS_SECRET_ACCESS_KEY =
+        'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 
       const creds = await getAwsCredentials();
       expect(creds.accessKeyId).toBe('AKIAIOSFODNN7EXAMPLE');
-      expect(creds.secretAccessKey).toBe('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+      expect(creds.secretAccessKey).toBe(
+        'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      );
       expect(creds.sessionToken).toBeUndefined();
     });
 
     it('includes session token when present', async () => {
       process.env.AWS_ACCESS_KEY_ID = 'AKIAIOSFODNN7EXAMPLE';
-      process.env.AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+      process.env.AWS_SECRET_ACCESS_KEY =
+        'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
       process.env.AWS_SESSION_TOKEN = 'FwoGZXIvYXdzEBEaDH+token==';
 
       const creds = await getAwsCredentials();
@@ -168,7 +172,9 @@ describe('aws-credentials', () => {
           res.end('my-iam-role');
           return;
         }
-        if (req.url === '/latest/meta-data/iam/security-credentials/my-iam-role') {
+        if (
+          req.url === '/latest/meta-data/iam/security-credentials/my-iam-role'
+        ) {
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(
             JSON.stringify({

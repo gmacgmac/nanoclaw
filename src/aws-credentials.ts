@@ -50,7 +50,9 @@ interface HttpGetOptions {
   timeoutMs?: number;
 }
 
-function httpFetch(opts: HttpGetOptions): Promise<{ status: number; body: string } | null> {
+function httpFetch(
+  opts: HttpGetOptions,
+): Promise<{ status: number; body: string } | null> {
   return new Promise((resolve) => {
     const parsed = new URL(opts.url);
     const req = http.request(
@@ -66,7 +68,10 @@ function httpFetch(opts: HttpGetOptions): Promise<{ status: number; body: string
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
-          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() });
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString(),
+          });
         });
       },
     );
@@ -144,7 +149,9 @@ const containerCredsProvider: CredentialProvider = {
         accessKeyId: data.AccessKeyId,
         secretAccessKey: data.SecretAccessKey,
         sessionToken: data.Token || undefined,
-        expiresAt: data.Expiration ? new Date(data.Expiration).getTime() : undefined,
+        expiresAt: data.Expiration
+          ? new Date(data.Expiration).getTime()
+          : undefined,
       };
     } catch {
       return null;
@@ -200,7 +207,9 @@ const imdsProvider: CredentialProvider = {
         accessKeyId: data.AccessKeyId,
         secretAccessKey: data.SecretAccessKey,
         sessionToken: data.Token || undefined,
-        expiresAt: data.Expiration ? new Date(data.Expiration).getTime() : undefined,
+        expiresAt: data.Expiration
+          ? new Date(data.Expiration).getTime()
+          : undefined,
       };
     } catch {
       return null;
