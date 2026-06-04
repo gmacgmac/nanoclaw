@@ -26,6 +26,8 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/group-queue.ts` | Per-group FIFO queue with global concurrency limit |
 | `src/mount-security.ts` | Mount allowlist validation for container volumes |
 | `src/env.ts` | Environment variable loading from secrets.env and .env |
+| `src/aws-sigv4.ts` | Pure-function SigV4 request signer (Node crypto, zero deps) |
+| `src/aws-credentials.ts` | Host-side AWS credential provider chain (static-env → container-creds → IMDSv2) |
 | `src/logger.ts` | Built-in logger with DB error wrapper |
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
 | `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
@@ -94,7 +96,7 @@ ZAI_BASE_URL=https://api.z.ai
 ZAI_API_KEY=...
 ```
 
-Each vendor is defined by a `{VENDOR}_BASE_URL` and `{VENDOR}_API_KEY` pair. The vendor name (lowercase) becomes the routing key.
+Each vendor is defined by a `{VENDOR}_BASE_URL` and `{VENDOR}_API_KEY` pair. The vendor name (lowercase) becomes the routing key. Optional per-vendor fields: `{VENDOR}_AUTH` (`x-api-key`/`bearer`/`sigv4`, default `x-api-key`) and `{VENDOR}_REGION` (required for `sigv4` and Bedrock SDK mode).
 
 Groups select an endpoint via their preset (`containerConfig.preset` → resolved `endpoint` field). The proxy reads the `X-Nanoclaw-Endpoint` header on each request and routes to the matching vendor's upstream URL with its credentials.
 
@@ -138,8 +140,11 @@ Stored as JSON in the `registered_groups.container_config` SQLite column. All fi
 | `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
 | `transform` | `"openai"` \| absent | no | absent (passthrough) |
+| `sdkMode` | `"anthropic"` \| `"bedrock"` \| absent | no | absent (`anthropic`) |
 
 `transform: "openai"` activates bidirectional Anthropic Messages ↔ OpenAI ChatCompletions translation in the credential proxy. Required for open-source models on the Bedrock `bedrockoss` endpoint. See `repo/docs/credential-proxy-extensions.md` §"Amazon Bedrock via Mantle".
+
+`sdkMode: "bedrock"` switches the container into Claude Code's native Bedrock mode (`CLAUDE_CODE_USE_BEDROCK=1`). The SDK emits Invoke API requests and decodes binary eventstream responses. No proxy transform needed — the proxy only injects auth. See `repo/docs/credential-proxy-extensions.md` §"Amazon Bedrock via the Invoke API (Direct) + Auth Modes".
 
 > **Mantle proxy note**: For non-`anthropic` vendors, the proxy automatically strips `anthropic-beta` (SDK beta negotiation header) and `context_management` (SDK body field) — Mantle rejects these with 400; Ollama ignores them. Auto-compaction is unaffected (driven by `settings.json`).
 

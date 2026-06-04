@@ -450,3 +450,162 @@ describe('MCP server proxy callers', () => {
     ).rejects.toThrow('fetch failed');
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// 3. Agent-runner: Bedrock SDK mode env assembly
+//    Mirrors the sdkMode branch logic from container/agent-runner/src/index.ts main()
+// ---------------------------------------------------------------------------
+
+interface BedrockEnvInput {
+  endpoint?: string;
+  webSearchVendor?: string;
+  transform?: string;
+  sdkMode?: string;
+  awsRegion?: string;
+}
+
+interface BedrockEnvResult {
+  CLAUDE_CODE_USE_BEDROCK?: string;
+  AWS_REGION?: string;
+  ANTHROPIC_BEDROCK_BASE_URL?: string;
+  AWS_BEARER_TOKEN_BEDROCK?: string;
+  ANTHROPIC_CUSTOM_HEADERS?: string;
+  ANTHROPIC_BASE_URL?: string;
+  ANTHROPIC_API_KEY?: string;
+}
+
+/**
+ * Mirrors the env-assembly logic in agent-runner main() for testability.
+ */
+function buildSdkEnv(
+  input: BedrockEnvInput,
+  processEnv: Record<string, string | undefined> = {},
+): BedrockEnvResult {
+  const sdkEnv: Record<string, string | undefined> = { ...processEnv };
+
+  const endpoint =
+    input.endpoint || processEnv.NANOCLAW_ENDPOINT || 'anthropic';
+  const webSearchVendor =
+    input.webSearchVendor || processEnv.NANOCLAW_WEB_SEARCH_VENDOR || 'ollama';
+  const transform = input.transform || processEnv.NANOCLAW_TRANSFORM;
+  const sdkMode = input.sdkMode || processEnv.NANOCLAW_SDK_MODE;
+
+  const headerLines = [
+    `X-Nanoclaw-Endpoint: ${endpoint}`,
+    `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
+  ];
+  if (transform) {
+    headerLines.push(`X-Nanoclaw-Transform: ${transform}`);
+  }
+
+  if (sdkMode === 'bedrock') {
+    const proxyBase =
+      processEnv.ANTHROPIC_BASE_URL || 'http://host.docker.internal:3001';
+    const awsRegion =
+      input.awsRegion || processEnv.AWS_REGION || 'us-east-1';
+
+    sdkEnv.CLAUDE_CODE_USE_BEDROCK = '1';
+    sdkEnv.AWS_REGION = awsRegion;
+    sdkEnv.ANTHROPIC_BEDROCK_BASE_URL = proxyBase;
+    sdkEnv.AWS_BEARER_TOKEN_BEDROCK = 'placeholder';
+    sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
+
+    delete sdkEnv.ANTHROPIC_API_KEY;
+    delete sdkEnv.CLAUDE_CODE_OAUTH_TOKEN;
+  } else {
+    sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
+  }
+
+  return sdkEnv as BedrockEnvResult;
+}
+
+describe('agent-runner Bedrock SDK mode env assembly', () => {
+  it('bedrock mode sets CLAUDE_CODE_USE_BEDROCK=1', () => {
+    const env = buildSdkEnv({ sdkMode: 'bedrock', endpoint: 'bedrock' });
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBe('1');
+  });
+
+  it('bedrock mode sets AWS_REGION from input', () => {
+    const env = buildSdkEnv({
+      sdkMode: 'bedrock',
+      awsRegion: 'eu-west-1',
+      endpoint: 'bedrock',
+    });
+    expect(env.AWS_REGION).toBe('eu-west-1');
+  });
+
+  it('bedrock mode defaults AWS_REGION to us-east-1', () => {
+    const env = buildSdkEnv({ sdkMode: 'bedrock', endpoint: 'bedrock' });
+    expect(env.AWS_REGION).toBe('us-east-1');
+  });
+
+  it('bedrock mode sets ANTHROPIC_BEDROCK_BASE_URL to proxy', () => {
+    const env = buildSdkEnv(
+      { sdkMode: 'bedrock', endpoint: 'bedrock' },
+      { ANTHROPIC_BASE_URL: 'http://host.docker.internal:3001' },
+    );
+    expect(env.ANTHROPIC_BEDROCK_BASE_URL).toBe(
+      'http://host.docker.internal:3001',
+    );
+  });
+
+  it('bedrock mode sets placeholder AWS_BEARER_TOKEN_BEDROCK', () => {
+    const env = buildSdkEnv({ sdkMode: 'bedrock', endpoint: 'bedrock' });
+    expect(env.AWS_BEARER_TOKEN_BEDROCK).toBe('placeholder');
+  });
+
+  it('bedrock mode removes ANTHROPIC_API_KEY (no real creds in container)', () => {
+    const env = buildSdkEnv(
+      { sdkMode: 'bedrock', endpoint: 'bedrock' },
+      { ANTHROPIC_API_KEY: 'sk-test-real-key' },
+    );
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('bedrock mode still includes X-Nanoclaw-Endpoint header for proxy routing', () => {
+    const env = buildSdkEnv({ sdkMode: 'bedrock', endpoint: 'bedrock' });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain(
+      'X-Nanoclaw-Endpoint: bedrock',
+    );
+  });
+
+  it('bedrock mode includes X-Nanoclaw-Web-Search-Vendor header', () => {
+    const env = buildSdkEnv({
+      sdkMode: 'bedrock',
+      endpoint: 'bedrock',
+      webSearchVendor: 'brave',
+    });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain(
+      'X-Nanoclaw-Web-Search-Vendor: brave',
+    );
+  });
+
+  it('anthropic mode (default) does NOT set Bedrock vars', () => {
+    const env = buildSdkEnv({ endpoint: 'anthropic' });
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(env.AWS_REGION).toBeUndefined();
+    expect(env.ANTHROPIC_BEDROCK_BASE_URL).toBeUndefined();
+    expect(env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined();
+  });
+
+  it('absent sdkMode (undefined) behaves like anthropic', () => {
+    const env = buildSdkEnv({});
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Nanoclaw-Endpoint: anthropic');
+  });
+
+  it('explicit sdkMode "anthropic" does NOT set Bedrock vars', () => {
+    const env = buildSdkEnv({ sdkMode: 'anthropic', endpoint: 'anthropic' });
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined();
+  });
+
+  it('bedrock mode falls back to env NANOCLAW_SDK_MODE', () => {
+    const env = buildSdkEnv(
+      { endpoint: 'bedrock' },
+      { NANOCLAW_SDK_MODE: 'bedrock' },
+    );
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBe('1');
+  });
+});

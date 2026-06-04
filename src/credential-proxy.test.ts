@@ -3,7 +3,7 @@ import http from 'http';
 import type { AddressInfo } from 'net';
 
 const mockEnv: Record<string, string> = {};
-let mockEndpoints: Record<string, { baseUrl: string; apiKey: string }> = {};
+let mockEndpoints: Record<string, { baseUrl: string; apiKey?: string; auth?: string; region?: string }> = {};
 let mockWebSearchEndpoints: Record<
   string,
   { baseUrl: string; apiKey: string }
@@ -16,6 +16,16 @@ vi.mock('./env.js', () => ({
 
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
+}));
+
+// Mock AWS modules for sigv4 tests — default: no-op (modules are inert for non-sigv4 paths)
+const mockGetAwsCredentials = vi.fn();
+const mockSignRequestV4 = vi.fn();
+vi.mock('./aws-credentials.js', () => ({
+  getAwsCredentials: (...args: unknown[]) => mockGetAwsCredentials(...args),
+}));
+vi.mock('./aws-sigv4.js', () => ({
+  signRequestV4: (...args: unknown[]) => mockSignRequestV4(...args),
 }));
 
 import { startCredentialProxy } from './credential-proxy.js';
@@ -77,6 +87,8 @@ describe('credential-proxy', () => {
     for (const key of Object.keys(mockEnv)) delete mockEnv[key];
     mockEndpoints = {};
     mockWebSearchEndpoints = {};
+    mockGetAwsCredentials.mockReset();
+    mockSignRequestV4.mockReset();
   });
 
   async function startProxy(env: Record<string, string>): Promise<number> {
@@ -986,6 +998,445 @@ describe('credential-proxy', () => {
 
       // basePath (/prefix) + transform path (/v1/chat/completions)
       expect(lastTransformUrl).toBe('/prefix/v1/chat/completions');
+    });
+  });
+
+  // --- Auth mode (vendorAuth) tests (BE_04) ---
+
+  describe('vendor auth modes (BE_04)', () => {
+    it('bearer vendor: replaces placeholder Authorization with real Bearer key', async () => {
+      mockEndpoints = {
+        bedrock_runtime: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'real-bedrock-api-key',
+          auth: 'bearer',
+          region: 'us-east-1',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_runtime',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Real Bearer injected
+      expect(lastUpstreamHeaders['authorization']).toBe(
+        'Bearer real-bedrock-api-key',
+      );
+      // x-api-key NOT set
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+      // Routing header stripped
+      expect(lastUpstreamHeaders['x-nanoclaw-endpoint']).toBeUndefined();
+    });
+
+    it('bearer vendor: strips inbound x-api-key and replaces with Bearer', async () => {
+      mockEndpoints = {
+        bedrock_runtime: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'real-bedrock-api-key',
+          auth: 'bearer',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_runtime',
+            'x-api-key': 'some-placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(lastUpstreamHeaders['authorization']).toBe(
+        'Bearer real-bedrock-api-key',
+      );
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+    });
+
+    it('default vendor (no _AUTH): still uses x-api-key, no Authorization', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+          // no auth field → defaults to x-api-key
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+      expect(lastUpstreamHeaders['authorization']).toBeUndefined();
+    });
+
+    it('sigv4 vendor: strips inbound auth, signs with AWS credentials', async () => {
+      mockGetAwsCredentials.mockResolvedValue({
+        accessKeyId: 'AKIATEST',
+        secretAccessKey: 'testsecret',
+      });
+      mockSignRequestV4.mockReturnValue({
+        Authorization: 'AWS4-HMAC-SHA256 Credential=AKIATEST/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=..., Signature=abc',
+        'x-amz-date': '20260603T000000Z',
+        'x-amz-content-sha256': 'bodyhash',
+      });
+
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          // no apiKey for sigv4
+          auth: 'sigv4',
+          region: 'us-east-1',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Inbound placeholders stripped, SigV4 Authorization injected
+      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+      expect(lastUpstreamHeaders['x-amz-date']).toBe('20260603T000000Z');
+    });
+
+    it('bearer vendor does not leak key value in log calls', async () => {
+      const { logger } = await import('./logger.js');
+      vi.mocked(logger.info).mockClear();
+
+      mockEndpoints = {
+        bedrock_runtime: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'super-secret-key-12345',
+          auth: 'bearer',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_runtime',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Verify the secret key never appears in any log call
+      const allLogCalls = [
+        ...vi.mocked(logger.info).mock.calls,
+        ...vi.mocked(logger.warn).mock.calls,
+      ];
+      const logStr = JSON.stringify(allLogCalls);
+      expect(logStr).not.toContain('super-secret-key-12345');
+    });
+  });
+
+  // --- SigV4 auth wiring tests (BE_07) ---
+
+  describe('SigV4 auth wiring (BE_07)', () => {
+    beforeEach(() => {
+      mockGetAwsCredentials.mockReset();
+      mockSignRequestV4.mockReset();
+    });
+
+    it('sigv4 vendor: injects signed headers (Authorization, x-amz-date, x-amz-content-sha256)', async () => {
+      mockGetAwsCredentials.mockResolvedValue({
+        accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      });
+      mockSignRequestV4.mockReturnValue({
+        Authorization: 'AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260603/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=abcdef1234567890',
+        'x-amz-date': '20260603T120000Z',
+        'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      });
+
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          auth: 'sigv4',
+          region: 'us-east-1',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+            'x-api-key': 'placeholder',
+          },
+        },
+        JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] }),
+      );
+
+      // Signed headers injected
+      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+      expect(lastUpstreamHeaders['x-amz-date']).toBe('20260603T120000Z');
+      expect(lastUpstreamHeaders['x-amz-content-sha256']).toBe(
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      );
+      // Placeholders stripped
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
+      // Routing header stripped
+      expect(lastUpstreamHeaders['x-nanoclaw-endpoint']).toBeUndefined();
+    });
+
+    it('sigv4 vendor with session token: includes x-amz-security-token', async () => {
+      mockGetAwsCredentials.mockResolvedValue({
+        accessKeyId: 'ASIATEMP',
+        secretAccessKey: 'tempSecret',
+        sessionToken: 'FwoGZXIvYXdzE...session-token',
+      });
+      mockSignRequestV4.mockReturnValue({
+        Authorization: 'AWS4-HMAC-SHA256 Credential=ASIATEMP/...',
+        'x-amz-date': '20260603T130000Z',
+        'x-amz-content-sha256': 'abc123',
+        'x-amz-security-token': 'FwoGZXIvYXdzE...session-token',
+      });
+
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          auth: 'sigv4',
+          region: 'us-west-2',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(lastUpstreamHeaders['x-amz-security-token']).toBe(
+        'FwoGZXIvYXdzE...session-token',
+      );
+      expect(lastUpstreamHeaders['authorization']).toContain('AWS4-HMAC-SHA256');
+    });
+
+    it('sigv4 vendor missing region: returns 500', async () => {
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          auth: 'sigv4',
+          // no region!
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/test/invoke',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(500);
+      const body = JSON.parse(res.body);
+      expect(body.error).toContain('Internal configuration error');
+      // Credentials should not have been fetched
+      expect(mockGetAwsCredentials).not.toHaveBeenCalled();
+    });
+
+    it('sigv4 vendor: credential resolution failure returns 502', async () => {
+      const { logger } = await import('./logger.js');
+      vi.mocked(logger.error).mockClear();
+
+      mockGetAwsCredentials.mockRejectedValue(
+        new Error('no provider could resolve credentials'),
+      );
+
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          auth: 'sigv4',
+          region: 'us-east-1',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/test/invoke',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(502);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('Upstream auth unavailable');
+      // Error was logged but no credential material leaked
+      expect(logger.error).toHaveBeenCalled();
+      const logStr = JSON.stringify(vi.mocked(logger.error).mock.calls);
+      expect(logStr).not.toContain('no provider could resolve');
+      expect(logStr).not.toContain('secretAccessKey');
+    });
+
+    it('sigv4 signing is called with correct method/url/body/region/service', async () => {
+      mockGetAwsCredentials.mockResolvedValue({
+        accessKeyId: 'AKID',
+        secretAccessKey: 'SECRET',
+      });
+      mockSignRequestV4.mockReturnValue({
+        Authorization: 'AWS4-HMAC-SHA256 Credential=AKID/...',
+        'x-amz-date': '20260603T140000Z',
+        'x-amz-content-sha256': 'bodyhash',
+      });
+
+      mockEndpoints = {
+        bedrock_sigv4: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}/prefix`,
+          auth: 'sigv4',
+          region: 'eu-west-1',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const reqBody = JSON.stringify({ prompt: 'test' });
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'bedrock_sigv4',
+            authorization: 'Bearer placeholder',
+          },
+        },
+        reqBody,
+      );
+
+      // Verify signRequestV4 was called with the correct parameters
+      expect(mockSignRequestV4).toHaveBeenCalledTimes(1);
+      const signCall = mockSignRequestV4.mock.calls[0][0];
+      expect(signCall.method).toBe('POST');
+      expect(signCall.url.pathname).toBe(
+        '/prefix/model/us.anthropic.claude-sonnet-4-6/invoke-with-response-stream',
+      );
+      expect(signCall.url.host).toBe(`127.0.0.1:${upstreamPort}`);
+      expect(signCall.body.toString()).toBe(reqBody);
+      expect(signCall.region).toBe('eu-west-1');
+      expect(signCall.service).toBe('bedrock');
+      expect(signCall.credentials).toEqual({
+        accessKeyId: 'AKID',
+        secretAccessKey: 'SECRET',
+      });
+    });
+
+    it('non-sigv4 vendor in same test suite is unaffected (no AWS headers)', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      // Standard x-api-key auth, no SigV4 headers
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
+      expect(lastUpstreamHeaders['x-amz-date']).toBeUndefined();
+      expect(lastUpstreamHeaders['x-amz-content-sha256']).toBeUndefined();
+      expect(lastUpstreamHeaders['x-amz-security-token']).toBeUndefined();
+      // Mocks not called for non-sigv4 vendor
+      expect(mockGetAwsCredentials).not.toHaveBeenCalled();
+      expect(mockSignRequestV4).not.toHaveBeenCalled();
     });
   });
 });

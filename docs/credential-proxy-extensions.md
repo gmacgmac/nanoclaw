@@ -546,6 +546,194 @@ The transform integration is strictly additive. When `X-Nanoclaw-Transform` is a
 *Added 2026-06-03. Source tasks: `cortex-tasks/nanoclaw/nanoclaw-mcp_proxy_2026-06-02_bedrock-mantle-and-transform/` (BE_01–MANUAL_01).*
 
 
+---
+
+## Amazon Bedrock via the Invoke API (Direct) + Auth Modes
+
+This section documents the direct `bedrock-runtime` integration and the pluggable per-vendor auth-mode system. It is separate from the Mantle section above — Mantle is a gateway with its own API shape; this path talks to `bedrock-runtime` directly using Claude Code's native Bedrock SDK mode.
+
+---
+
+### Why Direct Invoke
+
+Sonnet (and the full Anthropic model catalog) is available on `bedrock-runtime` but not on Mantle for this account. The Invoke API is the standard AWS Bedrock path — model id in the URL, binary eventstream responses. Claude Code natively speaks this shape when `CLAUDE_CODE_USE_BEDROCK=1` is set, so **no transform or eventstream decoder is needed in the proxy**. The proxy's only job is auth injection.
+
+---
+
+### Two Independent Switches
+
+The direct-invoke integration is controlled by two composable switches:
+
+| Switch | Level | Where set | Values |
+|--------|-------|-----------|--------|
+| **Auth mode** | Per-vendor | `{VENDOR}_AUTH` in `secrets.env` | `x-api-key` (default), `bearer`, `sigv4` |
+| **SDK mode** | Per-preset | `sdkMode` in `model-presets.json` | `anthropic` (default), `bedrock` |
+
+#### Auth mode (`{VENDOR}_AUTH`)
+
+Determines how the proxy authenticates the outbound request to the upstream vendor. Absent ⇒ `x-api-key` (today's default, byte-for-byte unchanged).
+
+- **`x-api-key`** — injects `x-api-key: <VENDOR_API_KEY>`. All existing vendors use this implicitly.
+- **`bearer`** — strips the SDK's placeholder `Authorization: Bearer` header and injects `Authorization: Bearer <VENDOR_API_KEY>`. Used for Bedrock API keys against `bedrock-runtime`.
+- **`sigv4`** — strips auth headers, fetches host IAM-role credentials, SigV4-signs the request, injects `Authorization`, `X-Amz-Date`, `X-Amz-Content-Sha256`, and `X-Amz-Security-Token` (when session token present). No `_API_KEY` required — creds come from the host role.
+
+Each vendor may also set `{VENDOR}_REGION` (e.g. `BEDROCKRT_REGION=us-east-1`). Required for `sigv4`; used by the Bedrock SDK mode to set `AWS_REGION` in the container.
+
+#### SDK mode (`sdkMode`)
+
+Determines what request/response shape Claude Code emits:
+
+- **`anthropic`** (default, absent) — the standard Anthropic Messages API shape. Used for Anthropic direct, Ollama, Z.ai, and Mantle (Claude track + open-source via transform).
+- **`bedrock`** — the container gets `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, `ANTHROPIC_BEDROCK_BASE_URL` pointing to the proxy, and a placeholder `AWS_BEARER_TOKEN_BEDROCK`. The SDK then emits Invoke API requests (model id in URL, `anthropic_version` in body) and decodes the binary eventstream response itself.
+
+#### The Full Matrix
+
+| Upstream | SDK mode | Vendor `_AUTH` | Status |
+|----------|----------|----------------|--------|
+| Mantle (`/anthropic/v1/messages`) | `anthropic` | `x-api-key` | Works (unchanged) |
+| Mantle | `anthropic` | `bearer` / `sigv4` | Works once auth mode set |
+| `bedrock-runtime` (Invoke API) | `bedrock` | `bearer` | **Phase 1** — Bearer track, dev |
+| `bedrock-runtime` (Invoke API) | `bedrock` | `sigv4` | **Phase 2** — IAM role, deploy |
+
+No per-cell code exists — each cell is a `secrets.env` + preset combination resolved at runtime.
+
+---
+
+### Credential Isolation (All Modes)
+
+The container **never** holds AWS credentials:
+
+| Mode | What container sees | What proxy does |
+|------|---------------------|-----------------|
+| Bearer (`bedrockrt`) | `AWS_BEARER_TOKEN_BEDROCK=placeholder` | Strips placeholder, injects real `Authorization: Bearer <key>` |
+| SigV4 (`bedrockiam`) | `AWS_BEARER_TOKEN_BEDROCK=placeholder` | Strips placeholder, fetches host IAM-role creds, SigV4-signs |
+| Mantle (`bedrock`/`bedrockoss`) | `ANTHROPIC_BASE_URL=http://proxy:3001` | Injects `x-api-key` or Bearer per track |
+
+The placeholder `AWS_BEARER_TOKEN_BEDROCK` prevents the SDK from attempting in-container SigV4. The proxy receives the placeholder, discards it, and applies the real auth.
+
+---
+
+### SigV4 Signer (`src/aws-sigv4.ts`)
+
+Pure-function AWS Signature Version 4 implementation (~100 LOC, Node `crypto` only, zero deps):
+
+- `signRequestV4(method, url, headers, body, region, service, credentials)` → returns headers to merge onto the outbound request.
+- URI-encodes per RFC 3986 (AWS variant — `!`, `'`, `(`, `)`, `*` are encoded).
+- Always signs `x-amz-content-sha256` (payload hash).
+- Supports session tokens (`x-amz-security-token`).
+- **Single-shot signing only** — the proxy buffers the full request body before forwarding. No chunked-payload variant (an S3 concern, not Bedrock).
+
+Inert until called by the proxy's sigv4 path.
+
+### AWS Credential Provider Chain (`src/aws-credentials.ts`)
+
+Host-side credential resolver (~130 LOC, Node built-in `http` only, zero deps):
+
+**Provider order** (first success wins):
+1. **Static env** — `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` (for local testing only).
+2. **Container credentials** — ECS task role or EKS Pod Identity. Reads the URL from `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI`, one GET request.
+3. **EC2 IMDSv2** — instance profile. Token PUT + GET to `169.254.169.254`.
+
+All providers return `{ accessKeyId, secretAccessKey, sessionToken?, expiration? }`. Credentials are cached with a 5-minute-before-expiry refresh. `clearCredentialCache()` exposed for tests.
+
+**IRSA (web-identity → STS)**: a commented seam exists between container-credentials and IMDSv2 — not built until the deploy confirms IRSA rather than Pod Identity.
+
+---
+
+### Model IDs — Direct Invoke vs Mantle
+
+| Context | Format | Example |
+|---------|--------|---------|
+| Direct Invoke (`bedrock-runtime`) | `us.` cross-region inference-profile | `us.anthropic.claude-sonnet-4-6` |
+| Mantle (gateway) | `vendor.model-name` | `anthropic.claude-haiku-4-5` |
+
+Always use the correct format for the endpoint type. The proxy never parses model ids — the SDK builds the URL path from the preset's `model` field.
+
+---
+
+### Defaults-Off Invariant
+
+Everything is inert unless explicitly enabled:
+
+- `{VENDOR}_AUTH` absent ⇒ `x-api-key` (today's behaviour, unchanged).
+- `sdkMode` absent ⇒ `anthropic` (today's behaviour, unchanged).
+- The `sigv4` code path is fully built and unit-tested but **dead code** until a vendor sets `_AUTH=sigv4` in `secrets.env`.
+- Existing Claude/Ollama/Z.ai/Mantle groups are byte-for-byte unaffected.
+- Existing proxy and preset tests pass unchanged — that is the regression guard.
+
+---
+
+### `secrets.env` Examples
+
+**Bearer track (Phase 1, dev):**
+```bash
+BEDROCKRT_BASE_URL=https://bedrock-runtime.us-east-1.amazonaws.com
+BEDROCKRT_API_KEY=<bedrock-api-key>
+BEDROCKRT_AUTH=bearer
+BEDROCKRT_REGION=us-east-1
+```
+
+**SigV4 track (Phase 2, deploy):**
+```bash
+BEDROCKIAM_BASE_URL=https://bedrock-runtime.us-east-1.amazonaws.com
+BEDROCKIAM_AUTH=sigv4
+BEDROCKIAM_REGION=us-east-1
+```
+
+No `_API_KEY` for `sigv4` — credentials come from the host's IAM role.
+
+---
+
+### Preset Examples
+
+```json
+{
+  "BSonnet4.6": {
+    "endpoint": "bedrockrt",
+    "sdkMode": "bedrock",
+    "model": "us.anthropic.claude-sonnet-4-6",
+    "capabilities": { "vision": true, "thinking": true, "tools": true },
+    "contextWindow": 1000000,
+    "webSearchVendor": "ollama"
+  },
+  "BSonnet4.6-IAM": {
+    "endpoint": "bedrockiam",
+    "sdkMode": "bedrock",
+    "model": "us.anthropic.claude-sonnet-4-6",
+    "capabilities": { "vision": true, "thinking": true, "tools": true },
+    "contextWindow": 1000000,
+    "webSearchVendor": "ollama"
+  }
+}
+```
+
+Key differences from Mantle presets: `sdkMode: "bedrock"` (SDK emits Invoke shape), `us.` model id prefix, no `transform` field (SDK owns the shape).
+
+---
+
+### Adding a New Auth Mode
+
+1. Add the value to `AuthScheme` type and `VALID_AUTH_MODES` in `src/env.ts`.
+2. Handle the new mode in the proxy's auth switch (`src/credential-proxy.ts`, inside the passthrough branch after `resolveEndpoint` returns `vendorAuth`).
+3. Add tests for the new path in `src/credential-proxy.test.ts`.
+4. Document the mode in this section.
+
+The existing auth-mode switch is a simple `switch (vendorAuth)` — adding a case is straightforward.
+
+---
+
+### Implementation Notes
+
+- **BE_04 body-stripping**: The existing non-anthropic body stripping (`anthropic-beta` header, `context_management` body field) does NOT apply to `sdkMode: bedrock` requests. The SDK's Invoke body is passed through intact — it has no `context_management` field and Bedrock does not reject beta headers the same way Mantle does.
+- **BE_03 routing-header verification**: Confirmed that `ANTHROPIC_CUSTOM_HEADERS` (carrying `X-Nanoclaw-Endpoint`) rides along on Bedrock-mode requests. The SDK always sends custom headers regardless of mode — routing works unchanged.
+- **Endpoint inclusion rule**: `scanEndpoints()` includes a vendor if it has both a `_BASE_URL` and either a `_API_KEY` OR `_AUTH=sigv4`. This allows SigV4 vendors to omit the key.
+
+---
+
+*Added 2026-06-03. Source tasks: `cortex-tasks/nanoclaw/nanoclaw-mcp_proxy_2026-06-03_bedrock-direct-invoke-sigv4/` (BE_01–BE_07, MANUAL_01).*
+
+---
+
 ### Curl Test Bedrock Endpoints
 
 Here you go — replace `YOUR_KEY` with your Bedrock API key in each:

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { logger } from './logger.js';
 
 /**
  * Read config values from multiple sources in priority order:
@@ -59,12 +60,20 @@ export function readEnvFile(keys: string[]): Record<string, string> {
 }
 
 /**
+ * Auth scheme for a named endpoint vendor.
+ * Absent → 'x-api-key' (today's default behavior).
+ */
+export type AuthScheme = 'x-api-key' | 'bearer' | 'sigv4';
+
+/**
  * Named endpoint entry discovered from secrets.env.
  * Vendor name is lowercased (e.g. "anthropic", "ollama", "zai").
  */
 export interface EndpointEntry {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;       // optional — sigv4 vendors have no key
+  auth?: AuthScheme;     // absent ⇒ treated as 'x-api-key' downstream
+  region?: string;       // only consumed when auth === 'sigv4'
 }
 
 /**
@@ -107,10 +116,11 @@ export function scanEndpoints(): Record<string, EndpointEntry> {
     }
   }
 
-  // Also check process.env for _BASE_URL/_API_KEY pairs
+  // Also check process.env for _BASE_URL/_API_KEY/_AUTH/_REGION values
   for (const key of Object.keys(process.env)) {
     if (
-      (key.endsWith('_BASE_URL') || key.endsWith('_API_KEY')) &&
+      (key.endsWith('_BASE_URL') || key.endsWith('_API_KEY') ||
+       key.endsWith('_AUTH') || key.endsWith('_REGION')) &&
       !allVars[key]
     ) {
       if (process.env[key]) allVars[key] = process.env[key]!;
@@ -118,16 +128,43 @@ export function scanEndpoints(): Record<string, EndpointEntry> {
   }
 
   // Build endpoint map from matched pairs
+  const validAuthSchemes: AuthScheme[] = ['x-api-key', 'bearer', 'sigv4'];
   const endpoints: Record<string, EndpointEntry> = {};
   for (const key of Object.keys(allVars)) {
     if (!key.endsWith('_BASE_URL')) continue;
     const vendor = key.slice(0, -'_BASE_URL'.length);
     if (!vendor) continue;
     const apiKeyKey = `${vendor}_API_KEY`;
+    const authKey = `${vendor}_AUTH`;
+    const regionKey = `${vendor}_REGION`;
     const baseUrl = allVars[key];
     const apiKey = allVars[apiKeyKey];
-    if (baseUrl && apiKey) {
-      endpoints[vendor.toLowerCase()] = { baseUrl, apiKey };
+
+    // Parse and validate auth scheme
+    let auth: AuthScheme | undefined;
+    const rawAuth = allVars[authKey];
+    if (rawAuth) {
+      const normalized = rawAuth.toLowerCase() as AuthScheme;
+      if (validAuthSchemes.includes(normalized)) {
+        auth = normalized;
+      } else {
+        logger.warn(
+          { vendor: vendor.toLowerCase(), value: rawAuth },
+          `Invalid _AUTH value "${rawAuth}" for vendor ${vendor}; ignoring`,
+        );
+      }
+    }
+
+    // Parse region
+    const region = allVars[regionKey]?.trim() || undefined;
+
+    // Inclusion: vendor needs _BASE_URL AND (_API_KEY present OR _AUTH=sigv4)
+    if (baseUrl && (apiKey || auth === 'sigv4')) {
+      const entry: EndpointEntry = { baseUrl };
+      if (apiKey) entry.apiKey = apiKey;
+      if (auth) entry.auth = auth;
+      if (region) entry.region = region;
+      endpoints[vendor.toLowerCase()] = entry;
     }
   }
 

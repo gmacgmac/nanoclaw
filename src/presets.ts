@@ -27,6 +27,10 @@ export type TransformName = 'openai';
 
 const VALID_TRANSFORMS: readonly TransformName[] = ['openai'];
 
+export type SdkMode = 'anthropic' | 'bedrock';
+
+const VALID_SDK_MODES: readonly SdkMode[] = ['anthropic', 'bedrock'];
+
 export interface ModelPreset {
   endpoint: string;
   model: string;
@@ -35,6 +39,7 @@ export interface ModelPreset {
   compactThreshold?: number;
   webSearchVendor?: string;
   transform?: TransformName;
+  sdkMode?: SdkMode;
 }
 
 export interface ResolvedPreset extends ModelPreset {
@@ -142,6 +147,21 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
     }
   }
 
+  let sdkMode: SdkMode | undefined;
+  if (obj.sdkMode !== undefined) {
+    if (
+      typeof obj.sdkMode === 'string' &&
+      VALID_SDK_MODES.includes(obj.sdkMode as SdkMode)
+    ) {
+      sdkMode = obj.sdkMode as SdkMode;
+    } else {
+      logger.warn(
+        { preset: key, sdkMode: obj.sdkMode },
+        'Invalid sdkMode; ignoring (defaults to anthropic)',
+      );
+    }
+  }
+
   return {
     endpoint: obj.endpoint,
     model: obj.model,
@@ -150,6 +170,7 @@ function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
     ...(compactThreshold !== undefined && { compactThreshold }),
     webSearchVendor,
     ...(transform !== undefined && { transform }),
+    ...(sdkMode !== undefined && { sdkMode }),
   };
 }
 

@@ -52,6 +52,8 @@ export interface ContainerInput {
   script?: string;
   endpoint?: string;
   transform?: string;
+  sdkMode?: string;
+  awsRegion?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
   learningLoop?: boolean | 'extract-only';

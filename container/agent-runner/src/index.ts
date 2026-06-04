@@ -37,6 +37,8 @@ interface ContainerInput {
   script?: string;
   endpoint?: string;
   transform?: string;
+  sdkMode?: string;
+  awsRegion?: string;
   webSearchVendor?: string;
   contextWindowSize?: number;
   learningLoop?: boolean | 'extract-only';
@@ -784,6 +786,9 @@ async function main(): Promise<void> {
   const endpoint = containerInput.endpoint || process.env.NANOCLAW_ENDPOINT || 'anthropic';
   const webSearchVendor = containerInput.webSearchVendor || process.env.NANOCLAW_WEB_SEARCH_VENDOR || 'ollama';
   const transform = containerInput.transform || process.env.NANOCLAW_TRANSFORM;
+  const sdkMode = containerInput.sdkMode || process.env.NANOCLAW_SDK_MODE;
+
+  // Custom headers — always include endpoint + web-search-vendor for proxy routing.
   const headerLines = [
     `X-Nanoclaw-Endpoint: ${endpoint}`,
     `X-Nanoclaw-Web-Search-Vendor: ${webSearchVendor}`,
@@ -791,7 +796,31 @@ async function main(): Promise<void> {
   if (transform) {
     headerLines.push(`X-Nanoclaw-Transform: ${transform}`);
   }
-  sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
+
+  if (sdkMode === 'bedrock') {
+    // --- Bedrock SDK mode ---
+    // The Claude Code SDK talks Bedrock Invoke API shape + binary eventstream.
+    // The proxy URL is used as ANTHROPIC_BEDROCK_BASE_URL; the SDK uses Bearer auth
+    // with a placeholder token (proxy strips it + injects real auth).
+    // Custom headers still ride along for routing (X-Nanoclaw-Endpoint).
+    const proxyBase = process.env.ANTHROPIC_BASE_URL || `http://host.docker.internal:3001`;
+    const awsRegion = containerInput.awsRegion || process.env.AWS_REGION || 'us-east-1';
+
+    sdkEnv.CLAUDE_CODE_USE_BEDROCK = '1';
+    sdkEnv.AWS_REGION = awsRegion;
+    sdkEnv.ANTHROPIC_BEDROCK_BASE_URL = proxyBase;
+    sdkEnv.AWS_BEARER_TOKEN_BEDROCK = 'placeholder';
+    sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
+
+    // Remove anthropic-track env to avoid SDK confusion
+    delete sdkEnv.ANTHROPIC_API_KEY;
+    delete sdkEnv.CLAUDE_CODE_OAUTH_TOKEN;
+
+    log(`Bedrock SDK mode: region=${awsRegion} base=${proxyBase} endpoint=${endpoint}`);
+  } else {
+    // --- Anthropic SDK mode (default, unchanged) ---
+    sdkEnv.ANTHROPIC_CUSTOM_HEADERS = headerLines.join('\n');
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

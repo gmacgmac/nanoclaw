@@ -27,6 +27,7 @@ import {
   scanEndpoints,
   scanWebSearchEndpoints,
   EndpointEntry,
+  AuthScheme,
 } from './env.js';
 import { logger } from './logger.js';
 import { transcribeAudio } from './transcription.js';
@@ -34,6 +35,8 @@ import { createProxyPlugins } from './proxy-plugins/registry.js';
 import './proxy-plugins/index.js'; // trigger self-registration
 import './proxy-plugins/transforms/index.js'; // trigger transform self-registration
 import { getTransform } from './proxy-plugins/transforms/registry.js';
+import { signRequestV4 } from './aws-sigv4.js';
+import { getAwsCredentials } from './aws-credentials.js';
 
 /**
  * Resolve an audio file path that may be a container path
@@ -102,6 +105,8 @@ function resolveEndpoint(
   apiKey: string | undefined;
   oauthToken: string | undefined;
   authMode: AuthMode;
+  vendorAuth: AuthScheme;
+  region: string | undefined;
 } {
   const entry = routingTable[vendor] || routingTable[DEFAULT_VENDOR];
 
@@ -111,6 +116,8 @@ function resolveEndpoint(
       apiKey: entry.apiKey,
       oauthToken: undefined,
       authMode: 'api-key',
+      vendorAuth: entry.auth || 'x-api-key',
+      region: entry.region,
     };
   }
 
@@ -124,6 +131,8 @@ function resolveEndpoint(
     apiKey: legacySecrets.ANTHROPIC_API_KEY,
     oauthToken,
     authMode: legacySecrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth',
+    vendorAuth: 'x-api-key',
+    region: undefined,
   };
 }
 
@@ -323,7 +332,7 @@ export function startCredentialProxy(
           | string
           | undefined;
 
-        const { upstreamUrl, apiKey, oauthToken, authMode } = resolveEndpoint(
+        const { upstreamUrl, apiKey, oauthToken, authMode, vendorAuth, region: vendorRegion } = resolveEndpoint(
           requestedVendor,
           routingTable,
           legacySecrets,
@@ -335,6 +344,7 @@ export function startCredentialProxy(
             vendor: requestedVendor,
             upstreamUrl: upstreamUrl.toString(),
             authMode,
+            vendorAuth,
             hasApiKey: !!apiKey,
           },
           'Proxy routing request',
@@ -364,6 +374,7 @@ export function startCredentialProxy(
         // Strip Anthropic-specific beta negotiation headers for non-Anthropic vendors.
         // The Claude Code SDK auto-negotiates beta features (interleaved-thinking, etc.)
         // that Anthropic's API accepts but other upstreams (Mantle, Ollama, Z.ai) reject.
+        // Also stripped for Bedrock Invoke (bedrock-runtime rejects unknown betas).
         if (requestedVendor !== 'anthropic') {
           delete headers['anthropic-beta'];
         }
@@ -378,6 +389,11 @@ export function startCredentialProxy(
         // Anthropic's API supports but strict upstreams (Mantle, etc.) reject with 400.
         // Ollama is lenient and ignores them; Mantle is not.
         // Auto-compaction still works — it's driven by local settings.json, not this field.
+        //
+        // NOTE (BE_04): This also fires for Bedrock Invoke vendors (vendor !== 'anthropic').
+        // The Bedrock SDK doesn't inject `context_management`, so the guard is a no-op for
+        // Invoke bodies. If a future SDK version adds it, stripping is likely correct
+        // (bedrock-runtime doesn't accept it). Verified safe; revisit in VERIFY_01 if needed.
         let sanitisedBody = body;
         if (requestedVendor !== 'anthropic' && !transform) {
           try {
@@ -444,19 +460,39 @@ export function startCredentialProxy(
           if (sanitisedBody.length !== body.length) {
             headers['content-length'] = sanitisedBody.length;
           }
-          if (authMode === 'api-key') {
-            // API key mode: inject x-api-key on every request
-            // Strip any Authorization header from OAuth-style SDK requests
-            delete headers['x-api-key'];
-            delete headers['authorization'];
-            headers['x-api-key'] = apiKey;
-          } else {
-            // OAuth mode: replace placeholder Bearer token with the real one
+
+          if (authMode === 'oauth') {
+            // OAuth legacy mode: replace placeholder Bearer token with the real one
             if (headers['authorization']) {
               delete headers['authorization'];
               if (oauthToken) {
                 headers['authorization'] = `Bearer ${oauthToken}`;
               }
+            }
+          } else {
+            // Routing-table vendor: switch on vendorAuth scheme
+            switch (vendorAuth) {
+              case 'x-api-key':
+                // Default: inject x-api-key (identical to prior behavior)
+                delete headers['x-api-key'];
+                delete headers['authorization'];
+                headers['x-api-key'] = apiKey;
+                break;
+
+              case 'bearer':
+                // Bearer: strip inbound placeholders, inject real key as Bearer
+                delete headers['x-api-key'];
+                delete headers['authorization'];
+                if (apiKey) {
+                  headers['authorization'] = `Bearer ${apiKey}`;
+                }
+                break;
+
+              case 'sigv4':
+                // SigV4: strip inbound placeholders; signing happens after requestPath is resolved.
+                delete headers['x-api-key'];
+                delete headers['authorization'];
+                break;
             }
           }
 
@@ -476,6 +512,63 @@ export function startCredentialProxy(
               xApiKeyHeader: req.headers['x-api-key'] ? 'present' : 'none',
             },
             'Proxy forwarding request',
+          );
+        }
+
+        // --- SigV4 signing (must be LAST, after all header/path mutations) ---
+        if (vendorAuth === 'sigv4' && !transform) {
+          if (!vendorRegion) {
+            logger.error(
+              { vendor: requestedVendor, auth: 'sigv4' },
+              'sigv4 vendor missing region — check {VENDOR}_REGION in secrets.env',
+            );
+            res.writeHead(500, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal configuration error' }));
+            return;
+          }
+
+          let creds;
+          try {
+            creds = await getAwsCredentials();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(
+              { vendor: requestedVendor, auth: 'sigv4', region: vendorRegion },
+              'AWS credential resolution failed',
+            );
+            res.writeHead(502, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Upstream auth unavailable' }));
+            return;
+          }
+
+          // Build the minimal header map for signing (host + content-type if present)
+          const headersForSigning: Record<string, string> = {
+            host: upstreamUrl.host,
+          };
+          const ct = headers['content-type'];
+          if (ct && typeof ct === 'string') {
+            headersForSigning['content-type'] = ct;
+          }
+
+          const signedUrl = new URL(requestPath, upstreamUrl.origin);
+          const signedHeaders = signRequestV4({
+            method: (req.method || 'POST').toUpperCase(),
+            url: signedUrl,
+            headers: headersForSigning,
+            body: outBody,
+            region: vendorRegion,
+            service: 'bedrock',
+            credentials: creds,
+          });
+
+          // Merge signed headers into outbound headers
+          for (const [k, v] of Object.entries(signedHeaders)) {
+            headers[k.toLowerCase()] = v;
+          }
+
+          logger.info(
+            { vendor: requestedVendor, auth: 'sigv4', region: vendorRegion, signed: true },
+            'SigV4 request signed',
           );
         }
 

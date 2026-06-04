@@ -16,6 +16,7 @@ import { getRegisteredGroup as getRegisteredGroupFromCache } from './group-regis
 import { loadToolAllowlist } from './config.js';
 import { validateContainerConfig } from './lib/config-validator.js';
 import { resolvePreset, ResolvedPreset } from './presets.js';
+import { scanEndpoints } from './env.js';
 import { logger } from './logger.js';
 import { ContainerConfig, RegisteredGroup } from './types.js';
 
@@ -36,6 +37,8 @@ export interface ResolvedSpawnConfig {
   nativeWebTools: boolean;
   /** Approval mode (from containerConfig, defaults true). */
   approvalMode: boolean;
+  /** AWS region for the preset's vendor (from routing table, undefined if not set). */
+  awsRegion: string | undefined;
 }
 
 /**
@@ -91,6 +94,13 @@ export function resolveSpawnConfig(
   // Approval mode (defaults true)
   const approvalMode = validatedConfig.approvalMode !== false;
 
+  // AWS region for the preset's vendor (from routing table)
+  let awsRegion: string | undefined;
+  if (preset?.sdkMode === 'bedrock' && preset.endpoint) {
+    const routingTable = scanEndpoints();
+    awsRegion = routingTable[preset.endpoint]?.region;
+  }
+
   return {
     group: cleanGroup,
     containerConfig: validatedConfig,
@@ -100,5 +110,6 @@ export function resolveSpawnConfig(
     deniedTools,
     nativeWebTools,
     approvalMode,
+    awsRegion,
   };
 }

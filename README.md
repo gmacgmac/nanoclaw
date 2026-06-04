@@ -552,8 +552,11 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
 | `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
 | `transform` | `"openai"` \| absent | no | absent (passthrough) |
+| `sdkMode` | `"anthropic"` \| `"bedrock"` \| absent | no | absent (`anthropic`) |
 
 The `transform` field activates bidirectional API shape translation in the credential proxy. Currently only `"openai"` is supported — reshapes Anthropic Messages → OpenAI ChatCompletions for Mantle open-source models (`endpoint: "bedrockoss"`). Absent means passthrough (all existing presets). See [Credential Proxy Extensions — Amazon Bedrock via Mantle](docs/credential-proxy-extensions.md#amazon-bedrock-via-mantle-claude--open-source-models) for details.
+
+The `sdkMode: "bedrock"` field switches the container into Claude Code's native Bedrock mode (`CLAUDE_CODE_USE_BEDROCK=1`). The SDK then emits Invoke API requests and decodes binary eventstream responses. No proxy transform needed. See [Credential Proxy Extensions — Direct Invoke + Auth Modes](docs/credential-proxy-extensions.md#amazon-bedrock-via-the-invoke-api-direct--auth-modes) for details.
 
 > **Mantle proxy note**: For non-`anthropic` vendors, the proxy automatically strips two SDK-injected fields that strict upstreams like Mantle reject: the `anthropic-beta` request header (beta feature negotiation) and the `context_management` request body field (server-side compaction hint). Auto-compaction is unaffected — it is driven by `settings.json` locally. Ollama is lenient and ignores these fields; this stripping is a no-op for Ollama.
 
@@ -986,11 +989,31 @@ BEDROCK_API_KEY=<short-term-bedrock-api-key>
 # Amazon Bedrock via Mantle — open-source track (bare host, transform: "openai")
 BEDROCKOSS_BASE_URL=https://bedrock-mantle.us-east-1.api.aws
 BEDROCKOSS_API_KEY=<same-bedrock-api-key>
+
+# Amazon Bedrock Direct Invoke API (bedrock-runtime), Bearer auth
+BEDROCKRT_BASE_URL=https://bedrock-runtime.us-east-1.amazonaws.com
+BEDROCKRT_API_KEY=<bedrock-api-key>
+BEDROCKRT_AUTH=bearer
+BEDROCKRT_REGION=us-east-1
+
+# Amazon Bedrock Direct Invoke API, IAM/SigV4 auth (no API key — host role creds)
+BEDROCKIAM_BASE_URL=https://bedrock-runtime.us-east-1.amazonaws.com
+BEDROCKIAM_AUTH=sigv4
+BEDROCKIAM_REGION=us-east-1
 ```
 
 Each request from a container includes an `X-Nanoclaw-Endpoint` header with the vendor name. The proxy reads this header, selects the matching upstream URL and API key, strips the header before forwarding, and injects the real credential. If the header is absent or the vendor is unknown, it falls back to `anthropic`.
 
 Groups select preset via `containerConfig.preset`; the resolved preset's `endpoint` field then routes to the matching `{VENDOR}_BASE_URL`/`{VENDOR}_API_KEY` pair in `secrets.env`. The container-facing `ANTHROPIC_BASE_URL` always points to the proxy — groups never need to know the real upstream URL.
+
+**Optional per-vendor fields:**
+
+| Key | Purpose | Values |
+|-----|---------|--------|
+| `{VENDOR}_AUTH` | Auth mode for outbound requests | `x-api-key` (default), `bearer`, `sigv4` |
+| `{VENDOR}_REGION` | AWS region (required for `sigv4`, used for Bedrock SDK mode) | e.g. `us-east-1` |
+
+When `_AUTH` is absent, the proxy uses `x-api-key` (today's behaviour). `sigv4` vendors may omit `_API_KEY` entirely — the proxy signs with host IAM-role credentials instead. See [Credential Proxy Extensions — Direct Invoke + Auth Modes](docs/credential-proxy-extensions.md#amazon-bedrock-via-the-invoke-api-direct--auth-modes) for details.
 
 > The routing table is built once at proxy startup and held in memory only. Vendor names are lowercased to prevent case-based bypass. The `X-Nanoclaw-Endpoint` header is stripped before forwarding to prevent leakage.
 
@@ -1539,7 +1562,7 @@ When working on NanoClaw tasks:
 - To expose external data to agents: use `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 - Tests: `npm test` (vitest, currently ~900 tests)
-- Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup
+- Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup; also reads optional `{VENDOR}_AUTH` (x-api-key/bearer/sigv4) and `{VENDOR}_REGION`
 - Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, configurable nightly via `NIGHTLY_NUDGE_THRESHOLD` default 0.7); `src/nightly-maintenance.ts` orchestrates nightly cron; two nudge prompt functions: `buildNudgePrompt()` in `container/agent-runner/src/lib/nudge-prompt.ts` (periodic + threshold, container-side) and `getNightlyNudgePrompt()` in `src/lib/nudge-prompt.ts` (nightly, host-side)
 - Model presets: `src/presets.ts` (`loadPresets`, `resolvePreset`, `getAvailablePresetNames`); preset file at `~/.config/nanoclaw/model-presets.json`; only `containerConfig.preset` stored in DB
 - Delegation: `delegations` table + `delegate_to_group`/`respond_to_group` MCP tools; `multi_agent_router` flag enables hub routing
