@@ -190,7 +190,10 @@ async function handleModelCommand(
   }
 
   // Sync in-memory cache immediately for the running process
-  const immediateConfig = { ...(ctx.group.containerConfig ?? {}), preset: presetName };
+  const immediateConfig = {
+    ...(ctx.group.containerConfig ?? {}),
+    preset: presetName,
+  };
   (ctx.group as RegisteredGroup).containerConfig = immediateConfig;
 
   await ctx.reply(`Switching to \`${presetName}\`...`);
@@ -200,10 +203,18 @@ async function handleModelCommand(
     // Fresh DB read to avoid clobbering DB-only fields (e.g. hooks)
     const freshGroup = await getRegisteredGroupFromDb(ctx.jid);
     const baseGroup = freshGroup ?? ctx.group;
-    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & { jid?: string };
+    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & {
+      jid?: string;
+    };
 
-    const freshConfig = { ...(groupWithoutJid.containerConfig ?? {}), preset: presetName };
-    const updatedGroup: RegisteredGroup = { ...groupWithoutJid, containerConfig: freshConfig };
+    const freshConfig = {
+      ...(groupWithoutJid.containerConfig ?? {}),
+      preset: presetName,
+    };
+    const updatedGroup: RegisteredGroup = {
+      ...groupWithoutJid,
+      containerConfig: freshConfig,
+    };
 
     await updateGroup(ctx.jid, updatedGroup);
 
@@ -371,7 +382,9 @@ async function handleVersionCommand(
     // Fresh DB read to avoid clobbering DB-only fields (e.g. hooks)
     const freshGroup = await getRegisteredGroupFromDb(ctx.jid);
     const baseGroup = freshGroup ?? ctx.group;
-    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & { jid?: string };
+    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & {
+      jid?: string;
+    };
 
     const updatedGroup: RegisteredGroup = {
       ...groupWithoutJid,

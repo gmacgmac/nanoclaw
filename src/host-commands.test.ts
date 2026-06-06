@@ -5,7 +5,8 @@ const mockSetRegisteredGroup = vi.fn();
 const mockGetRegisteredGroupFromDb = vi.fn();
 vi.mock('./db.js', () => ({
   setRegisteredGroup: (...args: unknown[]) => mockSetRegisteredGroup(...args),
-  getRegisteredGroup: (...args: unknown[]) => mockGetRegisteredGroupFromDb(...args),
+  getRegisteredGroup: (...args: unknown[]) =>
+    mockGetRegisteredGroupFromDb(...args),
 }));
 
 const mockIsSenderAllowed = vi.fn();
