@@ -15,7 +15,10 @@ interface ReminderFrontmatter {
   requires?: string;
 }
 
-function parseFrontmatter(content: string): { fm: ReminderFrontmatter; body: string } {
+function parseFrontmatter(content: string): {
+  fm: ReminderFrontmatter;
+  body: string;
+} {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return { fm: {}, body: content.trim() };
 
@@ -43,7 +46,8 @@ export function channelFromJid(jid: string): string | null {
   if (jid.startsWith('tg:')) return 'Telegram';
   if (jid.startsWith('slack:')) return 'Slack';
   if (jid.startsWith('dc:')) return 'Discord';
-  if (jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net')) return 'WhatsApp';
+  if (jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net'))
+    return 'WhatsApp';
   return null;
 }
 
@@ -56,7 +60,10 @@ const HOOKS_DIR = path.resolve(process.cwd(), 'docs', 'hooks');
  * Skips missing files (warns) and entries that require channel when channel is null.
  * Returns '' if nothing resolved.
  */
-export function resolveReminders(keys: string[], channel: string | null): string {
+export function resolveReminders(
+  keys: string[],
+  channel: string | null,
+): string {
   if (keys.length === 0) return '';
 
   const parts: string[] = [];
@@ -68,7 +75,10 @@ export function resolveReminders(keys: string[], channel: string | null): string
     try {
       raw = fs.readFileSync(filePath, 'utf-8');
     } catch {
-      logger.warn({ key, path: filePath }, 'Reminder hook file not found — skipping');
+      logger.warn(
+        { key, path: filePath },
+        'Reminder hook file not found — skipping',
+      );
       continue;
     }
 

@@ -407,7 +407,10 @@ async function runAgent(
       return 'error';
     }
 
-    const promptReminder = resolveReminders(containerConfig.hooks ?? [], channelFromJid(chatJid));
+    const promptReminder = resolveReminders(
+      containerConfig.hooks ?? [],
+      channelFromJid(chatJid),
+    );
 
     const output = await runContainerAgent(
       freshGroup,
