@@ -1,4 +1,4 @@
 ---
 description: Acknowledge before slow work
 ---
-Always ack before multi-step work.
+ALWAYS acknowledge using sendMessage before websearch or multi-step work.

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { DEFAULT_CONTEXT_WINDOW } from './config.js';
+import { getRegisteredGroup as getRegisteredGroupFromDb } from './db.js';
 import { logger } from './logger.js';
 import { parseLastInputTokens } from './nightly-maintenance.js';
 import { getAvailablePresetNames, resolvePreset } from './presets.js';
@@ -188,25 +189,22 @@ async function handleModelCommand(
     return true;
   }
 
-  // Set preset name on config — only the name is stored, resolution happens at spawn
-  const existingConfig = ctx.group.containerConfig ?? {};
-  const newConfig = {
-    ...existingConfig,
-    preset: presetName,
-  };
-
-  const updatedGroup: RegisteredGroup = {
-    ...ctx.group,
-    containerConfig: newConfig,
-  };
-
-  // Sync in-memory cache
-  (ctx.group as RegisteredGroup).containerConfig = newConfig;
+  // Sync in-memory cache immediately for the running process
+  const immediateConfig = { ...(ctx.group.containerConfig ?? {}), preset: presetName };
+  (ctx.group as RegisteredGroup).containerConfig = immediateConfig;
 
   await ctx.reply(`Switching to \`${presetName}\`...`);
   closeStdin(ctx.jid);
 
   onAfterExit(ctx.jid, async () => {
+    // Fresh DB read to avoid clobbering DB-only fields (e.g. hooks)
+    const freshGroup = await getRegisteredGroupFromDb(ctx.jid);
+    const baseGroup = freshGroup ?? ctx.group;
+    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & { jid?: string };
+
+    const freshConfig = { ...(groupWithoutJid.containerConfig ?? {}), preset: presetName };
+    const updatedGroup: RegisteredGroup = { ...groupWithoutJid, containerConfig: freshConfig };
+
     await updateGroup(ctx.jid, updatedGroup);
 
     if (SANITIZE_SESSION_ON_SWITCH) {
@@ -362,13 +360,7 @@ async function handleVersionCommand(
   // genuinely missing — at which point the user can switch back.
   const targetTag = resolveImageTag(requestedChannel);
 
-  // Update DB
-  const updatedGroup: RegisteredGroup = {
-    ...ctx.group,
-    containerChannel: requestedChannel as ContainerChannel,
-  };
-
-  // Sync in-memory cache
+  // Sync in-memory cache immediately
   (ctx.group as RegisteredGroup).containerChannel =
     requestedChannel as ContainerChannel;
 
@@ -376,6 +368,16 @@ async function handleVersionCommand(
   closeStdin(ctx.jid);
 
   onAfterExit(ctx.jid, async () => {
+    // Fresh DB read to avoid clobbering DB-only fields (e.g. hooks)
+    const freshGroup = await getRegisteredGroupFromDb(ctx.jid);
+    const baseGroup = freshGroup ?? ctx.group;
+    const { jid: _jid, ...groupWithoutJid } = baseGroup as RegisteredGroup & { jid?: string };
+
+    const updatedGroup: RegisteredGroup = {
+      ...groupWithoutJid,
+      containerChannel: requestedChannel as ContainerChannel,
+    };
+
     await updateGroup(ctx.jid, updatedGroup);
     logger.info(
       { group: ctx.group.name, sender: ctx.sender, channel: requestedChannel },

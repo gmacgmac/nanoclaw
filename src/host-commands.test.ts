@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleHostCommand } from './host-commands.js';
 
 const mockSetRegisteredGroup = vi.fn();
+const mockGetRegisteredGroupFromDb = vi.fn();
 vi.mock('./db.js', () => ({
   setRegisteredGroup: (...args: unknown[]) => mockSetRegisteredGroup(...args),
+  getRegisteredGroup: (...args: unknown[]) => mockGetRegisteredGroupFromDb(...args),
 }));
 
 const mockIsSenderAllowed = vi.fn();
@@ -84,6 +86,8 @@ describe('handleHostCommand', () => {
     mockIsSenderAllowed.mockReturnValue(true);
     mockGetAvailablePresetNames.mockReturnValue([]);
     mockResolvePreset.mockReturnValue(null);
+    // Default: DB returns undefined, so fallback to ctx.group is exercised
+    mockGetRegisteredGroupFromDb.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -326,6 +330,11 @@ describe('handleHostCommand', () => {
         skills: ['x'],
       },
     };
+    // DB returns fresh group with same fields (simulating no out-of-band changes)
+    mockGetRegisteredGroupFromDb.mockResolvedValue({
+      jid: 'tg:123',
+      ...group,
+    });
     const ctx = {
       jid: 'tg:123',
       group,
@@ -364,6 +373,8 @@ describe('handleHostCommand', () => {
         }),
       }),
     );
+    // jid field must be stripped before write-back
+    expect(updateGroupCalls[0].group.jid).toBeUndefined();
     expect(replies[1]).toContain('Switched to `opus_4.7`');
     expect(replies[1]).toContain('anthropic / claude-opus-4-7');
   });
@@ -916,5 +927,132 @@ describe('handleHostCommand', () => {
     );
     expect(result).toBe(true);
     expect(replies).toEqual(['Not authorised.']);
+  });
+
+  // --- Regression: DB-only fields are preserved on write-back ---
+
+  it('/model preserves DB-only containerConfig fields (e.g. hooks) on write-back', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
+    });
+
+    // DB has a hooks field that the in-memory cache doesn't know about
+    mockGetRegisteredGroupFromDb.mockResolvedValue({
+      jid: 'tg:123',
+      name: 'Test',
+      folder: 'test',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: {
+        allowedHostCommands: ['model'],
+        preset: 'ollama_k2.6',
+        hooks: ['ack'],
+      },
+    });
+
+    // In-memory ctx.group does NOT have hooks (simulating stale cache)
+    const ctx = makeCtx({
+      allowedHostCommands: ['model'],
+      containerConfig: { preset: 'ollama_k2.6' },
+    });
+    await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+      updateGroup,
+    );
+    await drainAfterExit();
+
+    expect(updateGroupCalls).toHaveLength(1);
+    const writtenConfig = updateGroupCalls[0].group.containerConfig;
+    // New preset applied
+    expect(writtenConfig.preset).toBe('opus_4.7');
+    // DB-only field preserved
+    expect(writtenConfig.hooks).toEqual(['ack']);
+  });
+
+  it('/version preserves DB-only containerConfig fields (e.g. hooks) on write-back', async () => {
+    mockResolveImageTag.mockReturnValue('nanoclaw-agent:next');
+
+    // DB has a hooks field that the in-memory cache doesn't know about
+    mockGetRegisteredGroupFromDb.mockResolvedValue({
+      jid: 'tg:123',
+      name: 'Test',
+      folder: 'test',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: {
+        allowedHostCommands: ['version'],
+        hooks: ['ack'],
+        preset: 'default',
+      },
+      containerChannel: 'stable',
+    });
+
+    // In-memory ctx.group does NOT have hooks
+    const ctx = makeCtx({ allowedHostCommands: ['version'] });
+    await handleHostCommand(
+      makeMsg('/version next'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+      updateGroup,
+    );
+    await drainAfterExit();
+
+    expect(updateGroupCalls).toHaveLength(1);
+    const writtenGroup = updateGroupCalls[0].group;
+    // Channel switched
+    expect(writtenGroup.containerChannel).toBe('next');
+    // DB-only field preserved
+    expect(writtenGroup.containerConfig.hooks).toEqual(['ack']);
+    // jid field stripped
+    expect(writtenGroup.jid).toBeUndefined();
+  });
+
+  it('/model falls back to ctx.group when DB read returns undefined', async () => {
+    mockGetAvailablePresetNames.mockReturnValue(['opus_4.7']);
+    mockResolvePreset.mockImplementation((name: string) => {
+      if (name === 'opus_4.7')
+        return {
+          name: 'opus_4.7',
+          endpoint: 'anthropic',
+          model: 'claude-opus-4-7',
+          capabilities: { vision: true },
+        };
+      return null;
+    });
+    // DB returns nothing (row deleted mid-flight)
+    mockGetRegisteredGroupFromDb.mockResolvedValue(undefined);
+
+    const ctx = makeCtx({
+      allowedHostCommands: ['model'],
+      containerConfig: { preset: 'ollama_k2.6', skills: ['y'] },
+    });
+    await handleHostCommand(
+      makeMsg('/model opus_4.7'),
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+      updateGroup,
+    );
+    await drainAfterExit();
+
+    expect(updateGroupCalls).toHaveLength(1);
+    const writtenConfig = updateGroupCalls[0].group.containerConfig;
+    expect(writtenConfig.preset).toBe('opus_4.7');
+    expect(writtenConfig.skills).toEqual(['y']);
   });
 });

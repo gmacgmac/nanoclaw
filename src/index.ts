@@ -184,6 +184,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  // Filter out bot's own messages — they're stored for history/dashboard
+  // but must not re-enter the container as new prompts.
+  filteredMessages = filteredMessages.filter((m) => !m.is_from_me);
+  if (filteredMessages.length === 0) {
+    // Only bot messages remain — advance cursor and skip
+    await setGroupCursor(
+      chatJid,
+      missedMessages[missedMessages.length - 1].timestamp,
+    );
+    return true;
+  }
+
   const prompt = formatMessages(filteredMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -586,6 +598,11 @@ async function startMessageLoop(): Promise<void> {
             );
             if (messagesToSend.length === 0) continue;
           }
+
+          // Filter out bot's own messages — they're stored for history/dashboard
+          // but must not re-enter the container as new prompts.
+          messagesToSend = messagesToSend.filter((m) => !m.is_from_me);
+          if (messagesToSend.length === 0) continue;
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
