@@ -25,6 +25,7 @@ export interface ContainerInputOverrides {
   approvalTimeout?: number;
   commandAllowlist?: string[];
   script?: string;
+  promptReminder?: string;
 }
 
 /**
@@ -81,5 +82,6 @@ export function buildContainerInput(
     commandAllowlist: overrides.commandAllowlist,
     images: overrides.images,
     script: overrides.script,
+    promptReminder: overrides.promptReminder,
   };
 }

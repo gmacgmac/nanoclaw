@@ -73,6 +73,7 @@ Full `Options` type from the official docs:
 | `continue` | `boolean` | `false` | Continue the most recent conversation |
 | `cwd` | `string` | `process.cwd()` | Current working directory |
 | `disallowedTools` | `string[]` | `[]` | List of disallowed tool names |
+| `effort` | `'low' \| 'medium' \| 'high' \| 'xhigh' \| 'max'` | `'high'` | Controls how much effort Claude puts into its response. Works with adaptive thinking to guide thinking depth |
 | `enableFileCheckpointing` | `boolean` | `false` | Enable file change tracking for rewinding |
 | `env` | `Dict<string>` | `process.env` | Environment variables |
 | `executable` | `'bun' \| 'deno' \| 'node'` | Auto-detected | JavaScript runtime |
@@ -81,7 +82,7 @@ Full `Options` type from the official docs:
 | `hooks` | `Partial<Record<HookEvent, HookCallbackMatcher[]>>` | `{}` | Hook callbacks for events |
 | `includePartialMessages` | `boolean` | `false` | Include partial message events (streaming) |
 | `maxBudgetUsd` | `number` | `undefined` | Maximum budget in USD for the query |
-| `maxThinkingTokens` | `number` | `undefined` | Maximum tokens for thinking process |
+| `maxThinkingTokens` | `number` | `undefined` | **Deprecated** — use `thinking` instead. Maximum tokens for thinking process |
 | `maxTurns` | `number` | `undefined` | Maximum conversation turns |
 | `mcpServers` | `Record<string, McpServerConfig>` | `{}` | MCP server configurations |
 | `model` | `string` | Default from CLI | Claude model to use |
@@ -95,12 +96,15 @@ Full `Options` type from the official docs:
 | `settingSources` | `SettingSource[]` | `[]` (none) | Which filesystem settings to load. Must include `'project'` to load CLAUDE.md |
 | `stderr` | `(data: string) => void` | `undefined` | Callback for stderr output |
 | `systemPrompt` | `string \| { type: 'preset'; preset: 'claude_code'; append?: string }` | `undefined` | System prompt. Use preset to get Claude Code's prompt, with optional `append` |
+| `thinking` | `ThinkingConfig` | `{ type: 'adaptive' }` | Controls Claude's thinking/reasoning behavior. See ThinkingConfig below |
 | `tools` | `string[] \| { type: 'preset'; preset: 'claude_code' }` | `undefined` | Tool configuration |
 
 ### PermissionMode
 
 ```typescript
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+// 'dontAsk'  → Don't prompt for permissions, deny if not pre-approved
+// 'auto'     → Use a model classifier to approve or deny each tool call
 ```
 
 ### SettingSource
@@ -120,10 +124,19 @@ Programmatic subagents (NOT agent teams — these are simpler, no inter-agent co
 
 ```typescript
 type AgentDefinition = {
-  description: string;  // When to use this agent
-  tools?: string[];     // Allowed tools (inherits all if omitted)
-  prompt: string;       // Agent's system prompt
-  model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+  description: string;       // When to use this agent
+  tools?: string[];          // Allowed tools (inherits all if omitted)
+  disallowedTools?: string[];// Explicitly disallowed tools
+  prompt: string;            // Agent's system prompt
+  model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';  // Model override
+  mcpServers?: AgentMcpServerSpec[];  // MCP servers for this agent
+  skills?: string[];         // Skills to preload
+  initialPrompt?: string;    // Auto-submitted first user turn (main thread agent only)
+  maxTurns?: number;         // Max agentic turns
+  background?: boolean;      // Run as non-blocking background task
+  memory?: 'user' | 'project' | 'local';  // Memory source
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number;  // Reasoning effort
+  permissionMode?: PermissionMode;  // Permission mode for this agent
 }
 ```
 
@@ -141,7 +154,9 @@ type McpServerConfig =
 
 ```typescript
 type SdkBeta = 'context-1m-2025-08-07';
-// Enables 1M token context window for Opus 4.6, Sonnet 4.5, Sonnet 4
+// RETIRED as of April 30, 2026. Passing this with Sonnet 4.5/Sonnet 4 has no effect.
+// Requests exceeding 200k context return an error.
+// For 1M context: migrate to Sonnet 4.6, Opus 4.6, or Opus 4.7 (1M included at standard pricing, no beta needed).
 ```
 
 ### CanUseTool
@@ -157,6 +172,58 @@ type PermissionResult =
   | { behavior: 'allow'; updatedInput: ToolInput; updatedPermissions?: PermissionUpdate[] }
   | { behavior: 'deny'; message: string; interrupt?: boolean };
 ```
+
+### ThinkingConfig
+
+Controls Claude's extended thinking/reasoning behavior. Takes precedence over the deprecated `maxThinkingTokens`.
+
+```typescript
+type ThinkingDisplay = 'summarized' | 'omitted';
+
+type ThinkingConfig =
+  | { type: 'adaptive'; display?: ThinkingDisplay }   // Model decides when and how much to reason (default)
+  | { type: 'enabled'; budgetTokens?: number; display?: ThinkingDisplay }  // Fixed thinking token budget
+  | { type: 'disabled' };                             // No extended thinking
+```
+
+**Default is `{ type: 'adaptive' }`** for thinking-capable models. The model autonomously decides when to think and how many tokens to spend.
+
+The `display` field controls whether thinking text is returned as `"summarized"` or `"omitted"`. On Opus 4.7+, API default is `"omitted"` — set `"summarized"` to receive thinking content in `thinking` blocks.
+
+#### Effort vs Thinking
+
+`effort` and `thinking` work together:
+
+- **`effort`** (`'low' | 'medium' | 'high' | 'xhigh' | 'max'`, default `'high'`) — guides how much reasoning the model does when in `adaptive` thinking mode. Higher effort = more internal reasoning before producing output.
+- **`thinking`** — controls whether extended thinking is enabled at all, and if so, whether it's adaptive or fixed-budget.
+
+In practice:
+- `thinking: { type: 'adaptive' }` + `effort: 'high'` = the SDK default (what nanoclaw currently gets)
+- `thinking: { type: 'enabled', budgetTokens: 16000 }` = fixed 16k thinking budget regardless of effort
+- `thinking: { type: 'disabled' }` = no extended thinking at all
+
+#### budget_tokens Range
+
+When using `{ type: 'enabled', budgetTokens: N }`:
+- Minimum: **1,024 tokens**
+- Maximum: **128,000 tokens** (depends on model's context window)
+- Manual `thinking: { type: 'enabled', budget_tokens: N }` is supported on all current Claude models **except** Opus 4.7, where it returns a 400 error (Opus 4.7 only supports adaptive)
+
+#### Runtime Adjustment
+
+The `Query` object has `setMaxThinkingTokens()` (deprecated) for runtime changes. The `effort` level can be changed mid-session via `applyFlagSettings({ effortLevel: 'max' })`.
+
+#### Nanoclaw Status
+
+Nanoclaw currently passes **neither** `thinking` nor `effort` to `query()`, so it gets:
+- `thinking: { type: 'adaptive' }` (model decides autonomously)
+- `effort: 'high'` (SDK default)
+
+To make these configurable, add fields to `ContainerInput` / `ResolvedPreset` and thread them to the `query()` options in `container/agent-runner/src/index.ts`.
+
+#### Known Issue
+
+GitHub issue [anthropics/claude-agent-sdk-typescript#168](https://github.com/anthropics/claude-agent-sdk-typescript/issues/168): "'adaptive' silently disables thinking by nullifying maxThinkingTokens" — suggests a possible interaction bug between adaptive mode and explicit maxThinkingTokens. If using adaptive, don't also set maxThinkingTokens.
 
 ## SDKMessage Types
 
@@ -540,21 +607,27 @@ The `Query` object (sdk.d.ts:931). Official docs list these public methods:
 ```typescript
 interface Query extends AsyncGenerator<SDKMessage, void> {
   interrupt(): Promise<void>;                     // Stop current execution (streaming input mode only)
-  rewindFiles(userMessageUuid: string): Promise<void>; // Restore files to state at message (needs enableFileCheckpointing)
+  rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult>;
   setPermissionMode(mode: PermissionMode): Promise<void>; // Change permissions (streaming input mode only)
   setModel(model?: string): Promise<void>;        // Change model (streaming input mode only)
-  setMaxThinkingTokens(max: number | null): Promise<void>; // Change thinking tokens (streaming input mode only)
+  setMaxThinkingTokens(max: number | null): Promise<void>; // Deprecated: use thinking option instead
+  applyFlagSettings(settings: Partial<Settings>): Promise<void>; // Change settings mid-session (streaming input mode only)
+  initializationResult(): Promise<SDKControlInitializeResponse>; // Full init data
   supportedCommands(): Promise<SlashCommand[]>;   // Available slash commands
   supportedModels(): Promise<ModelInfo[]>;         // Available models
+  supportedAgents(): Promise<AgentInfo[]>;         // Available subagents
   mcpServerStatus(): Promise<McpServerStatus[]>;  // MCP server connection status
   accountInfo(): Promise<AccountInfo>;             // Authenticated user info
+  reconnectMcpServer(serverName: string): Promise<void>;
+  toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+  setMcpServers(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
+  streamInput(stream: AsyncIterable<SDKUserMessage>): Promise<void>;
+  stopTask(taskId: string): Promise<void>;        // Stop a background task
+  close(): void;                                  // Forcefully end query
 }
 ```
 
-Found in sdk.d.ts but NOT in official docs (may be internal):
-- `streamInput(stream)` — stream additional user messages
-- `close()` — forcefully end the query
-- `setMcpServers(servers)` — dynamically add/remove MCP servers
+`applyFlagSettings()` merges settings into the session's flag-settings layer at runtime. Useful for changing `model`, `effortLevel`, `permissions`, `hooks`, etc. mid-session without restarting. Pass `null` for a key to clear it and fall back to lower-precedence sources.
 
 ## Sandbox Configuration
 

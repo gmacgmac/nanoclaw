@@ -2,6 +2,23 @@
 
 Personal Claude assistant. See [README.md](README.md) for setup, architecture, and security configuration. See [docs/requirements.md](docs/requirements.md) for architecture decisions.
 
+## RULES
+
+1. We opt for Concise Code
+2. We try to avoid over engineering as much as possible
+3. We try to re-use code and patterns as much as possible
+4. We strategise plans
+5. We do not assume that a "question" requires an action. The user will indicate if action must be taken.
+6. When coding, be very mindful of the depth of the application for which you might be adding features. Consider if "this" culd be a breaking change.
+
+## CONFIRMATION PROTOCOL:
+
+1. If I ask for a "strategy", "plan", "review", or "investigation", you must output TEXT ONLY.
+2. You are STRICTLY FORBIDDEN from modifying ANY files or making ANY changes until I explicitly give permission to proceed.
+3. If you formulate a plan, you must STOP and ask: "Shall I proceed with this implementation?"
+4. NEVER assume implied consent. If the prompt does not explicitly order code changes, DO NOT touch the file system.
+
+
 ## Safety Note
 
 You are FORBIDDEN from reading secrets.env
@@ -405,3 +422,4 @@ There is no `:latest` tag. `build.sh` rejects no-arg invocations.
 ### Host-Side Integration
 
 The host-side TypeScript code reads each group's channel from the `container_channel` column on `registered_groups` (default: `'stable'`). At container spawn, the channel is resolved to an image tag via `container/VERSIONS.json`. See `src/container-runner.ts` for the resolution logic.
+

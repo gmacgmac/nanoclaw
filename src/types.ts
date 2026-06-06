@@ -165,6 +165,13 @@ export interface ContainerConfig {
    * nativeWebTools) are enforced separately and are NOT overridable here.
    */
   deniedTools?: string[];
+
+  /**
+   * Ordered list of reminder keys (filenames in `docs/hooks/`) injected via
+   * the UserPromptSubmit hook on live chat turns.
+   * undefined/absent → no reminder hook.
+   */
+  hooks?: string[];
 }
 
 export type ContainerChannel = 'stable' | 'next';

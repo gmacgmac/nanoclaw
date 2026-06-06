@@ -54,6 +54,8 @@ interface ContainerInput {
   };
   // Multimodal: base64-encoded images for vision-capable models
   images?: Array<{ base64: string; mediaType: string; caption?: string }>;
+  // Per-turn reminder injected via UserPromptSubmit hook (live chat only)
+  promptReminder?: string;
 }
 
 interface ContainerOutput {
@@ -224,6 +226,18 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   }
 
   return null;
+}
+
+/**
+ * Inject per-turn reminder text as additionalContext on every user prompt.
+ */
+function createReminderHook(reminder: string): HookCallback {
+  return async () => ({
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: reminder,
+    },
+  });
 }
 
 /**
@@ -650,6 +664,9 @@ async function runQuery(
         },
         hooks: {
           PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+          ...(containerInput.promptReminder
+            ? { UserPromptSubmit: [{ hooks: [createReminderHook(containerInput.promptReminder)] }] }
+            : {}),
         },
       }
     })) {

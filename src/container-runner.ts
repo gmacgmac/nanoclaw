@@ -69,6 +69,8 @@ export interface ContainerInput {
   };
   // Multimodal: base64-encoded images for vision-capable models
   images?: Array<{ base64: string; mediaType: string; caption?: string }>;
+  // Per-turn reminder injected via UserPromptSubmit hook (live chat only)
+  promptReminder?: string;
 }
 
 export interface ContainerOutput {

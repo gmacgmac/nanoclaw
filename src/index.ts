@@ -98,6 +98,7 @@ import { EncodedImage } from './image.js';
 import { extractImagesFromMessages } from './lib/image-extraction.js';
 import { resolveSpawnConfig } from './spawn-config.js';
 import { buildContainerInput } from './build-container-input.js';
+import { channelFromJid, resolveReminders } from './prompt-reminders.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -406,6 +407,8 @@ async function runAgent(
       return 'error';
     }
 
+    const promptReminder = resolveReminders(containerConfig.hooks ?? [], channelFromJid(chatJid));
+
     const output = await runContainerAgent(
       freshGroup,
       buildContainerInput(spawnConfig, preset, {
@@ -416,6 +419,7 @@ async function runAgent(
         approvalTimeout: containerConfig.approvalTimeout,
         commandAllowlist: containerConfig.commandAllowlist,
         images: images.length > 0 ? images : undefined,
+        promptReminder: promptReminder || undefined,
       }),
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, freshGroup.folder),
