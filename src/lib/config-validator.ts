@@ -187,7 +187,10 @@ export function validateContainerConfig(
   }
 
   // --- taskPreset ---
-  if (config.taskPreset !== undefined && typeof config.taskPreset !== 'string') {
+  if (
+    config.taskPreset !== undefined &&
+    typeof config.taskPreset !== 'string'
+  ) {
     warnings.push({
       field: 'taskPreset',
       message: `Invalid value "${config.taskPreset}", must be a string preset name`,
@@ -197,7 +200,10 @@ export function validateContainerConfig(
   }
 
   // --- nudgePreset ---
-  if (config.nudgePreset !== undefined && typeof config.nudgePreset !== 'string') {
+  if (
+    config.nudgePreset !== undefined &&
+    typeof config.nudgePreset !== 'string'
+  ) {
     warnings.push({
       field: 'nudgePreset',
       message: `Invalid value "${config.nudgePreset}", must be a string preset name`,
