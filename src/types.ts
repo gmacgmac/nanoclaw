@@ -55,6 +55,19 @@ export interface ContainerConfig {
   preset?: string;
 
   /**
+   * Optional per-path preset overrides.
+   * If set, scheduled tasks use taskPreset instead of the base preset.
+   * If absent, the base preset applies to all paths.
+   */
+  taskPreset?: string;
+
+  /**
+   * If set, nightly nudges use nudgePreset instead of the base preset.
+   * If absent, the base preset applies to all paths.
+   */
+  nudgePreset?: string;
+
+  /**
    * Per-group system prompt (appended to the claude_code preset).
    * undefined = use group CLAUDE.md only (backward compat).
    * This is the agent's "soul" — persona, instructions, constraints.

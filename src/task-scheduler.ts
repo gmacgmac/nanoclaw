@@ -2,7 +2,7 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   NightlyDependencies,
   runNightlyMaintenance,
@@ -21,6 +21,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 import { resolveSpawnConfig } from './spawn-config.js';
+import { buildContainerInput } from './build-container-input.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -183,7 +184,7 @@ async function runTask(
     return;
   }
 
-  const { group: freshGroup, containerConfig, preset } = spawnConfig;
+  const { group: freshGroup, preset, taskPreset } = spawnConfig;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -224,29 +225,17 @@ async function runTask(
       return;
     }
 
+    const effectivePreset = taskPreset ?? preset;
+
     const output = await runContainerAgent(
       freshGroup,
-      {
+      buildContainerInput(spawnConfig, effectivePreset, {
         prompt: substitutePromptVars(task.prompt),
-        sessionId,
-        groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain: freshGroup.isMain === true,
-        isAdmin: freshGroup.isAdmin === true,
+        sessionId,
         isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
-        model: preset.model,
-        systemPrompt: containerConfig.systemPrompt,
-        mcpServers: containerConfig.mcpServers,
-        endpoint: preset.endpoint,
-        transform: preset.transform,
-        sdkMode: preset.sdkMode,
-        awsRegion: spawnConfig.awsRegion,
-        webSearchVendor: preset.webSearchVendor,
-        contextWindowSize: preset.contextWindow,
-        learningLoop: containerConfig.learningLoop,
         script: task.script || undefined,
-      },
+      }),
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {

@@ -29,6 +29,10 @@ export interface ResolvedSpawnConfig {
   configWarnings: Array<{ field: string; message: string; fallback: unknown }>;
   /** Resolved preset (null if resolution failed). */
   preset: ResolvedPreset | null;
+  /** Resolved preset for scheduled tasks (falls back to base preset if absent/invalid). */
+  taskPreset: ResolvedPreset | null;
+  /** Resolved preset for nightly nudges (falls back to base preset if absent/invalid). */
+  nudgePreset: ResolvedPreset | null;
   /** Tool allowlist ceiling (fresh read from tool-allowlist.json). */
   toolAllowlist: string[];
   /** Per-group denied tools (from containerConfig). */
@@ -82,6 +86,33 @@ export async function resolveSpawnConfig(
   // Resolve preset (fresh read — loadPresets reads file each call)
   const preset = resolvePreset(cleanGroup.containerConfig?.preset);
 
+  // Per-path preset overrides (fall back to base preset if absent/invalid)
+  let taskPreset: ResolvedPreset | null = preset;
+  if (validatedConfig.taskPreset) {
+    const resolved = resolvePreset(validatedConfig.taskPreset);
+    if (resolved) {
+      taskPreset = resolved;
+    } else {
+      logger.warn(
+        { chatJid, taskPreset: validatedConfig.taskPreset },
+        'resolveSpawnConfig: taskPreset not found in model-presets.json, falling back to base preset',
+      );
+    }
+  }
+
+  let nudgePreset: ResolvedPreset | null = preset;
+  if (validatedConfig.nudgePreset) {
+    const resolved = resolvePreset(validatedConfig.nudgePreset);
+    if (resolved) {
+      nudgePreset = resolved;
+    } else {
+      logger.warn(
+        { chatJid, nudgePreset: validatedConfig.nudgePreset },
+        'resolveSpawnConfig: nudgePreset not found in model-presets.json, falling back to base preset',
+      );
+    }
+  }
+
   // Tool allowlist ceiling (fresh read from file)
   const toolAllowlist = loadToolAllowlist();
 
@@ -106,6 +137,8 @@ export async function resolveSpawnConfig(
     containerConfig: validatedConfig,
     configWarnings,
     preset,
+    taskPreset,
+    nudgePreset,
     toolAllowlist,
     deniedTools,
     nativeWebTools,

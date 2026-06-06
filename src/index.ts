@@ -1,5 +1,4 @@
 import {
-  ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -98,6 +97,7 @@ import {
 import { EncodedImage } from './image.js';
 import { extractImagesFromMessages } from './lib/image-extraction.js';
 import { resolveSpawnConfig } from './spawn-config.js';
+import { buildContainerInput } from './build-container-input.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -408,30 +408,15 @@ async function runAgent(
 
     const output = await runContainerAgent(
       freshGroup,
-      {
+      buildContainerInput(spawnConfig, preset, {
         prompt,
-        sessionId,
-        groupFolder: freshGroup.folder,
         chatJid,
-        isMain,
-        isAdmin,
-        assistantName: ASSISTANT_NAME,
-        // Agent customisation from containerConfig
-        model: preset.model,
-        systemPrompt: containerConfig.systemPrompt,
-        mcpServers: containerConfig.mcpServers,
-        endpoint: preset.endpoint,
-        transform: preset.transform,
-        sdkMode: preset.sdkMode,
-        awsRegion: spawnConfig.awsRegion,
-        webSearchVendor: preset.webSearchVendor,
-        contextWindowSize: preset.contextWindow,
-        learningLoop: containerConfig.learningLoop,
+        sessionId,
+        nudgeInterval: NUDGE_INTERVAL,
         approvalTimeout: containerConfig.approvalTimeout,
         commandAllowlist: containerConfig.commandAllowlist,
-        nudgeInterval: NUDGE_INTERVAL,
         images: images.length > 0 ? images : undefined,
-      },
+      }),
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, freshGroup.folder),
       wrappedOnOutput,
@@ -910,30 +895,27 @@ async function main(): Promise<void> {
                 group: freshGroup,
                 containerConfig,
                 preset,
+                nudgePreset,
               } = spawnConfig;
+
+              const effectivePreset = nudgePreset ?? preset;
+              if (!effectivePreset) {
+                logger.warn(
+                  { group: freshGroup.name, chatJid },
+                  'Nudge preset resolution failed, nightly nudge skipped',
+                );
+                resolve(false);
+                return;
+              }
 
               const output = await runContainerAgent(
                 freshGroup,
-                {
+                buildContainerInput(spawnConfig, effectivePreset, {
                   prompt: getNightlyNudgePrompt(containerConfig.learningLoop),
-                  sessionId: sessions[freshGroup.folder],
-                  groupFolder: freshGroup.folder,
                   chatJid,
-                  isMain: freshGroup.isMain === true,
-                  isAdmin: freshGroup.isAdmin === true,
-                  assistantName: ASSISTANT_NAME,
-                  model: preset.model,
-                  systemPrompt: containerConfig.systemPrompt,
-                  mcpServers: containerConfig.mcpServers,
-                  endpoint: preset.endpoint,
-                  transform: preset.transform,
-                  sdkMode: preset.sdkMode,
-                  awsRegion: spawnConfig.awsRegion,
-                  webSearchVendor: preset.webSearchVendor,
-                  contextWindowSize: preset.contextWindow,
-                  learningLoop: containerConfig.learningLoop,
+                  sessionId: sessions[freshGroup.folder],
                   nudgeInterval: 0,
-                },
+                }),
                 (proc, containerName) =>
                   queue.registerProcess(
                     chatJid,

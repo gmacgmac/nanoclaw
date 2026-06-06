@@ -186,6 +186,26 @@ export function validateContainerConfig(
     }
   }
 
+  // --- taskPreset ---
+  if (config.taskPreset !== undefined && typeof config.taskPreset !== 'string') {
+    warnings.push({
+      field: 'taskPreset',
+      message: `Invalid value "${config.taskPreset}", must be a string preset name`,
+      fallback: undefined,
+    });
+    config.taskPreset = undefined;
+  }
+
+  // --- nudgePreset ---
+  if (config.nudgePreset !== undefined && typeof config.nudgePreset !== 'string') {
+    warnings.push({
+      field: 'nudgePreset',
+      message: `Invalid value "${config.nudgePreset}", must be a string preset name`,
+      fallback: undefined,
+    });
+    config.nudgePreset = undefined;
+  }
+
   // --- ssrfProtection ---
   if (config.ssrfProtection !== undefined) {
     if (typeof config.ssrfProtection === 'boolean') {
