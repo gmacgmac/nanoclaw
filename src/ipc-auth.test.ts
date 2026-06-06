@@ -1,4 +1,12 @@
-import { afterAll, describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  afterAll,
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  vi,
+} from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -28,7 +36,9 @@ vi.mock('./config.js', () => ({
   DATA_DIR: path.join(os.tmpdir(), `nanoclaw-ipc-auth-test-${process.pid}`),
   IPC_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
-  DATABASE_URL: process.env.DATABASE_URL || 'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
+  DATABASE_URL:
+    process.env.DATABASE_URL ||
+    'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
   USE_POSTGRES: true,
 }));
 
@@ -437,7 +447,6 @@ describe('resume_task authorization', () => {
   });
 });
 
-
 // --- cancel_task authorization ---
 
 describe('cancel_task authorization', () => {
@@ -604,7 +613,9 @@ describe('update_task authorization', () => {
       false,
       deps,
     );
-    expect((await getTaskById('task-updatable'))!.prompt).toBe('updated prompt');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe(
+      'updated prompt',
+    );
     const resp = readIpcResponse('other-group', 'u1');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-updatable');
@@ -623,7 +634,9 @@ describe('update_task authorization', () => {
       true,
       deps,
     );
-    expect((await getTaskById('task-updatable'))!.prompt).toBe('updatable task');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe(
+      'updatable task',
+    );
     const resp = readIpcResponse('whatsapp_main', 'u2');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -641,7 +654,9 @@ describe('update_task authorization', () => {
       false,
       deps,
     );
-    expect((await getTaskById('task-updatable'))!.prompt).toBe('updatable task');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe(
+      'updatable task',
+    );
     const resp = readIpcResponse('third-group', 'u3');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -814,7 +829,6 @@ describe('IPC message authorization', () => {
     ).toBe(true);
   });
 });
-
 
 // --- schedule_task with cron and interval types ---
 

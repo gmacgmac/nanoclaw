@@ -18,7 +18,11 @@ afterAll(async () => {
   await shutdownDatabase();
 });
 
-async function createTestTask(id: string, groupFolder: string, chatJid: string) {
+async function createTestTask(
+  id: string,
+  groupFolder: string,
+  chatJid: string,
+) {
   await createTask({
     id,
     group_folder: groupFolder,

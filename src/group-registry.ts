@@ -44,7 +44,10 @@ export function getChannelList(): Channel[] {
 
 // --- Registration ---
 
-export async function registerGroup(jid: string, group: RegisteredGroup): Promise<void> {
+export async function registerGroup(
+  jid: string,
+  group: RegisteredGroup,
+): Promise<void> {
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(group.folder);

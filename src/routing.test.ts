@@ -1,6 +1,10 @@
 import { afterAll, describe, it, expect, beforeEach } from 'vitest';
 
-import { _initTestDatabase, shutdownDatabase, storeChatMetadata } from './db.js';
+import {
+  _initTestDatabase,
+  shutdownDatabase,
+  storeChatMetadata,
+} from './db.js';
 import { getAvailableGroups, setRegisteredGroups } from './group-registry.js';
 
 beforeEach(async () => {

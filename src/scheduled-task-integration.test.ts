@@ -2,7 +2,15 @@
  * Integration tests for BE_01..BE_04: runtime state, crash recovery,
  * early next_run advance, and graceful shutdown working together.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   _initTestDatabase,
@@ -42,7 +50,9 @@ vi.mock('./config.js', () => ({
   NIGHTLY_NUDGE_THRESHOLD: 0.7,
   DEFAULT_CONTEXT_WINDOW: 128000,
   SHUTDOWN_GRACE_MS: 30000,
-  DATABASE_URL: process.env.DATABASE_URL || 'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
+  DATABASE_URL:
+    process.env.DATABASE_URL ||
+    'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
   USE_POSTGRES: true,
 }));
 

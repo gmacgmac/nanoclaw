@@ -56,7 +56,10 @@ export async function setGroupCursor(jid: string, ts: string): Promise<void> {
   await persistGroups();
 }
 
-export async function rollbackGroupCursor(jid: string, prev: string): Promise<void> {
+export async function rollbackGroupCursor(
+  jid: string,
+  prev: string,
+): Promise<void> {
   groupCursors[jid] = prev;
   await persistGroups();
 }

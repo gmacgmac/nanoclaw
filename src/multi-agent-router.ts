@@ -65,7 +65,9 @@ export interface DelegateMessageArgs {
  * Dispatches a message to the target sub-agent:
  * strips trigger prefix, stores routed message in target DB, enqueues check, logs.
  */
-export async function delegateMessage(args: DelegateMessageArgs): Promise<void> {
+export async function delegateMessage(
+  args: DelegateMessageArgs,
+): Promise<void> {
   const { hubGroup, hubJid, msg, target, enqueueMessageCheck } = args;
 
   const strippedPrompt = msg.content

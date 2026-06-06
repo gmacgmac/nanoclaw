@@ -253,7 +253,9 @@ export interface NightlyDependencies {
   /** Enqueue a nightly nudge prompt for a group via the group queue. */
   runNudge: (group: RegisteredGroup, chatJid: string) => Promise<boolean>;
   /** Override for testing — defaults to getAllRegisteredGroups(). */
-  getGroups?: () => Record<string, RegisteredGroup> | Promise<Record<string, RegisteredGroup>>;
+  getGroups?: () =>
+    | Record<string, RegisteredGroup>
+    | Promise<Record<string, RegisteredGroup>>;
   /** Override for testing — defaults to getAllSessions(). */
   getSessions?: () => Record<string, string> | Promise<Record<string, string>>;
   /** Override for testing — defaults to pruneOldMessages(30). */
