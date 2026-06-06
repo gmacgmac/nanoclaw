@@ -57,6 +57,16 @@ if ! command -v zip >/dev/null 2>&1; then
     fail "zip command not found. Install with: brew install zip"
 fi
 
+# Check Docker is available
+if ! command -v docker >/dev/null 2>&1; then
+    fail "docker command not found. Docker Desktop must be installed and running."
+fi
+
+# Check PostgreSQL container is running
+if ! docker inspect --format='{{.State.Running}}' nanoclaw-postgres-1 2>/dev/null | grep -q true; then
+    fail "PostgreSQL container (nanoclaw-postgres-1) is not running"
+fi
+
 # Clean stale artifacts from previous interrupted runs
 rm -rf "${DEST_VOL}/${STAGING}"
 rm -f "${DEST_VOL}"/nanoclaw-*.zip.tmp
@@ -75,11 +85,21 @@ for orphan_dir in "${DEST_VOL}"/nanoclaw-*/; do
     fi
 done
 
-### Phase A — Consistent SQLite snapshot
-log "Phase A: Creating consistent SQLite snapshot..."
+### Phase A1 — SQLite snapshot (legacy safety net — PG is primary)
+log "Phase A1: Creating SQLite snapshot (legacy)..."
 mkdir -p "${SRC_ROOT}/.tmp-backup"
 sqlite3 "${SRC_ROOT}/store/messages.db" ".backup '${SRC_ROOT}/.tmp-backup/messages.db.snapshot'"
 log "SQLite snapshot complete"
+
+### Phase A2 — PostgreSQL dump
+log "Phase A2: Creating PostgreSQL dump..."
+docker compose -f "${SRC_ROOT}/docker-compose.yml" exec -T postgres \
+    pg_dump -U nanoclaw nanoclaw | gzip > "${SRC_ROOT}/.tmp-backup/nanoclaw.sql.gz"
+
+if [[ ! -s "${SRC_ROOT}/.tmp-backup/nanoclaw.sql.gz" ]]; then
+    fail "pg_dump produced empty output"
+fi
+log "PostgreSQL dump complete ($(du -h "${SRC_ROOT}/.tmp-backup/nanoclaw.sql.gz" | cut -f1))"
 
 ### Phase B — Staged rsync
 log "Phase B: Staging rsync to ${DEST_VOL}/${STAGING}/..."
@@ -134,6 +154,13 @@ fi
 if [[ -f "${SRC_ROOT}/.gitignore" ]]; then
     cp "${SRC_ROOT}/.gitignore" "${DEST_VOL}/${STAGING}/.gitignore"
 fi
+
+# Copy PostgreSQL dump
+mkdir -p "${DEST_VOL}/${STAGING}/postgres"
+cp "${SRC_ROOT}/.tmp-backup/nanoclaw.sql.gz" "${DEST_VOL}/${STAGING}/postgres/nanoclaw.sql.gz"
+
+# Copy docker-compose.yml (infrastructure-as-code)
+cp "${SRC_ROOT}/docker-compose.yml" "${DEST_VOL}/${STAGING}/docker-compose.yml"
 
 log "Rsync complete"
 

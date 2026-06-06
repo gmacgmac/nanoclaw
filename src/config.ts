@@ -16,6 +16,7 @@ const envConfig = readEnvFile([
   'CONTAINER_TIMEOUT',
   'CONTAINER_MAX_OUTPUT_SIZE',
   'CREDENTIAL_PROXY_PORT',
+  'DATABASE_URL',
   'DEFAULT_CONTEXT_WINDOW',
   'IDLE_TIMEOUT',
   'MAX_MESSAGES_PER_PROMPT',
@@ -24,6 +25,7 @@ const envConfig = readEnvFile([
   'NUDGE_INTERVAL',
   'SHUTDOWN_GRACE_MS',
   'TZ',
+  'USE_POSTGRES',
 ]);
 
 export const ASSISTANT_NAME =
@@ -33,6 +35,15 @@ export const ASSISTANT_HAS_OWN_NUMBER =
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+
+// PostgreSQL connection URL (loaded from secrets.env or .env)
+export const DATABASE_URL =
+  process.env.DATABASE_URL || envConfig.DATABASE_URL || '';
+
+// Feature flag: when true, app uses PostgreSQL instead of SQLite.
+// Defaults to false for safe transition window.
+export const USE_POSTGRES =
+  (process.env.USE_POSTGRES || envConfig.USE_POSTGRES || 'false') === 'true';
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();

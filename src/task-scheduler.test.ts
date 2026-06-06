@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
   createTask,
   getTaskById,
+  shutdownDatabase,
   updateTaskAfterCompletion,
 } from './db.js';
 import {
@@ -14,18 +15,21 @@ import {
 } from './task-scheduler.js';
 
 describe('task scheduler', () => {
-  beforeEach(() => {
-    _initTestDatabase();
+  beforeEach(async () => {
+    await _initTestDatabase();
     _resetSchedulerLoopForTests();
-    vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
+  afterAll(async () => {
+    await shutdownDatabase();
+  });
+
   it('pauses due tasks with invalid group folders to prevent retry churn', async () => {
-    createTask({
+    await createTask({
       id: 'task-invalid-folder',
       group_folder: '../../outside',
       chat_jid: 'bad@g.us',
@@ -44,6 +48,7 @@ describe('task scheduler', () => {
       },
     );
 
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     startSchedulerLoop({
       registeredGroups: () => ({}),
       getSessions: () => ({}),
@@ -53,13 +58,16 @@ describe('task scheduler', () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
+    vi.useRealTimers();
+    // Allow async DB operations triggered by the scheduler to complete
+    await new Promise((r) => setTimeout(r, 100));
 
-    const task = getTaskById('task-invalid-folder');
+    const task = await getTaskById('task-invalid-folder');
     expect(task?.status).toBe('paused');
   });
 
   it('pauses due tasks whose group is not found to prevent zombie retry loop', async () => {
-    createTask({
+    await createTask({
       id: 'task-missing-group',
       group_folder: 'removed-group',
       chat_jid: 'removed@g.us',
@@ -78,6 +86,7 @@ describe('task scheduler', () => {
       },
     );
 
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     startSchedulerLoop({
       registeredGroups: () => ({}), // no groups registered — simulates removal
       getSessions: () => ({}),
@@ -87,8 +96,11 @@ describe('task scheduler', () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
+    vi.useRealTimers();
+    // Allow async DB operations triggered by the scheduler to complete
+    await new Promise((r) => setTimeout(r, 100));
 
-    const task = getTaskById('task-missing-group');
+    const task = await getTaskById('task-missing-group');
     expect(task?.status).toBe('paused');
   });
 
@@ -169,7 +181,12 @@ describe('task scheduler', () => {
 
   describe('substitutePromptVars', () => {
     beforeEach(() => {
+      vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-04-29T20:05:00'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
     it('replaces {{NOW}} with human-readable date and time', () => {
@@ -230,7 +247,7 @@ describe('task scheduler', () => {
   describe('early next_run advance (BE_03)', () => {
     it('advances next_run before container spawn for interval tasks', async () => {
       const pastDue = new Date(Date.now() - 60_000).toISOString();
-      createTask({
+      await createTask({
         id: 'task-interval-advance',
         group_folder: 'test-group',
         chat_jid: 'test@g.us',
@@ -249,6 +266,7 @@ describe('task scheduler', () => {
         },
       );
 
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       startSchedulerLoop({
         registeredGroups: () => ({
           'test@g.us': {
@@ -265,8 +283,10 @@ describe('task scheduler', () => {
       });
 
       await vi.advanceTimersByTimeAsync(10);
+      vi.useRealTimers();
+      await new Promise((r) => setTimeout(r, 100));
 
-      const task = getTaskById('task-interval-advance');
+      const task = await getTaskById('task-interval-advance');
       // next_run should be in the future (advanced before container spawn)
       expect(task?.next_run).not.toBeNull();
       expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now());
@@ -274,7 +294,7 @@ describe('task scheduler', () => {
 
     it('sets next_run to null for once tasks (no re-trigger on crash)', async () => {
       const pastDue = new Date(Date.now() - 60_000).toISOString();
-      createTask({
+      await createTask({
         id: 'task-once-advance',
         group_folder: 'test-group',
         chat_jid: 'test@g.us',
@@ -293,6 +313,7 @@ describe('task scheduler', () => {
         },
       );
 
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       startSchedulerLoop({
         registeredGroups: () => ({
           'test@g.us': {
@@ -309,17 +330,19 @@ describe('task scheduler', () => {
       });
 
       await vi.advanceTimersByTimeAsync(10);
+      vi.useRealTimers();
+      await new Promise((r) => setTimeout(r, 100));
 
-      const task = getTaskById('task-once-advance');
+      const task = await getTaskById('task-once-advance');
       // next_run should be null — won't be re-triggered on restart
       expect(task?.next_run).toBeNull();
       // Status stays 'active' until completion (not flipped to 'completed' yet
       // because the container hasn't finished — only updateTaskAfterCompletion does that)
     });
 
-    it('updateTaskAfterCompletion does not re-advance next_run', () => {
+    it('updateTaskAfterCompletion does not re-advance next_run', async () => {
       const futureRun = new Date(Date.now() + 300_000).toISOString();
-      createTask({
+      await createTask({
         id: 'task-no-double-advance',
         group_folder: 'test-group',
         chat_jid: 'test@g.us',
@@ -333,16 +356,16 @@ describe('task scheduler', () => {
       });
 
       // Simulate completion — should only write last_run/last_result, not touch next_run
-      updateTaskAfterCompletion('task-no-double-advance', 'Done');
+      await updateTaskAfterCompletion('task-no-double-advance', 'Done');
 
-      const task = getTaskById('task-no-double-advance');
+      const task = await getTaskById('task-no-double-advance');
       expect(task?.next_run).toBe(futureRun); // unchanged
       expect(task?.last_result).toBe('Done');
       expect(task?.last_run).not.toBeNull();
     });
 
-    it('updateTaskAfterCompletion flips status to completed when next_run is null', () => {
-      createTask({
+    it('updateTaskAfterCompletion flips status to completed when next_run is null', async () => {
+      await createTask({
         id: 'task-once-complete',
         group_folder: 'test-group',
         chat_jid: 'test@g.us',
@@ -355,9 +378,9 @@ describe('task scheduler', () => {
         created_at: '2026-01-01T00:00:00.000Z',
       });
 
-      updateTaskAfterCompletion('task-once-complete', 'Finished');
+      await updateTaskAfterCompletion('task-once-complete', 'Finished');
 
-      const task = getTaskById('task-once-complete');
+      const task = await getTaskById('task-once-complete');
       expect(task?.status).toBe('completed');
       expect(task?.last_result).toBe('Finished');
     });

@@ -1,20 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
   createTask,
   getOrphanedStartedRuns,
   logTaskRunStarted,
+  shutdownDatabase,
   updateTaskRunLog,
 } from './db.js';
 import { sweepAbandonedRuns } from './abandoned-run-sweep.js';
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
 });
 
-function createTestTask(id: string, groupFolder: string, chatJid: string) {
-  createTask({
+afterAll(async () => {
+  await shutdownDatabase();
+});
+
+async function createTestTask(id: string, groupFolder: string, chatJid: string) {
+  await createTask({
     id,
     group_folder: groupFolder,
     chat_jid: chatJid,
@@ -29,80 +34,80 @@ function createTestTask(id: string, groupFolder: string, chatJid: string) {
 }
 
 describe('logTaskRunStarted', () => {
-  it('returns a numeric row id', () => {
-    createTestTask('t1', 'main', 'group@g.us');
-    const id = logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+  it('returns a numeric row id', async () => {
+    await createTestTask('t1', 'main', 'group@g.us');
+    const id = await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
     expect(typeof id).toBe('number');
     expect(id).toBeGreaterThan(0);
   });
 
-  it('creates a row with status started', () => {
-    createTestTask('t1', 'main', 'group@g.us');
-    logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    const orphans = getOrphanedStartedRuns();
+  it('creates a row with status started', async () => {
+    await createTestTask('t1', 'main', 'group@g.us');
+    await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    const orphans = await getOrphanedStartedRuns();
     expect(orphans).toHaveLength(1);
     expect(orphans[0].task_id).toBe('t1');
   });
 });
 
 describe('updateTaskRunLog', () => {
-  it('transitions a started row to success', () => {
-    createTestTask('t1', 'main', 'group@g.us');
-    const rowId = logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    updateTaskRunLog(rowId, {
+  it('transitions a started row to success', async () => {
+    await createTestTask('t1', 'main', 'group@g.us');
+    const rowId = await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    await updateTaskRunLog(rowId, {
       status: 'success',
       result: 'done',
       duration_ms: 1500,
     });
     // No longer orphaned
-    const orphans = getOrphanedStartedRuns();
+    const orphans = await getOrphanedStartedRuns();
     expect(orphans).toHaveLength(0);
   });
 
-  it('transitions a started row to error', () => {
-    createTestTask('t1', 'main', 'group@g.us');
-    const rowId = logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    updateTaskRunLog(rowId, {
+  it('transitions a started row to error', async () => {
+    await createTestTask('t1', 'main', 'group@g.us');
+    const rowId = await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    await updateTaskRunLog(rowId, {
       status: 'error',
       error: 'something broke',
       duration_ms: 200,
     });
-    const orphans = getOrphanedStartedRuns();
+    const orphans = await getOrphanedStartedRuns();
     expect(orphans).toHaveLength(0);
   });
 });
 
 describe('getOrphanedStartedRuns', () => {
-  it('returns only rows with status started', () => {
-    createTestTask('t1', 'main', 'group@g.us');
-    createTestTask('t2', 'main', 'group@g.us');
+  it('returns only rows with status started', async () => {
+    await createTestTask('t1', 'main', 'group@g.us');
+    await createTestTask('t2', 'main', 'group@g.us');
 
-    const id1 = logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
+    const id1 = await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    await logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
 
     // Complete t1
-    updateTaskRunLog(id1, { status: 'success', duration_ms: 100 });
+    await updateTaskRunLog(id1, { status: 'success', duration_ms: 100 });
 
-    const orphans = getOrphanedStartedRuns();
+    const orphans = await getOrphanedStartedRuns();
     expect(orphans).toHaveLength(1);
     expect(orphans[0].task_id).toBe('t2');
   });
 
-  it('returns empty when no orphans exist', () => {
-    const orphans = getOrphanedStartedRuns();
+  it('returns empty when no orphans exist', async () => {
+    const orphans = await getOrphanedStartedRuns();
     expect(orphans).toHaveLength(0);
   });
 });
 
 describe('sweepAbandonedRuns', () => {
   it('closes orphaned runs and sends aggregated alerts', async () => {
-    createTestTask('t1', 'main', 'group1@g.us');
-    createTestTask('t2', 'main', 'group1@g.us');
-    createTestTask('t3', 'other', 'group2@g.us');
+    await createTestTask('t1', 'main', 'group1@g.us');
+    await createTestTask('t2', 'main', 'group1@g.us');
+    await createTestTask('t3', 'other', 'group2@g.us');
 
-    logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
-    logTaskRunStarted('t3', '2026-01-01T00:02:00.000Z');
+    await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    await logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
+    await logTaskRunStarted('t3', '2026-01-01T00:02:00.000Z');
 
     const sentMessages: Array<{ jid: string; text: string }> = [];
     const mockSendMessage = vi.fn(async (jid: string, text: string) => {
@@ -112,7 +117,7 @@ describe('sweepAbandonedRuns', () => {
     await sweepAbandonedRuns({ sendMessage: mockSendMessage });
 
     // All orphans closed
-    expect(getOrphanedStartedRuns()).toHaveLength(0);
+    expect(await getOrphanedStartedRuns()).toHaveLength(0);
 
     // Two groups notified
     expect(mockSendMessage).toHaveBeenCalledTimes(2);
@@ -135,11 +140,11 @@ describe('sweepAbandonedRuns', () => {
   });
 
   it('continues even if sendMessage fails for one group', async () => {
-    createTestTask('t1', 'main', 'group1@g.us');
-    createTestTask('t2', 'other', 'group2@g.us');
+    await createTestTask('t1', 'main', 'group1@g.us');
+    await createTestTask('t2', 'other', 'group2@g.us');
 
-    logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
-    logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
+    await logTaskRunStarted('t1', '2026-01-01T00:00:00.000Z');
+    await logTaskRunStarted('t2', '2026-01-01T00:01:00.000Z');
 
     let callCount = 0;
     const mockSendMessage = vi.fn(async () => {
@@ -150,7 +155,7 @@ describe('sweepAbandonedRuns', () => {
     await sweepAbandonedRuns({ sendMessage: mockSendMessage });
 
     // Both orphans still closed despite send failure
-    expect(getOrphanedStartedRuns()).toHaveLength(0);
+    expect(await getOrphanedStartedRuns()).toHaveLength(0);
     // Both groups attempted
     expect(mockSendMessage).toHaveBeenCalledTimes(2);
   });

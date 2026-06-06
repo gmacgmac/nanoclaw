@@ -110,10 +110,10 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-function loadState(): void {
-  loadCursors();
-  sessions = getAllSessions();
-  setRegisteredGroups(getAllRegisteredGroups());
+async function loadState(): Promise<void> {
+  await loadCursors();
+  sessions = await getAllSessions();
+  setRegisteredGroups(await getAllRegisteredGroups());
   const channelCounts = Object.values(getRegisteredGroups()).reduce(
     (acc, g) => {
       const ch = g.containerChannel ?? 'stable';
@@ -144,9 +144,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  const missedMessages = getMessagesSince(
+  const missedMessages = await getMessagesSince(
     chatJid,
-    getOrRecoverGroupCursor(chatJid),
+    await getOrRecoverGroupCursor(chatJid),
     MAX_MESSAGES_PER_PROMPT,
   );
 
@@ -163,7 +163,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     if (filteredMessages.length === 0) {
       // All messages were for sub-agents — advance cursor and skip
-      setGroupCursor(
+      await setGroupCursor(
         chatJid,
         missedMessages[missedMessages.length - 1].timestamp,
       );
@@ -188,7 +188,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = getGroupCursor(chatJid) || '';
-  setGroupCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
+  await setGroupCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
 
   logger.info(
     { group: group.name, messageCount: filteredMessages.length },
@@ -217,7 +217,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.sendMessage(chatJid, errorMsg);
 
     // Roll back cursor so messages remain pending for retry after user fixes preset
-    rollbackGroupCursor(chatJid, previousCursor);
+    await rollbackGroupCursor(chatJid, previousCursor);
     return true; // consumed from queue perspective — don't retry-spam
   }
 
@@ -310,7 +310,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     // Roll back cursor so retries can re-process these messages
-    rollbackGroupCursor(chatJid, previousCursor);
+    await rollbackGroupCursor(chatJid, previousCursor);
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
@@ -329,7 +329,7 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   // --- Per-spawn config resolution (single chokepoint) ---
-  const spawnConfig = resolveSpawnConfig(chatJid);
+  const spawnConfig = await resolveSpawnConfig(chatJid);
   if (!spawnConfig) {
     logger.error({ chatJid }, 'resolveSpawnConfig returned null — group gone');
     return 'error';
@@ -341,7 +341,7 @@ async function runAgent(
   const sessionId = sessions[freshGroup.folder];
 
   // Update available groups snapshot (main group only can see all groups)
-  const availableGroups = getAvailableGroups();
+  const availableGroups = await getAvailableGroups();
   const registeredGroupsList = Object.entries(getRegisteredGroups()).map(
     ([jid, g]) => ({
       jid,
@@ -469,7 +469,7 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(getRegisteredGroups());
-      const { messages, newTimestamp } = getNewMessages(
+      const { messages, newTimestamp } = await getNewMessages(
         jids,
         getGlobalCursor(),
       );
@@ -478,7 +478,7 @@ async function startMessageLoop(): Promise<void> {
         logger.info({ count: messages.length }, 'New messages');
 
         // Advance the "seen" cursor for all messages immediately
-        setGlobalCursor(newTimestamp);
+        await setGlobalCursor(newTimestamp);
 
         // Deduplicate by group
         const messagesByGroup = new Map<string, NewMessage[]>();
@@ -516,7 +516,7 @@ async function startMessageLoop(): Promise<void> {
 
               const target = findDelegationTarget(msg, chatJid);
               if (target) {
-                delegateMessage({
+                await delegateMessage({
                   hubGroup: group,
                   hubJid: chatJid,
                   msg,
@@ -562,9 +562,9 @@ async function startMessageLoop(): Promise<void> {
 
           // Pull all messages since group cursor so non-trigger
           // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
+          const allPending = await getMessagesSince(
             chatJid,
-            getOrRecoverGroupCursor(chatJid),
+            await getOrRecoverGroupCursor(chatJid),
             MAX_MESSAGES_PER_PROMPT,
           );
 
@@ -575,7 +575,7 @@ async function startMessageLoop(): Promise<void> {
             // Advance global cursor past these messages to prevent re-seeing them
             for (const msg of groupMessages) {
               if (msg.timestamp > getGlobalCursor()) {
-                setGlobalCursor(msg.timestamp);
+                await setGlobalCursor(msg.timestamp);
               }
             }
             continue;
@@ -613,7 +613,7 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            setGroupCursor(
+            await setGroupCursor(
               chatJid,
               messagesToSend[messagesToSend.length - 1].timestamp,
             );
@@ -640,11 +640,11 @@ async function startMessageLoop(): Promise<void> {
  * Startup recovery: check for unprocessed messages in registered groups.
  * Handles crash between advancing global cursor and processing messages.
  */
-function recoverPendingMessages(): void {
+async function recoverPendingMessages(): Promise<void> {
   for (const [chatJid, group] of Object.entries(getRegisteredGroups())) {
-    const pending = getMessagesSince(
+    const pending = await getMessagesSince(
       chatJid,
-      getOrRecoverGroupCursor(chatJid),
+      await getOrRecoverGroupCursor(chatJid),
       MAX_MESSAGES_PER_PROMPT,
     );
     if (pending.length > 0) {
@@ -664,11 +664,11 @@ function ensureContainerSystemRunning(): void {
 
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
-  initDatabase();
+  await initDatabase();
   logger.info('Database initialized');
-  runPresetMigration();
-  runDeniedToolsMigration();
-  loadState();
+  await runPresetMigration();
+  await runDeniedToolsMigration();
+  await loadState();
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
@@ -893,7 +893,7 @@ async function main(): Promise<void> {
           queue.enqueueTask(chatJid, taskId, async () => {
             try {
               // --- Per-spawn config resolution (single chokepoint) ---
-              const spawnConfig = resolveSpawnConfig(chatJid);
+              const spawnConfig = await resolveSpawnConfig(chatJid);
               if (!spawnConfig || !spawnConfig.preset) {
                 logger.warn(
                   { group: group.name, chatJid },
@@ -999,7 +999,7 @@ async function main(): Promise<void> {
     queue,
   });
   queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
+  await recoverPendingMessages();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

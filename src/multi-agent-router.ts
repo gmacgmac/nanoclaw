@@ -65,7 +65,7 @@ export interface DelegateMessageArgs {
  * Dispatches a message to the target sub-agent:
  * strips trigger prefix, stores routed message in target DB, enqueues check, logs.
  */
-export function delegateMessage(args: DelegateMessageArgs): void {
+export async function delegateMessage(args: DelegateMessageArgs): Promise<void> {
   const { hubGroup, hubJid, msg, target, enqueueMessageCheck } = args;
 
   const strippedPrompt = msg.content
@@ -75,7 +75,7 @@ export function delegateMessage(args: DelegateMessageArgs): void {
 
   const now = new Date();
 
-  storeMessageDirect({
+  await storeMessageDirect({
     id: `routed-${now.getTime()}-${target.targetJid}`,
     chat_jid: target.targetJid,
     sender: msg.sender,

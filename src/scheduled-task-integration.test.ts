@@ -2,7 +2,7 @@
  * Integration tests for BE_01..BE_04: runtime state, crash recovery,
  * early next_run advance, and graceful shutdown working together.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -10,6 +10,7 @@ import {
   getOrphanedStartedRuns,
   getTaskById,
   logTaskRunStarted,
+  shutdownDatabase,
   updateTaskRunLog,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -41,6 +42,8 @@ vi.mock('./config.js', () => ({
   NIGHTLY_NUDGE_THRESHOLD: 0.7,
   DEFAULT_CONTEXT_WINDOW: 128000,
   SHUTDOWN_GRACE_MS: 30000,
+  DATABASE_URL: process.env.DATABASE_URL || 'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
+  USE_POSTGRES: true,
 }));
 
 // Mock fs operations
@@ -57,11 +60,11 @@ vi.mock('fs', async () => {
   };
 });
 
-function createTestTask(
+async function createTestTask(
   id: string,
   overrides: Partial<Parameters<typeof createTask>[0]> = {},
 ) {
-  createTask({
+  await createTask({
     id,
     group_folder: 'test-group',
     chat_jid: 'group@g.us',
@@ -77,14 +80,18 @@ function createTestTask(
 }
 
 describe('scheduled task integration', () => {
-  beforeEach(() => {
-    _initTestDatabase();
+  beforeEach(async () => {
+    await _initTestDatabase();
     _resetSchedulerLoopForTests();
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  afterAll(async () => {
+    await shutdownDatabase();
   });
 
   describe('full lifecycle of a successful run', () => {
@@ -94,16 +101,16 @@ describe('scheduled task integration', () => {
 
       // 1. Create a task with next_run in the future → idle
       const futureRun = new Date(Date.now() + 600_000).toISOString();
-      createTestTask('lifecycle-task', { next_run: futureRun });
+      await createTestTask('lifecycle-task', { next_run: futureRun });
 
-      const task = getTaskById('lifecycle-task')!;
-      expect(deriveRuntimeState(task, queue, now)).toBe('idle');
+      const task = await getTaskById('lifecycle-task');
+      expect(deriveRuntimeState(task!, queue, now)).toBe('idle');
 
       // 2. Make it due (next_run in the past)
       const pastDue = new Date(Date.now() - 60_000).toISOString();
-      createTestTask('lifecycle-due', { next_run: pastDue });
-      const dueTask = getTaskById('lifecycle-due')!;
-      expect(deriveRuntimeState(dueTask, queue, now)).toBe('due');
+      await createTestTask('lifecycle-due', { next_run: pastDue });
+      const dueTask = await getTaskById('lifecycle-due');
+      expect(deriveRuntimeState(dueTask!, queue, now)).toBe('due');
 
       // 3. Simulate scheduler picking it up via enqueueTask → running
       let resolveTask: () => void;
@@ -113,23 +120,23 @@ describe('scheduled task integration', () => {
 
       queue.enqueueTask('group@g.us', 'lifecycle-due', async () => {
         // Inside the task: insert started row (simulating runTask behavior)
-        const runLogId = logTaskRunStarted(
+        const runLogId = await logTaskRunStarted(
           'lifecycle-due',
           new Date().toISOString(),
         );
 
         // Verify runtime_state is 'running' while task executes
-        const runningTask = getTaskById('lifecycle-due')!;
-        expect(deriveRuntimeState(runningTask, queue, new Date())).toBe(
+        const runningTask = await getTaskById('lifecycle-due');
+        expect(deriveRuntimeState(runningTask!, queue, new Date())).toBe(
           'running',
         );
 
         // Verify started log row exists
-        const orphans = getOrphanedStartedRuns();
+        const orphans = await getOrphanedStartedRuns();
         expect(orphans.some((o) => o.task_id === 'lifecycle-due')).toBe(true);
 
         // Complete the run
-        updateTaskRunLog(runLogId, {
+        await updateTaskRunLog(runLogId, {
           status: 'success',
           result: 'Done',
           duration_ms: 500,
@@ -143,26 +150,26 @@ describe('scheduled task integration', () => {
       await vi.advanceTimersByTimeAsync(10);
 
       // 4. After completion: no orphaned rows, task no longer running
-      expect(getOrphanedStartedRuns()).toHaveLength(0);
+      expect(await getOrphanedStartedRuns()).toHaveLength(0);
     });
   });
 
   describe('crash recovery', () => {
     it('sweeps orphaned started rows and sends aggregated alerts', async () => {
       // Simulate prior crash: insert started rows directly
-      createTestTask('crash-t1', { chat_jid: 'group1@g.us' });
-      createTestTask('crash-t2', { chat_jid: 'group1@g.us' });
-      createTestTask('crash-t3', {
+      await createTestTask('crash-t1', { chat_jid: 'group1@g.us' });
+      await createTestTask('crash-t2', { chat_jid: 'group1@g.us' });
+      await createTestTask('crash-t3', {
         chat_jid: 'group2@g.us',
         group_folder: 'other-group',
       });
 
-      logTaskRunStarted('crash-t1', '2026-01-01T00:00:00.000Z');
-      logTaskRunStarted('crash-t2', '2026-01-01T00:01:00.000Z');
-      logTaskRunStarted('crash-t3', '2026-01-01T00:02:00.000Z');
+      await logTaskRunStarted('crash-t1', '2026-01-01T00:00:00.000Z');
+      await logTaskRunStarted('crash-t2', '2026-01-01T00:01:00.000Z');
+      await logTaskRunStarted('crash-t3', '2026-01-01T00:02:00.000Z');
 
       // Verify orphans exist
-      expect(getOrphanedStartedRuns()).toHaveLength(3);
+      expect(await getOrphanedStartedRuns()).toHaveLength(3);
 
       // Run sweep with mocked channel
       const sentMessages: Array<{ jid: string; text: string }> = [];
@@ -173,7 +180,7 @@ describe('scheduled task integration', () => {
       await sweepAbandonedRuns({ sendMessage: mockSendMessage });
 
       // All orphans closed as error
-      expect(getOrphanedStartedRuns()).toHaveLength(0);
+      expect(await getOrphanedStartedRuns()).toHaveLength(0);
 
       // Alerts sent per group
       expect(mockSendMessage).toHaveBeenCalledTimes(2);
@@ -192,16 +199,16 @@ describe('scheduled task integration', () => {
     it('next_run already advanced prevents re-trigger after crash', async () => {
       // Simulate: task ran, next_run was advanced, then host crashed
       const futureRun = new Date(Date.now() + 300_000).toISOString();
-      createTestTask('no-retrigger', { next_run: futureRun });
-      logTaskRunStarted('no-retrigger', '2026-01-01T00:00:00.000Z');
+      await createTestTask('no-retrigger', { next_run: futureRun });
+      await logTaskRunStarted('no-retrigger', '2026-01-01T00:00:00.000Z');
 
       // Sweep cleans the orphan
       await sweepAbandonedRuns({ sendMessage: vi.fn() });
-      expect(getOrphanedStartedRuns()).toHaveLength(0);
+      expect(await getOrphanedStartedRuns()).toHaveLength(0);
 
       // Task's next_run is still in the future — scheduler won't pick it up
-      const task = getTaskById('no-retrigger')!;
-      expect(new Date(task.next_run!).getTime()).toBeGreaterThan(Date.now());
+      const task = await getTaskById('no-retrigger');
+      expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now());
     });
   });
 
@@ -318,11 +325,11 @@ describe('scheduled task integration', () => {
 
       // Create a due task and check its runtime_state
       const pastDue = new Date(Date.now() - 60_000).toISOString();
-      createTestTask('blocked-task', { next_run: pastDue });
+      await createTestTask('blocked-task', { next_run: pastDue });
 
-      const task = getTaskById('blocked-task')!;
+      const task = await getTaskById('blocked-task');
       // Task is due but group has active container → blocked
-      expect(deriveRuntimeState(task, queue, new Date())).toBe('blocked');
+      expect(deriveRuntimeState(task!, queue, new Date())).toBe('blocked');
 
       // Enqueue the task — it should be queued behind the chat
       const taskFn = vi.fn(async () => {
@@ -332,7 +339,7 @@ describe('scheduled task integration', () => {
       await vi.advanceTimersByTimeAsync(10);
 
       // Task should be queued (not running yet)
-      expect(deriveRuntimeState(task, queue, new Date())).toBe('queued');
+      expect(deriveRuntimeState(task!, queue, new Date())).toBe('queued');
       expect(taskFn).not.toHaveBeenCalled();
 
       // Chat exits → task should run
@@ -388,7 +395,7 @@ describe('scheduled task integration', () => {
   describe('scheduler + runtime_state + audit trail end-to-end', () => {
     it('scheduler poll advances next_run and creates started log row', async () => {
       const pastDue = new Date(Date.now() - 60_000).toISOString();
-      createTestTask('e2e-task', {
+      await createTestTask('e2e-task', {
         next_run: pastDue,
         schedule_type: 'interval',
         schedule_value: '300000',
@@ -418,13 +425,13 @@ describe('scheduled task integration', () => {
       await vi.advanceTimersByTimeAsync(10);
 
       // next_run should be advanced to the future
-      const task = getTaskById('e2e-task')!;
-      expect(task.next_run).not.toBeNull();
-      expect(new Date(task.next_run!).getTime()).toBeGreaterThan(Date.now());
+      const task = await getTaskById('e2e-task');
+      expect(task!.next_run).not.toBeNull();
+      expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now());
 
       // A started log row should have been created (and closed as error
       // because preset resolution fails in test env — that's expected)
-      const orphans = getOrphanedStartedRuns();
+      const orphans = await getOrphanedStartedRuns();
       expect(orphans).toHaveLength(0); // closed out (error from missing preset)
     });
   });

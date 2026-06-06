@@ -18,16 +18,19 @@
     "auth": "tsx src/whatsapp-auth.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
+    "migrate:sqlite-to-pg": "tsx scripts/migrate-sqlite-to-postgres.ts",
     "test": "vitest run",
+    "test:pg": "DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test USE_POSTGRES=true vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "better-sqlite3": "11.10.0",
     "cron-parser": "5.5.0",
     "grammy": "^1.39.3",
+    "postgres": "3.4.9",
     "sharp": "^0.33.5"
   },
   "devDependencies": {
+    "better-sqlite3": "11.10.0",
     "@eslint/js": "^9.35.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",

@@ -159,11 +159,11 @@ describe('isHubMessage', () => {
 describe('delegateMessage', () => {
   const enqueueMessageCheck = vi.fn();
 
-  it('10: calls storeMessageDirect with correct shape and enqueues check', () => {
+  it('10: calls storeMessageDirect with correct shape and enqueues check', async () => {
     const msg = makeMsg({ content: '@AgentA do something' });
     const target = { targetJid: 'agent-a@g.us', targetGroup: SUB_AGENT_A };
 
-    delegateMessage({
+    await delegateMessage({
       hubGroup: HUB_GROUP,
       hubJid: HUB_JID,
       msg,
@@ -186,11 +186,11 @@ describe('delegateMessage', () => {
     expect(mockLoggerInfo).toHaveBeenCalledTimes(1);
   });
 
-  it('11: trigger prefix is stripped from content', () => {
+  it('11: trigger prefix is stripped from content', async () => {
     const msg = makeMsg({ content: '@AgentA analyze the logs' });
     const target = { targetJid: 'agent-a@g.us', targetGroup: SUB_AGENT_A };
 
-    delegateMessage({
+    await delegateMessage({
       hubGroup: HUB_GROUP,
       hubJid: HUB_JID,
       msg,
@@ -203,11 +203,11 @@ describe('delegateMessage', () => {
     expect(stored.content).toMatch(/^analyze the logs/);
   });
 
-  it('12: falls back to msg.content.trim() when content is empty after stripping', () => {
+  it('12: falls back to msg.content.trim() when content is empty after stripping', async () => {
     const msg = makeMsg({ content: '@AgentA' });
     const target = { targetJid: 'agent-a@g.us', targetGroup: SUB_AGENT_A };
 
-    delegateMessage({
+    await delegateMessage({
       hubGroup: HUB_GROUP,
       hubJid: HUB_JID,
       msg,

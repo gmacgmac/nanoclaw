@@ -253,13 +253,13 @@ export interface NightlyDependencies {
   /** Enqueue a nightly nudge prompt for a group via the group queue. */
   runNudge: (group: RegisteredGroup, chatJid: string) => Promise<boolean>;
   /** Override for testing — defaults to getAllRegisteredGroups(). */
-  getGroups?: () => Record<string, RegisteredGroup>;
+  getGroups?: () => Record<string, RegisteredGroup> | Promise<Record<string, RegisteredGroup>>;
   /** Override for testing — defaults to getAllSessions(). */
-  getSessions?: () => Record<string, string>;
+  getSessions?: () => Record<string, string> | Promise<Record<string, string>>;
   /** Override for testing — defaults to pruneOldMessages(30). */
-  pruneMessages?: () => number;
+  pruneMessages?: () => number | Promise<number>;
   /** Override for testing — defaults to expireStaleDelegations(). */
-  expireDelegations?: () => number;
+  expireDelegations?: () => number | Promise<number>;
   /** Override for testing — defaults to LOGS_DIR. */
   logsDir?: string;
 }
@@ -272,8 +272,8 @@ export interface NightlyDependencies {
 export async function runNightlyMaintenance(
   deps: NightlyDependencies,
 ): Promise<NightlyMaintenanceResult> {
-  const groups = (deps.getGroups ?? getAllRegisteredGroups)();
-  const sessions = (deps.getSessions ?? getAllSessions)();
+  const groups = await (deps.getGroups ?? getAllRegisteredGroups)();
+  const sessions = await (deps.getSessions ?? getAllSessions)();
 
   const result: NightlyMaintenanceResult = {
     groupsChecked: 0,
@@ -328,14 +328,14 @@ export async function runNightlyMaintenance(
   }
 
   // --- DB maintenance ---
-  result.messagesPruned = (
+  result.messagesPruned = await (
     deps.pruneMessages ?? (() => pruneOldMessages(30))
   )();
   if (result.messagesPruned > 0) {
     logger.info({ deleted: result.messagesPruned }, 'Pruned old messages');
   }
 
-  result.delegationsExpired = (
+  result.delegationsExpired = await (
     deps.expireDelegations ?? expireStaleDelegations
   )();
   if (result.delegationsExpired > 0) {

@@ -13,7 +13,7 @@ export interface SweepDependencies {
 export async function sweepAbandonedRuns(
   deps: SweepDependencies,
 ): Promise<void> {
-  const orphans = getOrphanedStartedRuns();
+  const orphans = await getOrphanedStartedRuns();
   if (orphans.length === 0) return;
 
   logger.warn(
@@ -25,13 +25,13 @@ export async function sweepAbandonedRuns(
   const alertsByJid = new Map<string, string[]>();
 
   for (const orphan of orphans) {
-    updateTaskRunLog(orphan.id, {
+    await updateTaskRunLog(orphan.id, {
       status: 'error',
       error: 'Host stopped mid-run',
       duration_ms: 0,
     });
 
-    const task = getTaskById(orphan.task_id);
+    const task = await getTaskById(orphan.task_id);
     const chatJid = task?.chat_jid;
     if (!chatJid) continue;
 

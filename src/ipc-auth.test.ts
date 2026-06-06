@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterAll, describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -11,6 +11,7 @@ import {
   getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
+  shutdownDatabase,
   storeChatMetadata,
 } from './db.js';
 import { processTaskIpc, processTaskIpcRequest, IpcDeps } from './ipc.js';
@@ -27,6 +28,8 @@ vi.mock('./config.js', () => ({
   DATA_DIR: path.join(os.tmpdir(), `nanoclaw-ipc-auth-test-${process.pid}`),
   IPC_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
+  DATABASE_URL: process.env.DATABASE_URL || 'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
+  USE_POSTGRES: true,
 }));
 
 /**
@@ -73,8 +76,8 @@ const THIRD_GROUP: RegisteredGroup = {
 let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
 
   // Ensure IPC directories exist for response file writes
   fs.mkdirSync(path.join(TEST_DATA_DIR, 'ipc', 'whatsapp_main', 'tasks'), {
@@ -88,28 +91,28 @@ beforeEach(() => {
   });
 
   // Seed chat rows so FK constraints pass in message-related tests
-  storeChatMetadata(
+  await storeChatMetadata(
     'main@g.us',
     new Date().toISOString(),
     'Main',
     'whatsapp',
     true,
   );
-  storeChatMetadata(
+  await storeChatMetadata(
     'other@g.us',
     new Date().toISOString(),
     'Other',
     'whatsapp',
     true,
   );
-  storeChatMetadata(
+  await storeChatMetadata(
     'third@g.us',
     new Date().toISOString(),
     'Third',
     'whatsapp',
     true,
   );
-  storeChatMetadata(
+  await storeChatMetadata(
     'dashboard@internal',
     new Date().toISOString(),
     'Dashboard',
@@ -124,20 +127,20 @@ beforeEach(() => {
   };
 
   // Populate DB as well
-  setRegisteredGroup('main@g.us', MAIN_GROUP);
-  setRegisteredGroup('other@g.us', OTHER_GROUP);
-  setRegisteredGroup('third@g.us', THIRD_GROUP);
+  await setRegisteredGroup('main@g.us', MAIN_GROUP);
+  await setRegisteredGroup('other@g.us', OTHER_GROUP);
+  await setRegisteredGroup('third@g.us', THIRD_GROUP);
 
   deps = {
     sendMessage: async () => {},
     sendAttachment: async () => {},
     registeredGroups: () => groups,
-    registerGroup: (jid, group) => {
+    registerGroup: async (jid, group) => {
       groups[jid] = group;
-      setRegisteredGroup(jid, group);
+      await setRegisteredGroup(jid, group);
       // Create chats row for internal groups (mirrors src/index.ts behavior)
       if (jid.endsWith('@internal')) {
-        storeChatMetadata(
+        await storeChatMetadata(
           jid,
           new Date().toISOString(),
           group.name,
@@ -159,6 +162,10 @@ afterEach(() => {
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
+afterAll(async () => {
+  await shutdownDatabase();
+});
+
 // --- schedule_task authorization ---
 
 describe('schedule_task authorization', () => {
@@ -178,7 +185,7 @@ describe('schedule_task authorization', () => {
     );
 
     // Verify task was created in DB for the other group
-    const allTasks = getAllTasks();
+    const allTasks = await getAllTasks();
     expect(allTasks.length).toBe(1);
     expect(allTasks[0].group_folder).toBe('other-group');
   });
@@ -198,7 +205,7 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = await getAllTasks();
     expect(allTasks.length).toBe(1);
     expect(allTasks[0].group_folder).toBe('other-group');
   });
@@ -218,7 +225,7 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = await getAllTasks();
     expect(allTasks.length).toBe(0);
   });
 
@@ -237,7 +244,7 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = await getAllTasks();
     expect(allTasks.length).toBe(0);
   });
 });
@@ -245,8 +252,8 @@ describe('schedule_task authorization', () => {
 // --- pause_task authorization ---
 
 describe('pause_task authorization', () => {
-  beforeEach(() => {
-    createTask({
+  beforeEach(async () => {
+    await createTask({
       id: 'task-main',
       group_folder: 'whatsapp_main',
       chat_jid: 'main@g.us',
@@ -258,7 +265,7 @@ describe('pause_task authorization', () => {
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
     });
-    createTask({
+    await createTask({
       id: 'task-other',
       group_folder: 'other-group',
       chat_jid: 'other@g.us',
@@ -279,7 +286,7 @@ describe('pause_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-main')!.status).toBe('paused');
+    expect((await getTaskById('task-main'))!.status).toBe('paused');
     const resp = readIpcResponse('whatsapp_main', 'c1');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-main');
@@ -293,7 +300,7 @@ describe('pause_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-other')!.status).toBe('paused');
+    expect((await getTaskById('task-other'))!.status).toBe('paused');
     const resp = readIpcResponse('other-group', 'c2');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-other');
@@ -307,7 +314,7 @@ describe('pause_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-other')!.status).toBe('active');
+    expect((await getTaskById('task-other'))!.status).toBe('active');
     const resp = readIpcResponse('whatsapp_main', 'c3');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -320,7 +327,7 @@ describe('pause_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-main')!.status).toBe('active');
+    expect((await getTaskById('task-main'))!.status).toBe('active');
     const resp = readIpcResponse('other-group', 'c4');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -346,8 +353,8 @@ describe('pause_task authorization', () => {
 // --- resume_task authorization ---
 
 describe('resume_task authorization', () => {
-  beforeEach(() => {
-    createTask({
+  beforeEach(async () => {
+    await createTask({
       id: 'task-paused',
       group_folder: 'other-group',
       chat_jid: 'other@g.us',
@@ -372,7 +379,7 @@ describe('resume_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('active');
+    expect((await getTaskById('task-paused'))!.status).toBe('active');
     const resp = readIpcResponse('other-group', 'r1');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-paused');
@@ -390,7 +397,7 @@ describe('resume_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('paused');
+    expect((await getTaskById('task-paused'))!.status).toBe('paused');
     const resp = readIpcResponse('whatsapp_main', 'r2');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -407,7 +414,7 @@ describe('resume_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('paused');
+    expect((await getTaskById('task-paused'))!.status).toBe('paused');
     const resp = readIpcResponse('third-group', 'r3');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -430,11 +437,12 @@ describe('resume_task authorization', () => {
   });
 });
 
+
 // --- cancel_task authorization ---
 
 describe('cancel_task authorization', () => {
   it('own-group success: main group can cancel its own task', async () => {
-    createTask({
+    await createTask({
       id: 'task-main-cancel',
       group_folder: 'whatsapp_main',
       chat_jid: 'main@g.us',
@@ -457,14 +465,14 @@ describe('cancel_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-main-cancel')).toBeUndefined();
+    expect(await getTaskById('task-main-cancel')).toBeUndefined();
     const resp = readIpcResponse('whatsapp_main', 'k1');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-main-cancel');
   });
 
   it('own-group success: non-main group can cancel its own task', async () => {
-    createTask({
+    await createTask({
       id: 'task-own',
       group_folder: 'other-group',
       chat_jid: 'other@g.us',
@@ -483,14 +491,14 @@ describe('cancel_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-own')).toBeUndefined();
+    expect(await getTaskById('task-own')).toBeUndefined();
     const resp = readIpcResponse('other-group', 'k2');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-own');
   });
 
   it('cross-group deny: main group cannot cancel another groups task', async () => {
-    createTask({
+    await createTask({
       id: 'task-to-cancel',
       group_folder: 'other-group',
       chat_jid: 'other@g.us',
@@ -513,14 +521,14 @@ describe('cancel_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-to-cancel')).toBeDefined();
+    expect(await getTaskById('task-to-cancel')).toBeDefined();
     const resp = readIpcResponse('whatsapp_main', 'k3');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
   });
 
   it('cross-group deny: non-main group cannot cancel another groups task', async () => {
-    createTask({
+    await createTask({
       id: 'task-foreign',
       group_folder: 'whatsapp_main',
       chat_jid: 'main@g.us',
@@ -543,7 +551,7 @@ describe('cancel_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-foreign')).toBeDefined();
+    expect(await getTaskById('task-foreign')).toBeDefined();
     const resp = readIpcResponse('other-group', 'k4');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -569,8 +577,8 @@ describe('cancel_task authorization', () => {
 // --- update_task authorization ---
 
 describe('update_task authorization', () => {
-  beforeEach(() => {
-    createTask({
+  beforeEach(async () => {
+    await createTask({
       id: 'task-updatable',
       group_folder: 'other-group',
       chat_jid: 'other@g.us',
@@ -596,7 +604,7 @@ describe('update_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-updatable')!.prompt).toBe('updated prompt');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe('updated prompt');
     const resp = readIpcResponse('other-group', 'u1');
     expect(resp.ok).toBe(true);
     expect((resp as any).data.id).toBe('task-updatable');
@@ -615,7 +623,7 @@ describe('update_task authorization', () => {
       true,
       deps,
     );
-    expect(getTaskById('task-updatable')!.prompt).toBe('updatable task');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe('updatable task');
     const resp = readIpcResponse('whatsapp_main', 'u2');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -633,7 +641,7 @@ describe('update_task authorization', () => {
       false,
       deps,
     );
-    expect(getTaskById('task-updatable')!.prompt).toBe('updatable task');
+    expect((await getTaskById('task-updatable'))!.prompt).toBe('updatable task');
     const resp = readIpcResponse('third-group', 'u3');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toBe('Task not found');
@@ -670,7 +678,7 @@ describe('update_task authorization', () => {
       deps,
     );
     // DB unchanged
-    expect(getTaskById('task-updatable')!.schedule_type).toBe('once');
+    expect((await getTaskById('task-updatable'))!.schedule_type).toBe('once');
     const resp = readIpcResponse('other-group', 'u5');
     expect(resp.ok).toBe(false);
     expect((resp as any).error).toContain('Invalid schedule_value');
@@ -807,6 +815,7 @@ describe('IPC message authorization', () => {
   });
 });
 
+
 // --- schedule_task with cron and interval types ---
 
 describe('schedule_task schedule types', () => {
@@ -825,7 +834,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0].schedule_type).toBe('cron');
     expect(tasks[0].next_run).toBeTruthy();
@@ -850,7 +859,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(await getAllTasks()).toHaveLength(0);
   });
 
   it('creates task with interval schedule', async () => {
@@ -870,7 +879,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0].schedule_type).toBe('interval');
     // next_run should be ~1 hour from now
@@ -894,7 +903,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(await getAllTasks()).toHaveLength(0);
   });
 
   it('rejects invalid interval (zero)', async () => {
@@ -912,7 +921,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(await getAllTasks()).toHaveLength(0);
   });
 
   it('rejects invalid once timestamp', async () => {
@@ -930,7 +939,7 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(await getAllTasks()).toHaveLength(0);
   });
 });
 
@@ -953,7 +962,7 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks[0].context_mode).toBe('group');
   });
 
@@ -973,7 +982,7 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks[0].context_mode).toBe('isolated');
   });
 
@@ -993,7 +1002,7 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks[0].context_mode).toBe('isolated');
   });
 
@@ -1012,7 +1021,7 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
+    const tasks = await getAllTasks();
     expect(tasks[0].context_mode).toBe('isolated');
   });
 });
@@ -1036,7 +1045,7 @@ describe('register_group success', () => {
     );
 
     // Verify group was registered in DB
-    const group = getRegisteredGroup('new@g.us');
+    const group = await getRegisteredGroup('new@g.us');
     expect(group).toBeDefined();
     expect(group!.name).toBe('New Group');
     expect(group!.folder).toBe('new-group');
@@ -1057,7 +1066,7 @@ describe('register_group success', () => {
       deps,
     );
 
-    expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+    expect(await getRegisteredGroup('partial@g.us')).toBeUndefined();
   });
 
   it('register_group creates chats row for internal groups', async () => {
@@ -1076,12 +1085,12 @@ describe('register_group success', () => {
     );
 
     // Verify group was registered
-    const group = getRegisteredGroup('test-internal@internal');
+    const group = await getRegisteredGroup('test-internal@internal');
     expect(group).toBeDefined();
     expect(group!.name).toBe('Test Internal');
 
     // Verify chats row was created for internal group
-    const chats = getAllChats();
+    const chats = await getAllChats();
     const internalChat = chats.find((c) => c.jid === 'test-internal@internal');
     expect(internalChat).toBeDefined();
     expect(internalChat!.name).toBe('Test Internal');
@@ -1089,7 +1098,7 @@ describe('register_group success', () => {
 
   it('register_group preserves isAdmin when an existing admin group updates its config via IPC', async () => {
     // Seed an admin group directly in the DB (as CLI setup would do)
-    setRegisteredGroup('admin@g.us', {
+    await setRegisteredGroup('admin@g.us', {
       name: 'Admin Group',
       folder: 'whatsapp_admin',
       trigger: '@Andy',
@@ -1124,7 +1133,7 @@ describe('register_group success', () => {
     );
 
     // isAdmin must be preserved — not stripped by the IPC re-registration
-    const updated = getRegisteredGroup('admin@g.us');
+    const updated = await getRegisteredGroup('admin@g.us');
     expect(updated).toBeDefined();
     expect(updated!.isAdmin).toBe(true);
     expect(updated!.isMain).toBe(true);

@@ -45,13 +45,13 @@ export interface ResolvedSpawnConfig {
  * Resolve all behaviour-shaping config for a spawn. Reads fresh from DB.
  * Returns null only if the group cannot be found at all (neither DB nor cache).
  */
-export function resolveSpawnConfig(
+export async function resolveSpawnConfig(
   chatJid: string,
-): ResolvedSpawnConfig | null {
+): Promise<ResolvedSpawnConfig | null> {
   // Fresh DB read — the authoritative source for per-spawn config.
   // Falls back to the in-memory cache if the DB read fails (e.g. row deleted
   // between scheduler discovery and spawn).
-  const dbGroup = getRegisteredGroupFromDb(chatJid);
+  const dbGroup = await getRegisteredGroupFromDb(chatJid);
   const cacheGroup = getRegisteredGroupFromCache(chatJid);
   const group = dbGroup ?? cacheGroup;
 

@@ -44,7 +44,7 @@ export function getChannelList(): Channel[] {
 
 // --- Registration ---
 
-export function registerGroup(jid: string, group: RegisteredGroup): void {
+export async function registerGroup(jid: string, group: RegisteredGroup): Promise<void> {
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(group.folder);
@@ -57,11 +57,11 @@ export function registerGroup(jid: string, group: RegisteredGroup): void {
   }
 
   registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
+  await setRegisteredGroup(jid, group);
 
   // Create chats table row for internal groups (required for message processing)
   if (jid.endsWith('@internal')) {
-    storeChatMetadata(
+    await storeChatMetadata(
       jid,
       new Date().toISOString(),
       group.name,
@@ -125,7 +125,7 @@ export async function updateRegisteredGroup(
   group: RegisteredGroup,
 ): Promise<void> {
   registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
+  await setRegisteredGroup(jid, group);
 
   const channel = findChannel(channelList, jid);
   if (!channel) return;
@@ -148,8 +148,8 @@ export async function updateRegisteredGroup(
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
-export function getAvailableGroups(): AvailableGroup[] {
-  const chats = getAllChats();
+export async function getAvailableGroups(): Promise<AvailableGroup[]> {
+  const chats = await getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats

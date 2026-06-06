@@ -114,13 +114,13 @@ async function runTask(
   const runAt = new Date().toISOString();
 
   // Insert 'started' sentinel row immediately — survives crashes
-  const runLogId = logTaskRunStarted(task.id, runAt);
+  const runLogId = await logTaskRunStarted(task.id, runAt);
 
   // Advance next_run upfront so a host crash won't re-trigger this run.
   // For 'once' tasks this sets next_run = null; status flips to 'completed'
   // only on successful completion via updateTaskAfterCompletion.
   const nextRun = computeNextRun(task);
-  updateTask(task.id, { next_run: nextRun });
+  await updateTask(task.id, { next_run: nextRun });
 
   let groupDir: string;
   try {
@@ -128,12 +128,12 @@ async function runTask(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     // Stop retry churn for malformed legacy rows.
-    updateTask(task.id, { status: 'paused' });
+    await updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder, error },
       'Task has invalid group folder',
     );
-    updateTaskRunLog(runLogId, {
+    await updateTaskRunLog(runLogId, {
       status: 'error',
       error,
       duration_ms: Date.now() - startTime,
@@ -154,12 +154,12 @@ async function runTask(
 
   if (!group) {
     // Stop retry churn for tasks whose group was removed.
-    updateTask(task.id, { status: 'paused' });
+    await updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task — pausing to stop retry churn',
     );
-    updateTaskRunLog(runLogId, {
+    await updateTaskRunLog(runLogId, {
       status: 'error',
       error: `Group not found: ${task.group_folder} (task paused)`,
       duration_ms: Date.now() - startTime,
@@ -171,11 +171,11 @@ async function runTask(
   let error: string | null = null;
 
   // --- Per-spawn config resolution (single chokepoint) ---
-  const spawnConfig = resolveSpawnConfig(task.chat_jid);
+  const spawnConfig = await resolveSpawnConfig(task.chat_jid);
   if (!spawnConfig) {
     error = 'resolveSpawnConfig returned null — group config unavailable';
     logger.error({ taskId: task.id, chatJid: task.chat_jid }, error);
-    updateTaskRunLog(runLogId, {
+    await updateTaskRunLog(runLogId, {
       status: 'error',
       error,
       duration_ms: Date.now() - startTime,
@@ -216,7 +216,7 @@ async function runTask(
         },
         'Preset resolution failed, task container not spawned',
       );
-      updateTaskRunLog(runLogId, {
+      await updateTaskRunLog(runLogId, {
         status: 'error',
         error,
         duration_ms: Date.now() - startTime,
@@ -239,6 +239,9 @@ async function runTask(
         systemPrompt: containerConfig.systemPrompt,
         mcpServers: containerConfig.mcpServers,
         endpoint: preset.endpoint,
+        transform: preset.transform,
+        sdkMode: preset.sdkMode,
+        awsRegion: spawnConfig.awsRegion,
         webSearchVendor: preset.webSearchVendor,
         contextWindowSize: preset.contextWindow,
         learningLoop: containerConfig.learningLoop,
@@ -285,7 +288,7 @@ async function runTask(
   const durationMs = Date.now() - startTime;
 
   // Transition the 'started' row to its final state
-  updateTaskRunLog(runLogId, {
+  await updateTaskRunLog(runLogId, {
     status: error ? 'error' : 'success',
     result,
     error,
@@ -297,7 +300,7 @@ async function runTask(
     : result
       ? result.slice(0, 200)
       : 'Completed';
-  updateTaskAfterCompletion(task.id, resultSummary);
+  await updateTaskAfterCompletion(task.id, resultSummary);
 }
 
 let schedulerRunning = false;
@@ -324,14 +327,14 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     if (schedulerStopped) return;
 
     try {
-      const dueTasks = getDueTasks();
+      const dueTasks = await getDueTasks();
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
       }
 
       for (const task of dueTasks) {
         // Re-check task status in case it was paused/cancelled
-        const currentTask = getTaskById(task.id);
+        const currentTask = await getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
         }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterAll, describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -6,6 +6,7 @@ import {
   getDelegationByUuid,
   fulfillDelegation,
   setRegisteredGroup,
+  shutdownDatabase,
   storeChatMetadata,
   getMessagesSince,
 } from './db.js';
@@ -38,24 +39,24 @@ let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
 let enqueueMessageCheck: (jid: string) => void;
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
 
-  storeChatMetadata(
+  await storeChatMetadata(
     'main@g.us',
     new Date().toISOString(),
     'Main',
     'whatsapp',
     true,
   );
-  storeChatMetadata(
+  await storeChatMetadata(
     'other@g.us',
     new Date().toISOString(),
     'Other',
     'whatsapp',
     true,
   );
-  storeChatMetadata(
+  await storeChatMetadata(
     'third@g.us',
     new Date().toISOString(),
     'Third',
@@ -69,9 +70,9 @@ beforeEach(() => {
     'third@g.us': THIRD_GROUP,
   };
 
-  setRegisteredGroup('main@g.us', MAIN_GROUP);
-  setRegisteredGroup('other@g.us', OTHER_GROUP);
-  setRegisteredGroup('third@g.us', THIRD_GROUP);
+  await setRegisteredGroup('main@g.us', MAIN_GROUP);
+  await setRegisteredGroup('other@g.us', OTHER_GROUP);
+  await setRegisteredGroup('third@g.us', THIRD_GROUP);
 
   enqueueMessageCheck = vi.fn();
 
@@ -79,9 +80,9 @@ beforeEach(() => {
     sendMessage: async () => {},
     sendAttachment: async () => {},
     registeredGroups: () => groups,
-    registerGroup: (jid, group) => {
+    registerGroup: async (jid, group) => {
       groups[jid] = group;
-      setRegisteredGroup(jid, group);
+      await setRegisteredGroup(jid, group);
     },
     syncGroups: async () => {},
     getAvailableGroups: () => [],
@@ -91,11 +92,15 @@ beforeEach(() => {
   };
 });
 
+afterAll(async () => {
+  await shutdownDatabase();
+});
+
 // --- DB CRUD for delegations ---
 
 describe('delegation DB CRUD', () => {
-  it('creates and retrieves a delegation', () => {
-    createDelegation({
+  it('creates and retrieves a delegation', async () => {
+    await createDelegation({
       uuid: 'test-uuid-1',
       caller_jid: 'main@g.us',
       target_jid: 'other@g.us',
@@ -104,15 +109,15 @@ describe('delegation DB CRUD', () => {
       status: 'pending',
     });
 
-    const d = getDelegationByUuid('test-uuid-1');
+    const d = await getDelegationByUuid('test-uuid-1');
     expect(d).toBeDefined();
     expect(d!.caller_jid).toBe('main@g.us');
     expect(d!.target_jid).toBe('other@g.us');
     expect(d!.status).toBe('pending');
   });
 
-  it('fulfills a delegation', () => {
-    createDelegation({
+  it('fulfills a delegation', async () => {
+    await createDelegation({
       uuid: 'test-uuid-2',
       caller_jid: 'main@g.us',
       target_jid: 'other@g.us',
@@ -121,13 +126,13 @@ describe('delegation DB CRUD', () => {
       status: 'pending',
     });
 
-    fulfillDelegation('test-uuid-2');
-    const d = getDelegationByUuid('test-uuid-2');
+    await fulfillDelegation('test-uuid-2');
+    const d = await getDelegationByUuid('test-uuid-2');
     expect(d!.status).toBe('fulfilled');
   });
 
-  it('returns undefined for unknown UUID', () => {
-    expect(getDelegationByUuid('nonexistent')).toBeUndefined();
+  it('returns undefined for unknown UUID', async () => {
+    expect(await getDelegationByUuid('nonexistent')).toBeUndefined();
   });
 });
 
@@ -150,7 +155,7 @@ describe('delegate_to_group authorization', () => {
       deps,
     );
 
-    const d = getDelegationByUuid('del-uuid-1');
+    const d = await getDelegationByUuid('del-uuid-1');
     expect(d).toBeDefined();
     expect(d!.status).toBe('pending');
     expect(d!.caller_jid).toBe('main@g.us');
@@ -173,7 +178,7 @@ describe('delegate_to_group authorization', () => {
       deps,
     );
 
-    expect(getDelegationByUuid('del-uuid-blocked')).toBeUndefined();
+    expect(await getDelegationByUuid('del-uuid-blocked')).toBeUndefined();
   });
 
   it('rejects delegation to unregistered target', async () => {
@@ -192,7 +197,7 @@ describe('delegate_to_group authorization', () => {
       deps,
     );
 
-    expect(getDelegationByUuid('del-uuid-unknown')).toBeUndefined();
+    expect(await getDelegationByUuid('del-uuid-unknown')).toBeUndefined();
   });
 });
 
@@ -216,7 +221,7 @@ describe('delegate_to_group message injection', () => {
     );
 
     // The message should be stored as a non-bot user message in the target group
-    const msgs = getMessagesSince('other@g.us', '2020-01-01T00:00:00.000Z');
+    const msgs = await getMessagesSince('other@g.us', '2020-01-01T00:00:00.000Z');
     const delegationMsg = msgs.find((m) =>
       m.content.includes('Delegation UUID: del-msg-1'),
     );
@@ -259,7 +264,7 @@ describe('delegate_to_group message injection', () => {
       deps,
     );
 
-    const d = getDelegationByUuid('del-default-ttl');
+    const d = await getDelegationByUuid('del-default-ttl');
     expect(d).toBeDefined();
     // expires_at should be ~300s after created_at
     const created = new Date(d!.created_at).getTime();
@@ -271,10 +276,10 @@ describe('delegate_to_group message injection', () => {
 // --- respond_to_group ---
 
 describe('respond_to_group', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Create a pending delegation for each test
     const now = new Date();
-    createDelegation({
+    await createDelegation({
       uuid: 'resp-uuid-1',
       caller_jid: 'main@g.us',
       target_jid: 'other@g.us',
@@ -298,11 +303,11 @@ describe('respond_to_group', () => {
     );
 
     // Delegation should be fulfilled
-    const d = getDelegationByUuid('resp-uuid-1');
+    const d = await getDelegationByUuid('resp-uuid-1');
     expect(d!.status).toBe('fulfilled');
 
     // Response message should be in caller's DB
-    const msgs = getMessagesSince('main@g.us', '2020-01-01T00:00:00.000Z');
+    const msgs = await getMessagesSince('main@g.us', '2020-01-01T00:00:00.000Z');
     const responseMsg = msgs.find((m) =>
       m.content.includes('Delegation Response'),
     );
@@ -328,7 +333,7 @@ describe('respond_to_group', () => {
       deps,
     );
 
-    const d = getDelegationByUuid('resp-uuid-1');
+    const d = await getDelegationByUuid('resp-uuid-1');
     expect(d!.status).toBe('pending'); // Not fulfilled
     expect(enqueueMessageCheck).not.toHaveBeenCalled();
   });
@@ -351,7 +356,7 @@ describe('respond_to_group', () => {
 
   it('rejects response for already fulfilled delegation', async () => {
     // Fulfill it first
-    fulfillDelegation('resp-uuid-1');
+    await fulfillDelegation('resp-uuid-1');
 
     await processTaskIpc(
       {
@@ -371,7 +376,7 @@ describe('respond_to_group', () => {
   it('rejects response for expired delegation', async () => {
     // Create an already-expired delegation
     const past = new Date(Date.now() - 60_000);
-    createDelegation({
+    await createDelegation({
       uuid: 'expired-uuid',
       caller_jid: 'main@g.us',
       target_jid: 'other@g.us',
@@ -392,7 +397,7 @@ describe('respond_to_group', () => {
       deps,
     );
 
-    const d = getDelegationByUuid('expired-uuid');
+    const d = await getDelegationByUuid('expired-uuid');
     expect(d!.status).toBe('pending'); // Not fulfilled
     expect(enqueueMessageCheck).not.toHaveBeenCalled();
   });
@@ -432,10 +437,10 @@ describe('delegation edge cases', () => {
       deps,
     );
 
-    expect(getDelegationByUuid('multi-1')).toBeDefined();
-    expect(getDelegationByUuid('multi-2')).toBeDefined();
-    expect(getDelegationByUuid('multi-1')!.uuid).not.toBe(
-      getDelegationByUuid('multi-2')!.uuid,
+    expect(await getDelegationByUuid('multi-1')).toBeDefined();
+    expect(await getDelegationByUuid('multi-2')).toBeDefined();
+    expect((await getDelegationByUuid('multi-1'))!.uuid).not.toBe(
+      (await getDelegationByUuid('multi-2'))!.uuid,
     );
   });
 
@@ -452,7 +457,7 @@ describe('delegation edge cases', () => {
       deps,
     );
 
-    expect(getDelegationByUuid('incomplete')).toBeUndefined();
+    expect(await getDelegationByUuid('incomplete')).toBeUndefined();
   });
 
   it('respond_to_group with missing fields is rejected', async () => {
@@ -486,7 +491,7 @@ describe('delegation edge cases', () => {
       deps,
     );
 
-    const d = getDelegationByUuid('ttl-clamp');
+    const d = await getDelegationByUuid('ttl-clamp');
     expect(d).toBeDefined();
     const created = new Date(d!.created_at).getTime();
     const expires = new Date(d!.expires_at).getTime();

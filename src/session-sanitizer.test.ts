@@ -39,22 +39,22 @@ describe('sanitizeSessionJsonl', () => {
     vi.mocked(fs.renameSync).mockImplementation(() => {});
   }
 
-  it('returns silently when no session exists', () => {
-    mockGetSession.mockReturnValue(undefined);
-    expect(() => sanitizeSessionJsonl('test-group')).not.toThrow();
+  it('returns silently when no session exists', async () => {
+    mockGetSession.mockResolvedValue(undefined);
+    await expect(sanitizeSessionJsonl('test-group')).resolves.toBeUndefined();
     expect(fs.existsSync).not.toHaveBeenCalled();
   });
 
-  it('returns silently when JSONL file does not exist', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('returns silently when JSONL file does not exist', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    expect(() => sanitizeSessionJsonl('test-group')).not.toThrow();
+    await expect(sanitizeSessionJsonl('test-group')).resolves.toBeUndefined();
     expect(fs.existsSync).toHaveBeenCalledWith(sessionPath);
     expect(fs.readFileSync).not.toHaveBeenCalled();
   });
 
-  it('sanitizes non-compliant tool_use ids', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('sanitizes non-compliant tool_use ids', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         message: {
@@ -63,7 +63,7 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const lines = written.trim().split('\n');
@@ -71,8 +71,8 @@ describe('sanitizeSessionJsonl', () => {
     expect(entry.message.content[0].id).toBe('functions-Bash-1');
   });
 
-  it('aligns tool_result.tool_use_id with sanitized tool_use.id', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('aligns tool_result.tool_use_id with sanitized tool_use.id', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       [
         JSON.stringify({
@@ -100,7 +100,7 @@ describe('sanitizeSessionJsonl', () => {
       ].join('\n') + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const lines = written.trim().split('\n');
@@ -112,8 +112,8 @@ describe('sanitizeSessionJsonl', () => {
     expect(toolResult.message.content[0].tool_use_id).toBe(sanitizedId);
   });
 
-  it('handles id collisions by appending counter', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('handles id collisions by appending counter', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       [
         JSON.stringify({
@@ -127,7 +127,7 @@ describe('sanitizeSessionJsonl', () => {
       ].join('\n') + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
@@ -137,8 +137,8 @@ describe('sanitizeSessionJsonl', () => {
     expect(ids[1]).toMatch(/^a-b(-\d+)?$/);
   });
 
-  it('leaves compliant ids untouched', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('leaves compliant ids untouched', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         message: {
@@ -147,15 +147,15 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
     expect(entry.message.content[0].id).toBe('abc-123-XYZ');
   });
 
-  it('sanitizes orphan tool_result ids in place', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('sanitizes orphan tool_result ids in place', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         message: {
@@ -170,15 +170,15 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
     expect(entry.message.content[0].tool_use_id).toBe('orphan-id-here');
   });
 
-  it('skips lines that are not parseable JSON', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('skips lines that are not parseable JSON', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       [
         JSON.stringify({
@@ -190,7 +190,7 @@ describe('sanitizeSessionJsonl', () => {
       ].join('\n') + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const lines = written.trim().split('\n');
@@ -201,8 +201,8 @@ describe('sanitizeSessionJsonl', () => {
     expect(lines[1]).toBe('not-json-at-all');
   });
 
-  it('writes atomically (temp file then rename)', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('writes atomically (temp file then rename)', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         message: {
@@ -211,7 +211,7 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       `${sessionPath}.sanitize`,
@@ -223,8 +223,8 @@ describe('sanitizeSessionJsonl', () => {
     );
   });
 
-  it('does nothing when no tool_use blocks exist', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('does nothing when no tool_use blocks exist', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         type: 'queue-operation',
@@ -232,14 +232,14 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     expect(fs.writeFileSync).not.toHaveBeenCalled();
     expect(fs.renameSync).not.toHaveBeenCalled();
   });
 
-  it('strips thinking and redacted_thinking blocks', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('strips thinking and redacted_thinking blocks', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         type: 'assistant',
@@ -254,15 +254,15 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     const written = vi.mocked(fs.writeFileSync).mock.calls[0][1] as string;
     const entry = JSON.parse(written.trim().split('\n')[0]);
     expect(entry.message.content).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
-  it('writes file when only thinking blocks exist (no tool blocks)', () => {
-    mockGetSession.mockReturnValue('sess-123');
+  it('writes file when only thinking blocks exist (no tool blocks)', async () => {
+    mockGetSession.mockResolvedValue('sess-123');
     mockFile(
       JSON.stringify({
         type: 'assistant',
@@ -273,7 +273,7 @@ describe('sanitizeSessionJsonl', () => {
       }) + '\n',
     );
 
-    sanitizeSessionJsonl('test-group');
+    await sanitizeSessionJsonl('test-group');
 
     expect(fs.writeFileSync).toHaveBeenCalled();
     expect(fs.renameSync).toHaveBeenCalled();

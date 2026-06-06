@@ -31,9 +31,9 @@ export interface IpcDeps {
     caption?: string,
   ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
-  registerGroup: (jid: string, group: RegisteredGroup) => void;
+  registerGroup: (jid: string, group: RegisteredGroup) => void | Promise<void>;
   syncGroups: (force: boolean) => Promise<void>;
-  getAvailableGroups: () => AvailableGroup[];
+  getAvailableGroups: () => AvailableGroup[] | Promise<AvailableGroup[]>;
   writeGroupsSnapshot: (
     groupFolder: string,
     isMain: boolean,
@@ -178,7 +178,7 @@ export async function processTaskIpcRequest(
   // Dispatch by request type — handlers added in subsequent tasks
   switch (type) {
     case 'list_tasks_request': {
-      const tasks = getTasksForGroup(sourceGroup);
+      const tasks = await getTasksForGroup(sourceGroup);
       const now = new Date();
       const decorated: ScheduledTaskWithRuntime[] = tasks.map((task) => ({
         ...task,
@@ -201,7 +201,7 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      const task = getTaskById(taskId);
+      const task = await getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
         writeIpcResponse(sourceGroup, correlationId, {
           ok: false,
@@ -234,7 +234,7 @@ export async function processTaskIpcRequest(
         break;
       }
 
-      const tasks = getTasksForGroup(sourceGroup);
+      const tasks = await getTasksForGroup(sourceGroup);
 
       let matcher: (
         haystack: string,
@@ -308,7 +308,7 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      const task = getTaskById(taskId);
+      const task = await getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
         writeIpcResponse(sourceGroup, correlationId, {
           ok: false,
@@ -316,8 +316,8 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      updateTask(taskId, { status: 'paused' });
-      const updatedTask = getTaskById(taskId);
+      await updateTask(taskId, { status: 'paused' });
+      const updatedTask = await getTaskById(taskId);
       writeIpcResponse(sourceGroup, correlationId, {
         ok: true,
         data: updatedTask,
@@ -335,7 +335,7 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      const task = getTaskById(taskId);
+      const task = await getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
         writeIpcResponse(sourceGroup, correlationId, {
           ok: false,
@@ -366,8 +366,8 @@ export async function processTaskIpcRequest(
           resumeUpdates.next_run = new Date(Date.now() + ms).toISOString();
         }
       }
-      updateTask(taskId, resumeUpdates);
-      const resumedTask = getTaskById(taskId);
+      await updateTask(taskId, resumeUpdates);
+      const resumedTask = await getTaskById(taskId);
       writeIpcResponse(sourceGroup, correlationId, {
         ok: true,
         data: resumedTask,
@@ -385,7 +385,7 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      const task = getTaskById(taskId);
+      const task = await getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
         writeIpcResponse(sourceGroup, correlationId, {
           ok: false,
@@ -394,7 +394,7 @@ export async function processTaskIpcRequest(
         break;
       }
       // Capture pre-deletion record, then delete
-      deleteTask(taskId);
+      await deleteTask(taskId);
       writeIpcResponse(sourceGroup, correlationId, { ok: true, data: task });
       logger.info({ taskId, sourceGroup }, 'Task cancelled via IPC request');
       deps.onTasksChanged();
@@ -409,7 +409,7 @@ export async function processTaskIpcRequest(
         });
         break;
       }
-      const task = getTaskById(taskId);
+      const task = await getTaskById(taskId);
       if (!task || task.group_folder !== sourceGroup) {
         writeIpcResponse(sourceGroup, correlationId, {
           ok: false,
@@ -476,8 +476,8 @@ export async function processTaskIpcRequest(
         }
       }
 
-      updateTask(taskId, updates);
-      const updatedTask = getTaskById(taskId);
+      await updateTask(taskId, updates);
+      const updatedTask = await getTaskById(taskId);
       writeIpcResponse(sourceGroup, correlationId, {
         ok: true,
         data: updatedTask,
@@ -809,7 +809,7 @@ export async function processIpcMessageData(
   const msgId = `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const msgTimestamp = new Date().toISOString();
 
-  storeMessageDirect({
+  await storeMessageDirect({
     id: msgId,
     chat_jid: data.chatJid,
     sender: `${senderSource}@ipc`,
@@ -822,7 +822,7 @@ export async function processIpcMessageData(
 
   // Also mirror dashboard user inputs to dashboard_chat_log for the chat UI
   if (isDashboardMessage || isDashboardTarget) {
-    storeDashboardChatMessage({
+    await storeDashboardChatMessage({
       id: msgId,
       chat_jid: data.chatJid,
       sender: `${senderSource}@ipc`,
@@ -947,7 +947,7 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
-        createTask({
+        await createTask({
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
@@ -990,7 +990,7 @@ export async function processTaskIpc(
         );
         await deps.syncGroups(true);
         // Write updated snapshot immediately
-        const availableGroups = deps.getAvailableGroups();
+        const availableGroups = await deps.getAvailableGroups();
         const registeredGroupsList = Object.entries(registeredGroups).map(
           ([jid, g]) => ({
             jid,
@@ -1045,7 +1045,7 @@ export async function processTaskIpc(
         // Preserve isMain/isAdmin from the existing registration so IPC config
         // updates (e.g. adding additionalMounts) don't strip the flags.
         const existingGroup = registeredGroups[data.jid];
-        deps.registerGroup(data.jid, {
+        await deps.registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,
           trigger: data.trigger,
@@ -1094,7 +1094,7 @@ export async function processTaskIpc(
       const now = new Date();
       const expiresAt = new Date(now.getTime() + ttl * 1000);
 
-      createDelegation({
+      await createDelegation({
         uuid: data.uuid,
         caller_jid: data.callerJid,
         target_jid: data.targetJid,
@@ -1107,7 +1107,7 @@ export async function processTaskIpc(
       const callerGroup = registeredGroups[data.callerJid];
       const callerName = callerGroup?.name || 'Delegation';
 
-      storeMessageDirect({
+      await storeMessageDirect({
         id: `delegation-${data.uuid}`,
         chat_jid: data.targetJid,
         sender: `${callerName}@delegation`,
@@ -1139,7 +1139,7 @@ export async function processTaskIpc(
         );
         break;
       }
-      const delegation = getDelegationByUuid(data.uuid);
+      const delegation = await getDelegationByUuid(data.uuid);
       if (!delegation) {
         logger.warn({ uuid: data.uuid }, 'Delegation not found');
         break;
@@ -1181,7 +1181,7 @@ export async function processTaskIpc(
         break;
       }
 
-      fulfillDelegation(data.uuid);
+      await fulfillDelegation(data.uuid);
 
       const targetGroupEntry = registeredGroups[delegation.target_jid];
       const targetGroupName = targetGroupEntry?.name || 'Unknown';
@@ -1190,7 +1190,7 @@ export async function processTaskIpc(
       const responseTimestamp = new Date().toISOString();
       const responseContent = `[Delegation Response — UUID: ${data.uuid}]\n[From: ${targetGroupName}]\n${data.responseText}`;
 
-      storeMessageDirect({
+      await storeMessageDirect({
         id: responseId,
         chat_jid: delegation.caller_jid,
         sender: `${targetGroupName}@delegation`,
@@ -1203,7 +1203,7 @@ export async function processTaskIpc(
 
       // Also write to dashboard_chat_log if the caller is a dashboard group
       if (delegation.caller_jid.endsWith('@internal')) {
-        storeDashboardChatMessage({
+        await storeDashboardChatMessage({
           id: responseId,
           chat_jid: delegation.caller_jid,
           sender: `${targetGroupName}@delegation`,

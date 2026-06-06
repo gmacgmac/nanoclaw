@@ -211,7 +211,7 @@ async function handleModelCommand(
 
     if (SANITIZE_SESSION_ON_SWITCH) {
       try {
-        sanitizeSessionJsonl(ctx.group.folder);
+        await sanitizeSessionJsonl(ctx.group.folder);
       } catch (err) {
         logger.warn(
           { err, folder: ctx.group.folder },

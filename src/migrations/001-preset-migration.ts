@@ -22,7 +22,7 @@ import { RegisteredGroup } from '../types.js';
 const MIGRATIONS_DIR = path.join(DATA_DIR, 'migrations');
 const MARKER_FILE = path.join(MIGRATIONS_DIR, '001-preset-migration.done');
 
-export function runPresetMigration(): void {
+export async function runPresetMigration(): Promise<void> {
   // 1. Check marker file — already migrated?
   if (fs.existsSync(MARKER_FILE)) {
     return;
@@ -48,7 +48,7 @@ export function runPresetMigration(): void {
   logger.info({ backupPath }, 'DB backed up before preset migration');
 
   // 3. Load all registered groups and presets
-  const groups = getAllRegisteredGroups();
+  const groups = await getAllRegisteredGroups();
   const presets = loadPresets();
   const groupEntries = Object.entries(groups);
 
@@ -164,9 +164,9 @@ export function runPresetMigration(): void {
   }
 
   // 6. Save all updated groups inside a transaction (all-or-nothing)
-  runInTransaction(() => {
+  await runInTransaction(async () => {
     for (const { jid, group } of updates) {
-      setRegisteredGroup(jid, group);
+      await setRegisteredGroup(jid, group);
     }
   });
 

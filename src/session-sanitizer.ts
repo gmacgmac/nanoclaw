@@ -21,8 +21,8 @@ function sanitizeId(id: string): string {
  * Returns silently if the file does not exist.
  * Throws on parse or I/O errors so the caller can decide whether to proceed.
  */
-export function sanitizeSessionJsonl(groupFolder: string): void {
-  const sessionId = getSession(groupFolder);
+export async function sanitizeSessionJsonl(groupFolder: string): Promise<void> {
+  const sessionId = await getSession(groupFolder);
   if (!sessionId) {
     // No session yet — nothing to sanitize
     return;

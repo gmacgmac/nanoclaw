@@ -32,7 +32,7 @@ const MARKER_FILE = path.join(MIGRATIONS_DIR, '002-deniedtools-migration.done');
 /** Phantom tool names that never existed in the SDK */
 const PHANTOM_TOOLS = new Set(['Agent', 'RemoteTrigger', 'TodoWrite']);
 
-export function runDeniedToolsMigration(): void {
+export async function runDeniedToolsMigration(): Promise<void> {
   // 1. Check marker file — already migrated?
   if (fs.existsSync(MARKER_FILE)) {
     return;
@@ -58,7 +58,7 @@ export function runDeniedToolsMigration(): void {
   logger.info({ backupPath }, 'DB backed up before deniedTools migration');
 
   // 3. Load all registered groups
-  const groups = getAllRegisteredGroups();
+  const groups = await getAllRegisteredGroups();
   const groupEntries = Object.entries(groups);
 
   if (groupEntries.length === 0) {
@@ -132,9 +132,9 @@ export function runDeniedToolsMigration(): void {
 
   // 5. Save all updated groups inside a transaction (all-or-nothing)
   if (updates.length > 0) {
-    runInTransaction(() => {
+    await runInTransaction(async () => {
       for (const { jid, group } of updates) {
-        setRegisteredGroup(jid, group);
+        await setRegisteredGroup(jid, group);
       }
     });
     logger.info(

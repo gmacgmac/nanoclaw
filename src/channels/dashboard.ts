@@ -15,7 +15,7 @@ export class DashboardChannel implements Channel {
 
   async connect(): Promise<void> {
     // Ensure the chat row exists so foreign key constraints are satisfied
-    storeChatMetadata(
+    await storeChatMetadata(
       'dashboard@internal',
       new Date().toISOString(),
       'Dashboard',
@@ -27,7 +27,7 @@ export class DashboardChannel implements Channel {
 
   async sendMessage(jid: string, text: string): Promise<void> {
     // Store the bot response in dashboard_chat_log so dashboard can poll for it
-    storeDashboardChatMessage({
+    await storeDashboardChatMessage({
       id: `dashboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       chat_jid: jid,
       sender: ASSISTANT_NAME,

@@ -1,0 +1,18 @@
+name: nanoclaw
+
+services:
+  postgres:
+    container_name: nanoclaw-postgres-1
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: nanoclaw
+      POSTGRES_USER: nanoclaw
+      POSTGRES_PASSWORD: nanoclaw_dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
