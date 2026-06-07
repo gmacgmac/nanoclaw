@@ -17,11 +17,9 @@ export function authMiddleware(
 
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res
-      .status(401)
-      .json({
-        error: 'Missing or invalid Authorization header. Use: Bearer <token>',
-      });
+    res.status(401).json({
+      error: 'Missing or invalid Authorization header. Use: Bearer <token>',
+    });
     return;
   }
 
