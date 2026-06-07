@@ -32,7 +32,10 @@ export const ContainerChannelSchema = z
 // Standard API error response
 export const ApiErrorSchema = z.object({
   error: z.string().describe('Human-readable error message'),
-  code: z.string().optional().describe(
-    'Machine-readable error code (e.g. "NOT_FOUND", "VALIDATION_ERROR")',
-  ),
+  code: z
+    .string()
+    .optional()
+    .describe(
+      'Machine-readable error code (e.g. "NOT_FOUND", "VALIDATION_ERROR")',
+    ),
 });

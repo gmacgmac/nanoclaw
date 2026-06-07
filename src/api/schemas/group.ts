@@ -5,31 +5,47 @@ import { ContainerConfigSchema } from './container-config.js';
 // --- Full group (as returned by GET endpoints) ---
 
 export const RegisteredGroupSchema = z.object({
-  name: z.string().describe(
-    'Human-readable group name (e.g. "Research Team", "Personal Assistant").',
-  ),
+  name: z
+    .string()
+    .describe(
+      'Human-readable group name (e.g. "Research Team", "Personal Assistant").',
+    ),
   folder: FolderSchema,
-  trigger: z.string().describe(
-    'Trigger phrase that activates the agent in this group (e.g. "@Andy", "@bot"). Messages must start with this to be processed.',
-  ),
+  trigger: z
+    .string()
+    .describe(
+      'Trigger phrase that activates the agent in this group (e.g. "@Andy", "@bot"). Messages must start with this to be processed.',
+    ),
   added_at: z.iso
     .datetime()
     .describe('ISO 8601 timestamp of when this group was registered.'),
   containerConfig: ContainerConfigSchema.optional().describe(
     'Container and agent configuration. Omit to use all defaults.',
   ),
-  requiresTrigger: z.boolean().optional().describe(
-    'Whether messages need the trigger phrase to be processed. Default: true for groups, false for solo/internal chats.',
-  ),
-  multiAgentRouter: z.boolean().optional().describe(
-    "When true (main groups only): scan incoming messages for other groups' triggers and auto-delegate to them.",
-  ),
-  isMain: z.boolean().optional().describe(
-    'True for the main control group. Has elevated privileges, no trigger required, can register/unregister other groups.',
-  ),
-  isAdmin: z.boolean().optional().describe(
-    'True for the admin group. Superset of main — owns register_group IPC command.',
-  ),
+  requiresTrigger: z
+    .boolean()
+    .optional()
+    .describe(
+      'Whether messages need the trigger phrase to be processed. Default: true for groups, false for solo/internal chats.',
+    ),
+  multiAgentRouter: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true (main groups only): scan incoming messages for other groups' triggers and auto-delegate to them.",
+    ),
+  isMain: z
+    .boolean()
+    .optional()
+    .describe(
+      'True for the main control group. Has elevated privileges, no trigger required, can register/unregister other groups.',
+    ),
+  isAdmin: z
+    .boolean()
+    .optional()
+    .describe(
+      'True for the admin group. Superset of main — owns register_group IPC command.',
+    ),
   containerChannel: ContainerChannelSchema.optional().describe(
     'Which container image channel this group uses. Default: "stable".',
   ),
@@ -41,11 +57,7 @@ export const CreateGroupSchema = z.object({
   jid: JidSchema.describe(
     'Unique identifier for the group. For dashboard groups use "<name>@internal". For Telegram use "tg:<chat_id>[:<bot_name>]".',
   ),
-  name: z
-    .string()
-    .min(1)
-    .max(100)
-    .describe('Human-readable group name.'),
+  name: z.string().min(1).max(100).describe('Human-readable group name.'),
   folder: FolderSchema.describe(
     'Folder name for this group. Will be created under groups/. Must be unique.',
   ),
@@ -61,7 +73,10 @@ export const CreateGroupSchema = z.object({
     .boolean()
     .optional()
     .describe('Whether trigger is required. Default: true.'),
-  isMain: z.boolean().optional().describe('Mark as main group. Default: false.'),
+  isMain: z
+    .boolean()
+    .optional()
+    .describe('Mark as main group. Default: false.'),
   isAdmin: z
     .boolean()
     .optional()
@@ -75,12 +90,7 @@ export const CreateGroupSchema = z.object({
 
 export const UpdateGroupSchema = z
   .object({
-    name: z
-      .string()
-      .min(1)
-      .max(100)
-      .optional()
-      .describe('New group name.'),
+    name: z.string().min(1).max(100).optional().describe('New group name.'),
     trigger: z.string().min(1).optional().describe('New trigger phrase.'),
     requiresTrigger: z
       .boolean()

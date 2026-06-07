@@ -62,9 +62,7 @@ router.post(
       containerChannel,
     } = req.body;
     if (getRegisteredGroup(jid)) {
-      res
-        .status(409)
-        .json({ error: 'Group already exists', code: 'CONFLICT' });
+      res.status(409).json({ error: 'Group already exists', code: 'CONFLICT' });
       return;
     }
 

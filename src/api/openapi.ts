@@ -1,4 +1,7 @@
-import { OpenAPIRegistry, OpenApiGeneratorV31 } from '@asteasolutions/zod-to-openapi';
+import {
+  OpenAPIRegistry,
+  OpenApiGeneratorV31,
+} from '@asteasolutions/zod-to-openapi';
 import { z } from 'zod';
 // `extendZodWithOpenApi(z)` is called by `./zod-openapi-init.js`, which is
 // imported as a side-effect at the top of `./schemas/index.js` (and re-runs
@@ -77,7 +80,9 @@ registry.registerPath({
     200: {
       description: 'Container config',
       content: {
-        'application/json': { schema: z.object({ data: ContainerConfigSchema }) },
+        'application/json': {
+          schema: z.object({ data: ContainerConfigSchema }),
+        },
       },
     },
     404: {
@@ -94,7 +99,9 @@ registry.registerPath({
   summary: 'Register a new group',
   description:
     'Creates a new group. Creates the group folder on disk, seeds CLAUDE.md and memory files from templates.',
-  request: { body: { content: { 'application/json': { schema: CreateGroupSchema } } } },
+  request: {
+    body: { content: { 'application/json': { schema: CreateGroupSchema } } },
+  },
   responses: {
     201: {
       description: 'Group created',
@@ -195,7 +202,9 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Group removed',
-      content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
+      content: {
+        'application/json': { schema: z.object({ ok: z.boolean() }) },
+      },
     },
     404: {
       description: 'Group not found',
@@ -216,7 +225,11 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Preset map',
-      content: { 'application/json': { schema: z.object({ data: z.record(z.string(), z.any()) }) } },
+      content: {
+        'application/json': {
+          schema: z.object({ data: z.record(z.string(), z.any()) }),
+        },
+      },
     },
   },
 });
@@ -231,7 +244,11 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Session map',
-      content: { 'application/json': { schema: z.object({ data: z.record(z.string(), z.string()) }) } },
+      content: {
+        'application/json': {
+          schema: z.object({ data: z.record(z.string(), z.string()) }),
+        },
+      },
     },
   },
 });
@@ -247,7 +264,9 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Session cleared',
-      content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
+      content: {
+        'application/json': { schema: z.object({ ok: z.boolean() }) },
+      },
     },
   },
 });
@@ -294,7 +313,9 @@ registry.registerPath({
     200: {
       description: 'Stop result',
       content: {
-        'application/json': { schema: z.object({ ok: z.boolean(), wasRunning: z.boolean() }) },
+        'application/json': {
+          schema: z.object({ ok: z.boolean(), wasRunning: z.boolean() }),
+        },
       },
     },
   },
@@ -334,7 +355,11 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Reload result',
-      content: { 'application/json': { schema: z.object({ ok: z.boolean(), count: z.number() }) } },
+      content: {
+        'application/json': {
+          schema: z.object({ ok: z.boolean(), count: z.number() }),
+        },
+      },
     },
   },
 });
