@@ -99,6 +99,7 @@ import { extractImagesFromMessages } from './lib/image-extraction.js';
 import { resolveSpawnConfig } from './spawn-config.js';
 import { buildContainerInput } from './build-container-input.js';
 import { channelFromJid, resolveReminders } from './prompt-reminders.js';
+import { startApiServer } from './api/index.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -1009,6 +1010,9 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   await recoverPendingMessages();
+  // REST API server (management interface) — start after channels connect
+  // and the group cache is populated, before the message loop takes over.
+  startApiServer(queue);
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

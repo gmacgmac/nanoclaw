@@ -966,6 +966,18 @@ export async function logError(entry: ErrorLogEntry): Promise<void> {
   `;
 }
 
+/**
+ * Test PostgreSQL connectivity. Returns true if a simple query succeeds.
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    await sql`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- DB maintenance ---
 
 /**

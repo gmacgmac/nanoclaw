@@ -10,6 +10,8 @@ import { isValidTimezone } from './timezone.js';
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
 const envConfig = readEnvFile([
+  'API_PORT',
+  'API_TOKEN',
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'CONTAINER_IMAGE',
@@ -44,6 +46,13 @@ export const DATABASE_URL =
 // Defaults to false for safe transition window.
 export const USE_POSTGRES =
   (process.env.USE_POSTGRES || envConfig.USE_POSTGRES || 'false') === 'true';
+
+// REST API server (see src/api/). Disabled if API_PORT is 0.
+export const API_PORT = parseInt(
+  process.env.API_PORT || envConfig.API_PORT || '3100',
+  10,
+);
+export const API_TOKEN = process.env.API_TOKEN || envConfig.API_TOKEN || '';
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();

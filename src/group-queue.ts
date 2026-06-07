@@ -424,6 +424,38 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * Returns a snapshot of queue state for the API.
+   */
+  getStatus(): Array<{
+    jid: string;
+    active: boolean;
+    idleWaiting: boolean;
+    pendingMessages: boolean;
+    pendingTasks: number;
+    containerName: string | null;
+  }> {
+    const result: Array<{
+      jid: string;
+      active: boolean;
+      idleWaiting: boolean;
+      pendingMessages: boolean;
+      pendingTasks: number;
+      containerName: string | null;
+    }> = [];
+    for (const [jid, state] of this.groups) {
+      result.push({
+        jid,
+        active: state.active,
+        idleWaiting: state.idleWaiting,
+        pendingMessages: state.pendingMessages,
+        pendingTasks: state.pendingTasks.length,
+        containerName: state.containerName,
+      });
+    }
+    return result;
+  }
+
   async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 

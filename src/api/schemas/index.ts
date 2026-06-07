@@ -1,0 +1,5 @@
+// Side-effect: must run before any schema is registered with OpenAPIRegistry.
+import '../zod-openapi-init.js';
+export * from './common.js';
+export * from './container-config.js';
+export * from './group.js';

@@ -3,7 +3,13 @@ import path from 'path';
 
 import { ASSISTANT_NAME, TEMPLATES_DIR } from './config.js';
 import type { AvailableGroup } from './container-runner.js';
-import { getAllChats, setRegisteredGroup, storeChatMetadata } from './db.js';
+import {
+  getAllChats,
+  getAllRegisteredGroups,
+  deleteRegisteredGroup,
+  setRegisteredGroup,
+  storeChatMetadata,
+} from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { findChannel } from './router.js';
@@ -143,6 +149,32 @@ export async function updateRegisteredGroup(
       );
     }
   }
+}
+
+// --- Admin ---
+
+/**
+ * Re-hydrate the in-memory cache from PostgreSQL.
+ * Use for disaster recovery after direct DB edits.
+ */
+export async function reloadGroups(): Promise<number> {
+  const groups = await getAllRegisteredGroups();
+  registeredGroups = groups;
+  const count = Object.keys(groups).length;
+  logger.info({ count }, 'Groups reloaded from DB');
+  return count;
+}
+
+/**
+ * Remove a group from cache and DB.
+ * Does NOT delete the group folder on disk.
+ */
+export async function deleteGroup(jid: string): Promise<boolean> {
+  if (!registeredGroups[jid]) return false;
+  delete registeredGroups[jid];
+  await deleteRegisteredGroup(jid);
+  logger.info({ jid }, 'Group deleted');
+  return true;
 }
 
 // --- Queries ---
