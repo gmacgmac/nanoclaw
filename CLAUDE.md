@@ -119,19 +119,28 @@ Groups select an endpoint via their preset (`containerConfig.preset` → resolve
 
 ## Per-Group Configuration (`containerConfig`)
 
-Stored as JSON in the `registered_groups.container_config` SQLite column. All fields are optional except `preset`.
+Stored as JSON in the `registered_groups.container_config` PostgreSQL column. All fields are optional except `preset`.
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `preset` | `string` | **required** | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, compactThreshold, webSearchVendor |
-| `skills` | `string[]` | `undefined` = none | Per-group skill selection. `[]` = none, `["x"]` = named only |
-| `allowedTools` | `string[]` | `undefined` = secure default | Per-group tool restrictions. Default excludes `WebSearch`, `WebFetch`, and `Bash` (when approval mode active). `mcp__nanoclaw__*` always included |
-| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC |
-| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
+| `taskPreset` | `string` | `undefined` (uses base preset) | Preset override for scheduled task runs |
+| `nudgePreset` | `string` | `undefined` (uses base preset) | Preset override for nightly nudge runs |
+| `skills` | `string[]` | `undefined` = all skills | Per-group skill selection. `[]` = none, `["x","y"]` = named only |
+| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt (agent persona/instructions) |
+| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC. Key = server name, value = `{ command, args?, env? }` |
 | `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
-| `contextWindowSize` | `number` | from preset | **Deprecated as a direct field** — now resolved from preset's `contextWindow`. Legacy values ignored after migration. |
+| `telegramBot` | `string` | `undefined` (default bot) | Telegram bot instance name. Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env |
+| `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files (CLAUDE.md, MEMORY.md, daily notes) before launch |
+| `ssrfProtection` | `boolean \| SsrfConfig` | `true` (enabled) | SSRF protection for outbound web_fetch. `false` = disabled, `true` = default, object = custom host lists |
+| `approvalMode` | `boolean` | `true` | Command approval for dangerous commands on write-mounted paths. Replaces Bash with `mcp__nanoclaw__execute_command` |
+| `approvalTimeout` | `number` | `120` (2 min) | Seconds before an unanswered approval request auto-denies. Range: 10–600 |
+| `commandAllowlist` | `string[]` | `[]` | Regex patterns for pre-approved commands that skip approval flow |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
+| `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge. `true` = extract + load, `'extract-only'` = extract for review |
+| `deniedTools` | `string[]` | `[]` | Per-group denied tools — subtracted from the system allowlist ceiling (tool-allowlist.json) |
+| `hooks` | `string[]` | `undefined` | Ordered reminder keys (filenames in `docs/hooks/`) injected via UserPromptSubmit hook on live chat turns |
 
 **Preset file schema** (`~/.config/nanoclaw/model-presets.json`):
 

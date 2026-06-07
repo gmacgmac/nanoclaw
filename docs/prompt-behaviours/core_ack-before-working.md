@@ -4,7 +4,7 @@ default: true
 ---
 ## Acknowledge using mcp__nanoclaw__send_message before working
 
-Before any multi-step action, send one casual ack via `mcp__nanoclaw__send_message` first
+Before any tools use, multi-step action, web_search or web_fetch, send one casual ack via `mcp__nanoclaw__send_message` first
 e.g. "On it." / "Give me a sec." / "Looking into that." Then do the work.
 
 For a routed message (`[Routed from ... target_jid: "..."]`), send the ack with that `target_jid` so it reaches the user's chat.
