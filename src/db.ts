@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, DATABASE_URL, USE_POSTGRES } from './config.js';
+import { DATA_DIR, DATABASE_URL } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger, setDbErrorLogger } from './logger.js';
 import {
@@ -156,15 +156,9 @@ async function createSchema(): Promise<void> {
 // --- Lifecycle ---
 
 export async function initDatabase(): Promise<void> {
-  if (!USE_POSTGRES) {
-    throw new Error(
-      'initDatabase() called but USE_POSTGRES is false. Set USE_POSTGRES=true to use PostgreSQL.',
-    );
-  }
-
   if (!DATABASE_URL) {
     throw new Error(
-      'DATABASE_URL is not set. Provide a PostgreSQL connection string.',
+      'DATABASE_URL is not set. See README.md §PostgreSQL Setup for configuration instructions.',
     );
   }
 

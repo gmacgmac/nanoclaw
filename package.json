@@ -20,7 +20,7 @@
     "lint:fix": "eslint src/ --fix",
     "migrate:sqlite-to-pg": "tsx scripts/migrate-sqlite-to-postgres.ts",
     "test": "vitest run",
-    "test:pg": "DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test USE_POSTGRES=true vitest run",
+    "test:pg": "DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

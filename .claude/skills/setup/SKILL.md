@@ -92,7 +92,6 @@ Run `bash setup.sh` and parse the status block.
   - Linux: `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs`, or nvm
   - After installing Node, re-run `bash setup.sh`
 - If DEPS_OK=false → Read `logs/setup.log`. Try: delete `node_modules`, re-run `bash setup.sh`. If native module build fails, install build tools (`xcode-select --install` on macOS, `build-essential` on Linux), then retry.
-- If NATIVE_OK=false → better-sqlite3 failed to load. Install build tools and re-run.
 - Record PLATFORM and IS_WSL for later steps.
 
 ## 2. Check Environment
@@ -109,6 +108,24 @@ Run `npx tsx setup/index.ts --step timezone` and parse the status block.
 
 - If NEEDS_USER_INPUT=true → The system timezone could not be autodetected (e.g. POSIX-style TZ like `IST-2`). AskUserQuestion: "What is your timezone?" with common options (America/New_York, Europe/London, Asia/Jerusalem, Asia/Tokyo) and an "Other" escape. Then re-run: `npx tsx setup/index.ts --step timezone -- --tz <their-answer>`.
 - If STATUS=success → Timezone is configured. Note RESOLVED_TZ for reference.
+
+## 2b. PostgreSQL
+
+PostgreSQL runs in Docker via `docker-compose.yml`. See `README.md §PostgreSQL Setup` for full details on the container configuration, credentials, and volume.
+
+1. Ensure Docker is running (checked in Step 0-ii).
+2. Start PostgreSQL: `docker compose up -d`
+3. Verify healthy: run `docker compose ps postgres --format json`, parse output — `State` should be `running`, `Health` should be `healthy`. If not healthy within ~15s, check: `docker compose logs postgres`.
+4. Confirm `.env` contains:
+   ```
+   DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw
+   ```
+   If missing, append it. The connection string matches the `docker-compose.yml` defaults.
+5. Schema auto-creates on first app start — `initDatabase()` in `src/db.ts` runs `CREATE TABLE IF NOT EXISTS` for all tables. No manual SQL needed.
+
+**If PG won't start:** Check `docker compose logs postgres`. Common causes: port 5432 already in use (`sudo lsof -i :5432` to identify and kill the conflict), or Docker not fully started (wait a few seconds and retry).
+
+**If HAS_DATABASE_URL=false in Step 2:** `.env` doesn't have `DATABASE_URL` — add it now before proceeding to Step 3.
 
 ## 3. Container Runtime
 
@@ -366,10 +383,12 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 - CREDENTIALS=missing → re-run step 4 (ensure secrets.env has vendor keys like `OLLAMA_API_KEY` or `ZAI_API_KEY`)
 - CHANNEL_AUTH shows `not_found` for any channel → re-invoke that channel's skill (e.g. `/add-telegram`)
 - REGISTERED_GROUPS=0 → re-invoke the channel skills from step 5
+- PG_CONTAINER=not_found or unhealthy → re-run step 2b (`docker compose up -d`, verify healthy)
+- DATABASE_URL=missing → add `DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw` to `.env`, restart service
+- PG_CONNECTION=failed → PG container not reachable; check `docker compose ps postgres` and re-run step 2b
+- PG_SCHEMA=empty or incomplete → app hasn't run yet to create schema; start the service once and re-verify
 - MOUNT_ALLOWLIST=missing → `npx tsx setup/index.ts --step mounts -- --empty`
 - SENDER_ALLOWLIST=missing → re-run step 6a (create sender-allowlist.json)
-
-Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log`
 
 ## Troubleshooting
 

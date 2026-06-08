@@ -27,7 +27,6 @@ const envConfig = readEnvFile([
   'NUDGE_INTERVAL',
   'SHUTDOWN_GRACE_MS',
   'TZ',
-  'USE_POSTGRES',
 ]);
 
 export const ASSISTANT_NAME =
@@ -41,10 +40,6 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 // PostgreSQL connection URL (loaded from secrets.env or .env)
 export const DATABASE_URL =
   process.env.DATABASE_URL || envConfig.DATABASE_URL || '';
-
-// PostgreSQL is the primary storage layer. Set to 'false' only for legacy/debug.
-export const USE_POSTGRES =
-  (process.env.USE_POSTGRES || envConfig.USE_POSTGRES || 'true') === 'true';
 
 // REST API server (see src/api/). Disabled if API_PORT is 0.
 export const API_PORT = parseInt(

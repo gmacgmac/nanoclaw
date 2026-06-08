@@ -529,7 +529,6 @@ In `.env` (or `~/.config/nanoclaw/secrets.env` for credentials):
 
 ```bash
 DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw
-USE_POSTGRES=true
 ```
 
 ### psql Shell Access
@@ -543,7 +542,7 @@ docker compose exec postgres psql -U nanoclaw nanoclaw
 If upgrading from a pre-PostgreSQL installation:
 
 1. Ensure Docker is running and the PG container is up (`docker compose up -d`)
-2. Set `DATABASE_URL` and `USE_POSTGRES=true` in `.env`
+2. Set `DATABASE_URL` in `.env`
 3. Run the migration script:
    ```bash
    npm run migrate:sqlite-to-pg

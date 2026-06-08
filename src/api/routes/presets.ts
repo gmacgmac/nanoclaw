@@ -45,13 +45,11 @@ router.put(
     const { content } = req.body as { content: string };
     const result = writeRawPresets(content);
     if (!result.ok) {
-      res
-        .status(400)
-        .json({
-          error: result.error,
-          code: 'INVALID_CONTENT',
-          invalidKeys: result.invalidKeys,
-        });
+      res.status(400).json({
+        error: result.error,
+        code: 'INVALID_CONTENT',
+        invalidKeys: result.invalidKeys,
+      });
       return;
     }
     res.json({
@@ -84,12 +82,10 @@ router.put(
     const { name } = req.params;
     const validated = validatePresetEntry(name as string, req.body);
     if (!validated) {
-      res
-        .status(400)
-        .json({
-          error: 'Preset entry failed internal validation',
-          code: 'VALIDATION_ERROR',
-        });
+      res.status(400).json({
+        error: 'Preset entry failed internal validation',
+        code: 'VALIDATION_ERROR',
+      });
       return;
     }
     const result = upsertPreset(name as string, validated);

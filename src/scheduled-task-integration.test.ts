@@ -53,7 +53,6 @@ vi.mock('./config.js', () => ({
   DATABASE_URL:
     process.env.DATABASE_URL ||
     'postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw_test',
-  USE_POSTGRES: true,
 }));
 
 // Mock fs operations
