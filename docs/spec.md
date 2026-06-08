@@ -58,7 +58,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
-│  │  Tools (configurable per-group via allowedTools):               │    │
+│  │  Tools (ceiling model — per-group denial via deniedTools):       │    │
 │  │    • execute_command (MCP, approval-gated by default) or Bash  │    │
 │  │      if approvalMode: false — controlled by containerConfig    │    │
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
@@ -469,14 +469,24 @@ Per-group behaviour is controlled via `containerConfig` — stored as `jsonb` in
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `preset` | `string` | `undefined` | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, webSearchVendor at runtime. |
-| `skills` | `string[]` | `undefined` = none | Per-group skill selection |
-| `allowedTools` | `string[]` | `undefined` = default list | Per-group tool restrictions |
-| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
-| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
-| `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
-| `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
+| `preset` | `string` | **required** | Named model preset from `~/.config/nanoclaw/model-presets.json`. Resolves endpoint, model, capabilities, contextWindow, compactThreshold, webSearchVendor at runtime. |
+| `taskPreset` | `string` | `undefined` (uses base preset) | Preset override for scheduled task runs |
+| `nudgePreset` | `string` | `undefined` (uses base preset) | Preset override for nightly nudge runs |
+| `skills` | `string[]` | `undefined` = none | Per-group skill selection. `[]` = none, `["x","y"]` = named only |
+| `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt (agent persona/instructions) |
+| `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC. Key = server name, value = `{ command, args?, env? }` |
+| `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
+| `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
+| `telegramBot` | `string` | `undefined` (default bot) | Telegram bot instance name. Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env |
+| `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files (CLAUDE.md, MEMORY.md, daily notes) before launch |
+| `ssrfProtection` | `boolean \| SsrfConfig` | `true` (enabled) | SSRF protection for outbound web_fetch. `false` = disabled, `true` = default, object = custom host lists |
+| `approvalMode` | `boolean` | `true` | Command approval for dangerous commands on write-mounted paths. Replaces Bash with `mcp__nanoclaw__execute_command` |
+| `approvalTimeout` | `number` | `120` (2 min) | Seconds before an unanswered approval request auto-denies. Range: 10–600 |
+| `commandAllowlist` | `string[]` | `[]` | Regex patterns for pre-approved commands that skip approval flow |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model']` enables `/model` to switch presets |
+| `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge. `true` = extract + load, `'extract-only'` = extract for review |
+| `deniedTools` | `string[]` | `[]` | Per-group denied tools — subtracted from the system allowlist ceiling (tool-allowlist.json) |
+| `hooks` | `string[]` | `undefined` | Ordered reminder keys (filenames in `docs/hooks/`) injected via UserPromptSubmit hook on live chat turns |
 
 #### `skills` — Per-Group Skill Selection
 
@@ -490,44 +500,60 @@ Per-group behaviour is controlled via `containerConfig` — stored as `jsonb` in
 
 > **Important**: `container/binaries/agent-browser/` MUST be committed to git. It is the only source of the binary at runtime. Do NOT add it to `.gitignore`.
 
-#### `allowedTools` — Per-Group Tool Restrictions
+#### Tool Governance — Allowlist Ceiling Model
+
+Tools are governed by a **ceiling model**: `tool-allowlist.json` (project root) defines the maximum set of tools any group can ever resolve. Per-group `deniedTools` subtracts from the ceiling. Hard security rules (approval mode, native web tools) further restrict unconditionally.
+
+**Resolution formula (agent-runner, container-side):**
+
+```
+resolved = ceiling − deniedTools − Bash (if approvalMode) − WebSearch/WebFetch (if !nativeWebTools)
+allowedTools = [...resolved, 'mcp__nanoclaw__*']
+```
+
+The host passes `NANOCLAW_TOOL_CEILING` and `NANOCLAW_DENIED_TOOLS` as env vars to the container. The agent-runner performs the resolution at startup.
+
+**`deniedTools` — Per-Group Denial:**
 
 | Value | Behaviour |
 |-------|-----------|
-| `undefined` / absent | Secure default set (excludes `WebSearch`, `WebFetch`, and `Bash` when approval mode active) |
-| `["Read", "Grep", "WebSearch"]` | Only named tools |
-| `[]` | No tools — only MCP IPC |
+| `undefined` / absent / `[]` | No per-group denial — full ceiling available (minus conditional removals) |
+| `["Task", "Bash"]` | Named tools removed from resolved set for this group |
 
-`mcp__nanoclaw__*` is always included regardless of config (IPC must work).
+`mcp__nanoclaw__*` is always injected regardless of config (IPC cannot be denied).
 
-**How it works — `disallowedTools` complement:**
+**How the complement works internally:**
 
-The SDK's `allowedTools` parameter only filters SDK-registered tools. The `claude_code` preset injects additional CLI tools (`Agent`, `CronCreate`, `EnterPlanMode`, etc.) that bypass `allowedTools` entirely. To make the whitelist actually work, the agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime:
+The SDK's `allowedTools` parameter only filters SDK-registered tools. The `claude_code` preset injects additional CLI tools (`Agent`, `CronCreate`, `EnterPlanMode`, etc.) that bypass `allowedTools` entirely. To block these, the agent-runner computes `disallowedTools` as the complement of the resolved set against `ALL_KNOWN_TOOLS`:
 
 ```
-disallowedTools = ALL_KNOWN_TOOLS − allowedTools
+disallowedTools = ALL_KNOWN_TOOLS − resolved
 ```
 
-`disallowedTools` reliably blocks any tool, including preset-injected ones. This is computed automatically — you never configure `disallowedTools` directly. When `allowedTools` is absent, `disallowedTools` is empty (all tools allowed).
+`disallowedTools` reliably blocks any tool, including preset-injected ones. This is computed automatically — never configured directly.
 
-Full tool reference — use these names in `allowedTools`:
+**Ceiling reference** — the tool catalog (`tool-allowlist.json`):
 
 | Category | Tools |
 |----------|-------|
 | File Operations | `Read`, `Write`, `Edit`, `Glob`, `Grep` |
 | Execution | `Bash`, `NotebookEdit` |
-| Web | `WebSearch`, `WebFetch` |
+| Web | `WebSearch` |
 | Planning | `EnterPlanMode`, `ExitPlanMode` |
 | Tasks | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TaskOutput` |
 | Scheduling | `CronCreate`, `CronDelete`, `CronList` |
 | Git/Worktree | `EnterWorktree`, `ExitWorktree` |
 | Agent Teams | `TeamCreate`, `TeamDelete`, `SendMessage` |
-| Agent & Skills | `Agent`, `Skill`, `RemoteTrigger` |
+| Subagent & Skills | `Task`¹, `Skill` |
 | User Interaction | `AskUserQuestion` |
-| Misc | `TodoWrite`, `ToolSearch` |
-| Always included | `mcp__nanoclaw__*` (IPC — cannot be removed) |
+| Monitoring | `Monitor`, `PushNotification`, `ScheduleWakeup`, `ToolSearch` |
+| Always available | `mcp__nanoclaw__*` (IPC — not in ceiling, always injected) |
 
-> **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, review the tool list and update `ALL_KNOWN_TOOLS` in `container/agent-runner/src/index.ts` and this table.
+¹ **Task/Agent naming split**: The subagent tool resolves as `Task` in `options.tools` and `tool-allowlist.json`, but appears as `Agent` in `tool_use` invocation blocks. Denying `Task` removes subagent capability entirely.
+
+**Permanently denied (not in ceiling):** `RemoteTrigger`, `TodoWrite`, `WebFetch` — blocked for all groups regardless of config.
+
+> **SDK upgrade note**: When upgrading `@anthropic-ai/claude-agent-sdk`, run the probe procedure in `docs/sdk-tool-catalog-rediscovery.md` to detect new/removed tools. Update `tool-allowlist.json` and `VERIFIED_CATALOG`/`FALLBACK_CATALOG` in code. New tools are denied-by-default until explicitly admitted.
 
 #### `preset` — Per-Group Model Preset
 
@@ -915,6 +941,12 @@ When a triggered message arrives, the agent receives all messages since its last
 ```
 
 This allows the agent to understand the conversation context even if it wasn't mentioned in every message.
+
+### Per-Turn Prompt Reminders (Hooks)
+
+On the live-chat spawn path only, the host resolves file-driven reminder snippets from `docs/hooks/` via `src/prompt-reminders.ts`. The resolved string is passed as `ContainerInput.promptReminder`. Inside the container, the agent-runner registers a `UserPromptSubmit` hook that injects the reminder as `additionalContext` on every user turn. This reinforces critical per-group rules (formatting, ack-before-work) without relying on CLAUDE.md context surviving auto-compaction.
+
+Nudge and scheduled-task spawn paths do not pass `promptReminder` — the reminder only fires during interactive chat.
 
 ---
 

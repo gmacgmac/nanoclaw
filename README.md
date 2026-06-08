@@ -167,6 +167,8 @@ A built-in cron job (`startNightlyCron` in `src/task-scheduler.ts`) runs at midn
 
 Groups below the threshold or without active sessions are skipped. Nightly nudge includes skill extraction when `learningLoop` is enabled.
 
+> Nightly nudges use the group's `nudgePreset` (if configured) instead of the base `preset`. See [Per-Group Configuration — taskPreset / nudgePreset](#taskpreset--nudgepreset--per-path-model-overrides).
+
 **DB maintenance:**
 - `pruneOldMessages(30)` — deletes messages older than 30 days
 - `expireStaleDelegations()` — marks pending delegations past their `expires_at` as expired
@@ -336,6 +338,8 @@ All tools are exposed via the `mcp__nanoclaw__` prefix inside containers. This i
 | `cancel_task` | Any group | Cancel and delete a task |
 
 For the full scheduler model and visibility rules see [README-SCHEDULED-TASKS.md](./README-SCHEDULED-TASKS.md).
+
+> Scheduled tasks use the group's `taskPreset` (if configured) instead of the base `preset`. This allows running cheaper/faster models for background work. See [Per-Group Configuration — taskPreset / nudgePreset](#taskpreset--nudgepreset--per-path-model-overrides).
 
 #### Administration
 
@@ -637,6 +641,27 @@ The `sdkMode: "bedrock"` field switches the container into Claude Code's native 
 
 Use the `/model` host command (requires `allowedHostCommands: ['model']`) to switch presets at runtime. Only the preset name is stored in `containerConfig.preset`; the container is recycled on switch.
 
+#### `taskPreset` / `nudgePreset` — Per-Path Model Overrides
+
+Override the model used for scheduled tasks and nightly nudges without affecting live chat. Both fall back to the base `preset` if absent or if the named preset doesn't exist in `model-presets.json` (a warning is logged on fallback).
+
+| Field | Applies to | Fallback |
+|-------|-----------|----------|
+| `taskPreset` | Scheduled task runs | Base `preset` |
+| `nudgePreset` | Nightly memory nudge runs | Base `preset` |
+
+Use case: run an expensive model (Sonnet) for interactive chat while using a cheaper/faster model (Haiku) for background work that doesn't need top-tier reasoning.
+
+```json
+{
+  "preset": "sonnet_4.5",
+  "taskPreset": "haiku_3.5",
+  "nudgePreset": "haiku_3.5"
+}
+```
+
+Resolution happens in `resolveSpawnConfig()` — the task-scheduler path uses `taskPreset`, the nightly-maintenance path uses `nudgePreset`, and the live-chat path always uses the base `preset`.
+
 #### `skills` — Per-Group Skill Selection
 
 | Value | Behaviour |
@@ -746,6 +771,49 @@ The `nanoclaw` server is always present and cannot be overridden — if a group 
 |-------|-----------|
 | `undefined` / absent | Preset prompt only |
 | `"You are X..."` | Appended to preset prompt |
+
+#### `hooks` — Per-Group Prompt Reminders
+
+A lightweight per-turn reminder system that reinforces critical rules (formatting, ack-before-work) during live chat without bloating CLAUDE.md. Reminders are file-driven snippets in `docs/hooks/`, resolved on the host and injected into every user turn via the SDK's `UserPromptSubmit` hook.
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` / absent | No per-turn reminders |
+| `["ack", "text-syntax"]` | Named snippets injected in order each turn |
+
+**How it works:**
+
+1. Host reads `containerConfig.hooks` (ordered list of keys)
+2. For each key, loads `docs/hooks/{key}.md` — missing files are warned and skipped
+3. Snippets with `requires: channel` in frontmatter are skipped when the channel is unknown
+4. `{channel}` placeholders are interpolated with the derived channel name (Telegram, Slack, etc.)
+5. The resolved string is passed as `ContainerInput.promptReminder`
+6. Agent-runner registers a `UserPromptSubmit` hook that injects it as `additionalContext` each turn
+
+**Only fires on live chat turns** — nudges and scheduled tasks never receive prompt reminders (the override is only passed on the chat spawn path).
+
+**Snippet format** (`docs/hooks/ack.md`):
+
+```markdown
+---
+description: Acknowledge before slow work
+---
+Use mcp__nanoclaw__send_message for short acks BEFORE tool use, multi-step work or web_search/web_fetch.
+```
+
+**Channel-aware snippet** (`docs/hooks/text-syntax.md`):
+
+```markdown
+---
+description: Channel-specific message formatting
+requires: channel
+---
+Format all visible text using {channel} specific Markdown per the formatting rules in CLAUDE.md.
+```
+
+A Telegram group with `hooks: ["ack", "text-syntax"]` receives both reminders each turn. An unknown-channel group receives only `ack` (the `text-syntax` snippet is skipped due to `requires: channel`).
+
+Keep snippet bodies short — they're injected every turn; bloat defeats the purpose.
 
 #### Context Window Size — Resolved from Preset
 

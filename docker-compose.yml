@@ -13,6 +13,7 @@ services:
       POSTGRES_PASSWORD: nanoclaw_dev
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/10-create-test-db.sql:ro
 
 volumes:
   pgdata:

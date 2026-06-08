@@ -67,6 +67,8 @@ For each due task, `runTask()`:
 
 Nudges are disabled for scheduled tasks (`nudgeInterval: 0` when `isScheduledTask: true`).
 
+**Model override:** Scheduled tasks use the group's `taskPreset` if configured in `containerConfig`. This resolves a different model/endpoint for background work (e.g. a cheaper model for daily summaries) without affecting live chat. If `taskPreset` is absent or invalid, the base `preset` is used. See `resolveSpawnConfig()` in `src/spawn-config.ts`.
+
 ---
 
 ## Metadata Update Timing

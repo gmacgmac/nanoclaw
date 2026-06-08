@@ -48,9 +48,11 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/logger.ts` | Built-in logger with DB error wrapper |
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
 | `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
+| `src/prompt-reminders.ts` | Prompt reminder resolver — loads `docs/hooks/` snippets, interpolates channel |
 | `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop, /context) |
 | `store/messages.db` | **Legacy artifact** — no longer the primary store. Data lives in PostgreSQL (Docker volume `pgdata`, container `nanoclaw-postgres-1`) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `docs/hooks/` | Per-turn reminder snippets (loaded by `src/prompt-reminders.ts`) |
 | `container/skills/` | Skills loaded inside agent containers |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers (SDK invocation) |
 
@@ -178,7 +180,7 @@ Stored as JSON in the `registered_groups.container_config` PostgreSQL column. Al
 
 **`agent-browser` binary mounting**: `agent-browser` is NOT installed in the Docker image. The binary is stored on the host at `container/binaries/agent-browser/` and mounted into the container only when `agent-browser` is explicitly in the group's `skills` list. `container/binaries/` MUST be committed to git — it is the only source of the binary at runtime.
 
-**`allowedTools` complement**: The agent-runner computes `disallowedTools` as the complement of `allowedTools` at runtime. This blocks preset-injected CLI tools that bypass the SDK's `allowedTools` filter. You never configure `disallowedTools` directly.
+**`allowedTools` complement**: The agent-runner computes `disallowedTools` as the complement of the resolved tool set at runtime. Resolution: `tool-allowlist.json` ceiling − `deniedTools` − conditional removals (Bash if approvalMode, WebSearch/WebFetch if !nativeWebTools). This blocks preset-injected CLI tools that bypass the SDK's `allowedTools` filter. You never configure `disallowedTools` directly — only `deniedTools` in `containerConfig`.
 
 ### Applying Group Config
 
@@ -281,6 +283,27 @@ Run commands directly—don't tell the user to run them.
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
+```
+
+### Test Database
+
+Tests require the `nanoclaw_test` database in the local PG container.
+
+**Fresh setup** (empty volume): Handled automatically — `docker-compose.yml` mounts `scripts/init-test-db.sql` into PG's init directory.
+
+**Existing volume** (init scripts don't re-fire): Create manually:
+```bash
+docker compose exec postgres psql -U nanoclaw -c "CREATE DATABASE nanoclaw_test OWNER nanoclaw"
+```
+
+**Verify it exists:**
+```bash
+docker compose exec postgres psql -U nanoclaw -lqt | grep nanoclaw_test
+```
+
+If the database already exists, the `CREATE DATABASE` command will error harmlessly ("already exists"). Then run tests:
+```bash
+npx vitest --run
 ```
 
 ### When to rebuild what
