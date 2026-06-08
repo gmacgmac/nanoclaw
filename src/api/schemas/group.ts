@@ -111,7 +111,9 @@ export const UpdateGroupSchema = z
 // --- Patch config (merge semantics) ---
 
 export const PatchConfigSchema = ContainerConfigSchema.describe(
-  'Merge-patch for containerConfig. Only provided fields are updated. Set a field to null to remove it. Nested objects (mcpServers, additionalMounts) are replaced wholesale, not deep-merged.',
+  'Merge-patch for containerConfig. Shallow merge at the top level: only provided fields are updated, omitted fields are untouched, null removes a field. ' +
+    'IMPORTANT: mcpServers and additionalMounts are replaced wholesale when included (not deep-merged). ' +
+    'To add/remove an entry without clobbering others, read the current config first (GET /config), merge locally, then PATCH with the complete object/array.',
 );
 
 // --- Switch preset request ---

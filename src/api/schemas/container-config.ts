@@ -100,7 +100,8 @@ export const ContainerConfigSchema = z.object({
     .record(z.string(), McpServerSchema)
     .optional()
     .describe(
-      'Per-group MCP servers to spawn alongside the built-in nanoclaw server. Key is server name (e.g. "brave-search").',
+      'Per-group MCP servers to spawn alongside the built-in nanoclaw server. Key is server name (e.g. "brave-search"). ' +
+        'WARNING: On PATCH, this entire object is replaced — not deep-merged. To add/remove a single server, read current config first, merge locally, then PATCH with the full mcpServers object.',
     ),
   telegramBot: z
     .string()
@@ -169,7 +170,8 @@ export const ContainerConfigSchema = z.object({
     .array(AdditionalMountSchema)
     .optional()
     .describe(
-      'Extra host directories to mount into the container. Validated against mount-allowlist.json for security.',
+      'Extra host directories to mount into the container. Validated against mount-allowlist.json for security. ' +
+        'WARNING: On PATCH, this entire array is replaced — not deep-merged. To add/remove a single mount, read current config first, merge locally, then PATCH with the full array.',
     ),
 });
 

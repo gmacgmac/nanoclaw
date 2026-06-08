@@ -154,7 +154,14 @@ registry.registerPath({
   path: '/api/groups/{jid}/config',
   summary: 'Merge-patch containerConfig',
   description:
-    'Partially updates containerConfig. Only provided fields change. Set a field to null to remove it. Nested objects (mcpServers, additionalMounts) are replaced wholesale, not deep-merged.',
+    'Partially updates containerConfig using shallow merge at the top level. ' +
+    'Only provided fields change — omitted fields are untouched. Set a field to null to remove it.\n\n' +
+    '**Merge behavior:**\n' +
+    '- Scalar/array fields (preset, skills, timeout, deniedTools, etc.): safe to send individually. ' +
+    'Sending `{"preset": "claude-opus"}` changes only the preset; everything else is preserved.\n' +
+    '- Object/array-of-object fields (mcpServers, additionalMounts): REPLACED WHOLESALE when included. ' +
+    'If you send `{"mcpServers": {"brave": {...}}}` and the group has 3 existing servers, you end up with 1.\n\n' +
+    '**To safely update mcpServers or additionalMounts:** GET /api/groups/{jid}/config first, merge your changes into the existing object/array locally, then PATCH with the complete value.',
   request: {
     params: z.object({ jid: JidSchema }),
     body: { content: { 'application/json': { schema: PatchConfigSchema } } },

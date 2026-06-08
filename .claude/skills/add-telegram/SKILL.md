@@ -7,6 +7,10 @@ description: Add Telegram as a channel. Can replace WhatsApp entirely or run alo
 
 This skill adds Telegram support to NanoClaw, then walks through interactive setup.
 
+## API Reference
+
+Group registration and configuration is done via the NanoClaw Management API (default `http://localhost:3100`). See #[[file:src/api/openapi.ts]] for full endpoint schemas, required fields, and response formats.
+
 ## Phase 1: Pre-flight
 
 ### Check if already applied
@@ -228,10 +232,12 @@ If files already exist, tell the user: "Memory seed files already exist — skip
 
 ### C. Set formatting skill in containerConfig
 
-Telegram uses Markdown v1 which differs from standard Markdown. Add the `telegram-formatting` skill to the group's containerConfig:
+Telegram uses Markdown v1 which differs from standard Markdown. Add the `telegram-formatting` skill to the group's containerConfig via the API:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"telegram-formatting\"]')) WHERE folder = '<folder>'"
+curl -X PATCH http://localhost:3100/api/groups/<jid>/config \
+  -H "Content-Type: application/json" \
+  -d '{"skills": ["capabilities", "status", "telegram-formatting"]}'
 ```
 
 Then clear the skills cache so the new skill is loaded on next container spawn:
@@ -298,7 +304,7 @@ tail -f logs/nanoclaw.log
 
 Check:
 1. `TELEGRAM_BOT_TOKEN` is set in `~/.config/nanoclaw/secrets.env`
-2. Chat is registered in SQLite (check with: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'tg:%'"`)
+2. Chat is registered (check with: `curl -s http://localhost:3100/api/groups | jq '.data[] | select(.jid | startswith("tg:"))'`)
 3. For non-main chats: message includes trigger pattern
 4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
 
@@ -311,7 +317,7 @@ If a secondary bot (registered with `--bot-token-name`) is not responding:
 3. Check the group's JID includes the bot name suffix (e.g. `tg:123456:choc`). The JID itself is the primary routing key — if it has the wrong suffix or no suffix, the wrong bot (or default bot) may handle the message.
 4. Check the group's `container_config` has the correct `telegramBot` value:
    ```bash
-   sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = '<folder>'"
+   curl -s http://localhost:3100/api/groups/<jid>/config | jq .data
    ```
    The output should include `"telegramBot":"choc"` (or the equivalent name). This is used as a fallback for plain JIDs without a suffix.
 
@@ -381,6 +387,6 @@ To remove Telegram integration:
 1. Delete `src/channels/telegram.ts` and `src/channels/telegram.test.ts`
 2. Remove `import './telegram.js'` from `src/channels/index.ts`
 3. Remove or comment out `TELEGRAM_BOT_TOKEN` in `~/.config/nanoclaw/secrets.env`
-4. Remove Telegram registrations from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE 'tg:%'"`
+4. Remove Telegram registrations via API: for each Telegram group JID, run `curl -X DELETE http://localhost:3100/api/groups/<jid>`
 5. Uninstall: `npm uninstall grammy`
 6. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)
