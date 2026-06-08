@@ -42,10 +42,9 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 export const DATABASE_URL =
   process.env.DATABASE_URL || envConfig.DATABASE_URL || '';
 
-// Feature flag: when true, app uses PostgreSQL instead of SQLite.
-// Defaults to false for safe transition window.
+// PostgreSQL is the primary storage layer. Set to 'false' only for legacy/debug.
 export const USE_POSTGRES =
-  (process.env.USE_POSTGRES || envConfig.USE_POSTGRES || 'false') === 'true';
+  (process.env.USE_POSTGRES || envConfig.USE_POSTGRES || 'true') === 'true';
 
 // REST API server (see src/api/). Disabled if API_PORT is 0.
 export const API_PORT = parseInt(

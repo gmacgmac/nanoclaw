@@ -29,19 +29,19 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │                     (Main Node.js Process)                            │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│  ┌──────────────────┐                  ┌────────────────────┐        │
-│  │ Channels         │─────────────────▶│   SQLite Database  │        │
-│  │ (self-register   │◀────────────────│   (messages.db)    │        │
-│  │  at startup)     │  store/send      └─────────┬──────────┘        │
+│  ┌──────────────────┐                  ┌──────────────────────────┐  │
+│  │ Channels         │─────────────────▶│   PostgreSQL               │  │
+│  │ (self-register   │◀────────────────│   (nanoclaw-postgres-1)    │  │
+│  │  at startup)     │  store/send      └─────────┬────────────────┘  │
 │  └──────────────────┘                            │                   │
 │                                                   │                   │
 │         ┌─────────────────────────────────────────┘                   │
 │         │                                                             │
 │         ▼                                                             │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌───────────────┐   │
-│  │  Message Loop    │    │  Scheduler Loop  │    │  IPC Watcher  │   │
-│  │  (polls SQLite)  │    │  (checks tasks)  │    │  (file-based) │   │
-│  └────────┬─────────┘    └────────┬─────────┘    └───────────────┘   │
+│  ┌──────────────────────┐  ┌──────────────────┐  ┌───────────────┐   │
+│  │  Message Loop        │  │  Scheduler Loop  │  │  IPC Watcher  │   │
+│  │  (polls PostgreSQL)  │  │  (checks tasks)  │  │  (file-based) │   │
+│  └────────┬─────────────┘  └────────┬─────────┘  └───────────────┘   │
 │           │                       │                                   │
 │           └───────────┬───────────┘                                   │
 │                       │ spawns container                              │
@@ -79,7 +79,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 | Component | Technology | Purpose |
 |-----------|------------|---------|
 | Channel System | Channel registry (`src/channels/registry.ts`) | Channels self-register at startup |
-| Message Storage | SQLite (better-sqlite3) | Store messages for polling |
+| Message Storage | PostgreSQL (postgres.js) | Store messages for polling |
 | Container Runtime | Containers (Linux VMs) | Isolated environments for agent execution |
 | Agent | @anthropic-ai/claude-agent-sdk (0.3.147) | Run Claude with tools and MCP servers |
 | Browser Automation | agent-browser + Chromium | Web interaction and screenshots |
@@ -108,7 +108,7 @@ graph LR
         GQ[Group Queue]
         RT[Router]
         TS[Task Scheduler]
-        DB[(SQLite)]
+        DB[(PostgreSQL)]
     end
 
     subgraph Execution["Container Execution"]
@@ -279,7 +279,7 @@ nanoclaw/
 │   ├── config.ts                  # Configuration constants
 │   ├── types.ts                   # TypeScript interfaces (includes Channel)
 │   ├── logger.ts                  # Built-in logger with DB error wrapper
-│   ├── db.ts                      # SQLite database initialization and queries
+│   ├── db.ts                      # PostgreSQL connection pool and queries
 │   ├── env.ts                     # Environment variable loading from secrets.env and .env
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit
 │   ├── group-folder.ts            # Group folder path resolution and validation
@@ -391,7 +391,7 @@ nanoclaw/
 │       └── *.md                   # Files created by the agent
 │
 ├── store/                         # Local data (gitignored)
-│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, delegations, dashboard_chat_log, router_state, error_log)
+│   └── messages.db                # Legacy artifact — was SQLite database prior to PostgreSQL migration. Primary store is now PostgreSQL (Docker volume pgdata, container nanoclaw-postgres-1)
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
@@ -444,7 +444,7 @@ export const TRIGGER_PATTERN = new RegExp(`^@${ASSISTANT_NAME}\\b`, 'i');
 
 ### Container Configuration
 
-Per-group behaviour is controlled via `containerConfig` — stored as JSON in the `registered_groups.container_config` SQLite column. All fields are optional; omitting a field preserves backward-compatible defaults.
+Per-group behaviour is controlled via `containerConfig` — stored as `jsonb` in the `registered_groups.container_config` PostgreSQL column. All fields are optional; omitting a field preserves backward-compatible defaults.
 
 ```json
 {
@@ -775,7 +775,7 @@ Sessions enable conversation continuity — Claude remembers what you talked abo
 ### How Sessions Work
 
 1. First message to a group → no session ID → Claude Agent SDK starts a fresh session, returns `newSessionId`
-2. NanoClaw stores the ID in SQLite (`sessions` table, keyed by `group_folder`) via `setSession()`
+2. NanoClaw stores the ID in PostgreSQL (`sessions` table, keyed by `group_folder`) via `setSession()`
 3. Next message → stored `sessionId` passed to SDK `resume` option → resumes from `.jsonl` transcript
 4. This continues indefinitely — every message resumes the same session with full conversation history
 
@@ -808,7 +808,7 @@ Memory persistence is continuous: the agent writes durable facts to `MEMORY.md` 
 |------|-----------|---------|
 | Session transcript | `data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl` | Full conversation history (Claude Code internal format) |
 | Auto-memory | `data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md` | Persistent notes Claude writes itself (survives session reset) |
-| Session ID mapping | `store/messages.db` → `sessions` table | Maps group folder → current session UUID |
+| Session ID mapping | PostgreSQL → `sessions` table | Maps group folder → current session UUID |
 | Settings | `data/sessions/<folder>/.claude/settings.json` | Claude Code env vars (model, features) |
 | Skills | `data/sessions/<folder>/.claude/skills/` | Copied from `container/skills/` per-group |
 
@@ -834,14 +834,14 @@ When a container starts, context is loaded in this order:
 2. Channel receives message (e.g. Baileys for WhatsApp, Bot API for Telegram)
    │
    ▼
-3. Message stored in SQLite (store/messages.db)
+3. Message stored in PostgreSQL
    │
    ▼
-4. Message loop polls SQLite (every 2 seconds)
+4. Message loop polls PostgreSQL (every 2 seconds)
    │
    ▼
 5. Router checks:
-   ├── Is chat_jid in registered groups (SQLite)? → No: ignore
+   ├── Is chat_jid in registered groups (PostgreSQL)? → No: ignore
    └── Does message match trigger pattern? → No: store but don't process
    │
    ▼
@@ -1033,8 +1033,8 @@ NanoClaw runs as a single macOS launchd service.
 
 When NanoClaw starts, it:
 1. **Ensures container runtime is running** - Automatically starts it if needed; kills orphaned NanoClaw containers from previous runs
-2. Initializes the SQLite database (migrates from JSON files if they exist)
-3. Loads state from SQLite (registered groups, sessions, router state)
+2. Initializes the PostgreSQL database (migrates from JSON files if they exist)
+3. Loads state from PostgreSQL (registered groups, sessions, router state)
 4. **Connects channels** — loops through registered channels, instantiates those with credentials, calls `connect()` on each
 5. Once at least one channel is connected:
    - Starts the scheduler loop
@@ -1167,7 +1167,7 @@ chmod 700 groups/
 | No response to messages | Service not running | Check `launchctl list | grep nanoclaw` |
 | "Claude Code process exited with code 1" | Container runtime failed to start | Check logs; NanoClaw auto-starts container runtime but may fail |
 | "Claude Code process exited with code 1" | Session mount path wrong | Ensure mount is to `/home/node/.claude/` not `/root/.claude/` |
-| Session not continuing | Session ID not saved | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"` |
+| Session not continuing | Session ID not saved | Check PostgreSQL: `docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT * FROM sessions"` |
 | Session not continuing | Mount path mismatch | Container user is `node` with HOME=/home/node; sessions must be at `/home/node/.claude/` |
 | "QR code expired" | WhatsApp session expired | Delete store/auth/ and restart |
 | "No groups registered" | Haven't added groups | Use `@Andy add group "Name"` in main |

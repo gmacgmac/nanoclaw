@@ -125,7 +125,7 @@ A personal Claude assistant accessible via messaging channels (Telegram, WhatsAp
 
 ### Group Management
 - New groups are registered via `register_group` MCP tool or the `/add-internal-group` skill
-- Groups are registered in SQLite (`registered_groups` table)
+- Groups are registered in PostgreSQL (`registered_groups` table)
 - Each group gets a dedicated folder under `groups/`
 - `register_group` does NOT create `CLAUDE.md` or `memory/` — these must be created manually using the global/main template
 - Groups can have additional directories mounted via `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
@@ -145,12 +145,12 @@ A personal Claude assistant accessible via messaging channels (Telegram, WhatsAp
 - Channels are skills that self-register at startup via the channel registry (`src/channels/registry.ts`)
 - Supported channels: Telegram, WhatsApp, Slack, Discord, Gmail, Dashboard (internal)
 - Each channel is a separate skill — install via feature skills (e.g. `/add-telegram`, `/add-slack`)
-- Messages stored in SQLite, polled by the message loop
+- Messages stored in PostgreSQL, polled by the message loop
 
 ### Scheduler
 - Built-in scheduler runs on the host, spawns containers for task execution
 - Custom `nanoclaw` MCP server (inside container) provides IPC tools: `delegate_to_group`, `respond_to_group`, `manual_flush`, `send_message`
-- Tasks stored in SQLite with run history
+- Tasks stored in PostgreSQL with run history
 - Scheduler loop checks for due tasks every minute
 - Tasks execute Claude Agent SDK in containerized group context
 - Nightly maintenance cron flushes groups above 50% context usage

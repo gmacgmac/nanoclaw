@@ -2,7 +2,7 @@
 
 NanoClaw has a built-in scheduler that runs tasks as full agents inside the group's container. Tasks have access to all the same tools the group has (WebSearch, Bash, file operations, MCP servers). They can send messages back to the group, complete silently, or both.
 
-This is separate from the nightly maintenance cron (`startNightlyCron` in `src/task-scheduler.ts`). Nightly maintenance is a fixed internal job and is not a row in `scheduled_tasks`. Scheduled tasks are user-created, stored in SQLite, and managed via MCP tools.
+This is separate from the nightly maintenance cron (`startNightlyCron` in `src/task-scheduler.ts`). Nightly maintenance is a fixed internal job and is not a row in `scheduled_tasks`. Scheduled tasks are user-created, stored in PostgreSQL, and managed via MCP tools.
 
 ---
 
@@ -44,7 +44,7 @@ Every active task has a live `runtime_state` field derived at request time from 
 - `list_tasks` — appended as `[running]`, `[queued]`, `[blocked]`, or `[due]` annotation (skips `idle`)
 - `get_task` — shown as a `Runtime State: <value>` field
 
-**Dashboard divergence:** `nanoclaw-dashboard` reads SQLite directly and does NOT see `runtime_state`. The dashboard only shows persisted columns (`status`, `next_run`, `last_run`, etc.). This is documented divergence — plans for parity are out of scope.
+**Dashboard divergence:** `nanoclaw-dashboard` reads PostgreSQL directly and does NOT see `runtime_state`. The dashboard only shows persisted columns (`status`, `next_run`, `last_run`, etc.). This is documented divergence — plans for parity are out of scope.
 
 ---
 
@@ -391,7 +391,7 @@ If you set `script` today (e.g. via direct DB manipulation), it has no effect on
 
 ## Storage
 
-Tasks are stored in `store/messages.db`.
+Tasks are stored in PostgreSQL — Docker volume `pgdata`, container `nanoclaw-postgres-1`.
 
 **`scheduled_tasks` table** — key columns:
 
@@ -435,15 +435,15 @@ A row in `started` status means the run is either in-flight or was abandoned (se
 
 Tasks originate from one of two paths:
 
-1. **Agent-initiated (normal flow):** An agent inside a container calls the `schedule_task` MCP tool (registered in `container/agent-runner/src/ipc-mcp-stdio.ts`). This writes a JSON IPC file to `/workspace/ipc/tasks/` inside the container, which maps to `data/ipc/{groupFolder}/tasks/` on the host. The host's `processTaskIpc()` in `src/ipc.ts` picks up the file, validates authorization (see Main vs Non-Main section above), and calls `createTask()` in `src/db.ts` to insert a row into the `scheduled_tasks` table in `store/messages.db`.
+1. **Agent-initiated (normal flow):** An agent inside a container calls the `schedule_task` MCP tool (registered in `container/agent-runner/src/ipc-mcp-stdio.ts`). This writes a JSON IPC file to `/workspace/ipc/tasks/` inside the container, which maps to `data/ipc/{groupFolder}/tasks/` on the host. The host's `processTaskIpc()` in `src/ipc.ts` picks up the file, validates authorization (see Main vs Non-Main section above), and calls `createTask()` in `src/db.ts` to insert a row into the `scheduled_tasks` table in PostgreSQL.
 
-2. **Direct DB manipulation (admin/debug only):** You can insert rows directly into `store/messages.db` via `sqlite3`. This bypasses all authorization checks and is only appropriate for debugging or migration scripts.
+2. **Direct DB manipulation (admin/debug only):** You can insert rows directly via psql (`docker compose exec postgres psql -U nanoclaw nanoclaw`). This bypasses all authorization checks and is only appropriate for debugging or migration scripts.
 
-In both cases, the canonical store is always the SQLite database. There is no file-based task storage.
+In both cases, the canonical store is always the PostgreSQL database. There is no file-based task storage.
 
 ### How Tasks Are Read by Agents (Request/Response IPC)
 
-Agents cannot query the SQLite database directly — it lives on the host, outside the container. Instead, task visibility works through request/response IPC:
+Agents cannot query the PostgreSQL database directly — it lives on the host, outside the container. Instead, task visibility works through request/response IPC:
 
 1. Agent calls a read tool (`list_tasks`, `get_task`, `search_tasks`)
 2. The MCP tool writes a `.req.json` file to `/workspace/ipc/tasks/` with a correlation ID
@@ -466,7 +466,7 @@ Agent calls schedule_task MCP tool
   → host's processTaskIpc() reads the file from data/ipc/{group}/tasks/
   → host checks authorization (isMain || own group for target)
   → host calls createTask() → INSERT into scheduled_tasks table
-  → task is now in SQLite, scheduler loop will pick it up when due
+  → task is now in PostgreSQL, scheduler loop will pick it up when due
 
 Agent calls list_tasks MCP tool
   → writes .req.json with correlation ID to /workspace/ipc/tasks/

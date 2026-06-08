@@ -24,7 +24,7 @@ NanoClaw is the always-on personal AI agent system. It runs as a Node.js orchest
 ```
 Message In (Telegram / Dashboard)
     ↓
-SQLite (store message, deduplicate)
+PostgreSQL (store message, deduplicate)
     ↓
 Group Queue (per-group FIFO, one container at a time)
     ↓
@@ -45,7 +45,7 @@ This is the most important thing to understand about NanoClaw. Agents are NOT st
 
 1. First message to a group → no session ID → Claude Agent SDK starts a fresh session
 2. The SDK returns a `newSessionId` (a UUID like `16532bac-737e-4fc4-805f-b7ce971b87d9`)
-3. NanoClaw stores this ID in SQLite (`sessions` table) via `setSession()`
+3. NanoClaw stores this ID in PostgreSQL (`sessions` table) via `setSession()`
 4. Next message → NanoClaw passes the stored `sessionId` → SDK resumes from the `.jsonl` transcript
 5. This continues indefinitely — every message resumes the same session with full conversation history
 
@@ -55,7 +55,7 @@ This is the most important thing to understand about NanoClaw. Agents are NOT st
 |------|-----------|---------|
 | Session transcript | `data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl` | Full conversation history (Claude Code internal format) |
 | Auto-memory | `data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md` | Persistent notes Claude writes itself (survives session reset) |
-| Session ID mapping | `store/messages.db` → `sessions` table | Maps group folder → current session UUID |
+| Session ID mapping | PostgreSQL `sessions` table | Maps group folder → current session UUID |
 | Settings | `data/sessions/<folder>/.claude/settings.json` | Claude Code env vars (model, features) |
 | Skills | `data/sessions/<folder>/.claude/skills/` | Copied from `container/skills/` per-group |
 
@@ -383,16 +383,16 @@ Sub-agents respond via `send_message` to the hub's JID (the user sees the respon
 
 ```bash
 # Enable hub routing
-sqlite3 store/messages.db "UPDATE registered_groups SET multi_agent_router = 1 WHERE folder = 'myhub'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET multi_agent_router = true WHERE folder = 'myhub'"
 ```
 
 ---
 
 ## Data Storage
 
-### SQLite Database (`store/messages.db`)
+### PostgreSQL Database
 
-The database serves the application layer — message routing, group registration, scheduling, and the dashboard UI.
+The database serves the application layer — message routing, group registration, scheduling, and the dashboard UI. PostgreSQL runs in Docker container `nanoclaw-postgres-1` (`postgres:16-alpine`), with data persisted to the `pgdata` volume.
 
 | Table | Purpose |
 |-------|---------|
@@ -405,6 +405,8 @@ The database serves the application layer — message routing, group registratio
 | `task_run_logs` | Execution history for scheduled tasks |
 | `router_state` | Internal state (timestamps, cursors) |
 | `error_log` | Structured error logging |
+
+> **psql shell**: `docker compose exec postgres psql -U nanoclaw nanoclaw`
 
 ### The `messages` Table: Input Queue, Not Conversation Store
 
@@ -439,8 +441,8 @@ These serve completely different purposes — the DB is NOT a conversation store
 | Store | What | Who Reads It | Format |
 |-------|------|-------------|--------|
 | `.jsonl` session files | Full conversation transcript (both sides) | Claude Agent SDK only | JSONL (opaque, SDK-internal) |
-| SQLite `messages` table | Inbound user messages (input queue) | Message loop | Structured rows |
-| SQLite `dashboard_chat_log` table | Dashboard chat history (both sides) | Dashboard server UI | Structured rows |
+| PostgreSQL `messages` table | Inbound user messages (input queue) | Message loop | Structured rows |
+| PostgreSQL `dashboard_chat_log` table | Dashboard chat history (both sides) | Dashboard server UI | Structured rows |
 
 Agent memory and conversation continuity come entirely from the `.jsonl` session files via SDK session resumption. The DB `messages` table does not feed the agent context. Don't try to parse `.jsonl` files — the format is internal to Claude Code and may change.
 
@@ -453,27 +455,98 @@ Group state lives in directories ignored by both git and Dropbox (`store/`, `dat
 
 | What | Backed Up | Skipped |
 |------|-----------|---------|
-| `store/messages.db` | Yes (via SQLite `.backup` snapshot) | — |
+| PostgreSQL database | Yes (via `pg_dump` from container `nanoclaw-postgres-1`) | — |
+| `store/messages.db` | Yes (SQLite `.backup` snapshot — **legacy safety net only**) | — |
 | `data/sessions/` | Yes (transcripts, memory, settings) | `agent-runner-src/` (regenerable) |
 | `data/ipc/` | Yes (queues, tasks) | — |
 | `groups/` | Yes (CLAUDE.md, memory, media, scripts) | `node_modules/` (regenerable) |
 | `.env` | Yes (non-secret config) | — |
+| `docker-compose.yml` | Yes (infrastructure-as-code) | — |
 | `logs/` | No (ephemeral) | — |
 
 **Schedule:** Daily at 01:00 via `com.nanoclaw.backup-personas` (launchd).
 
 **Destination:** `/Volumes/nanoclaw-personas-bak/` (disk image — user-configurable in `scripts/backup-personas.sh`).
 
-**Safety model:** Three-phase, power-fail safe:
-1. SQLite `.backup` creates a transactionally-consistent snapshot.
-2. `rsync` stages everything to `.staging/` on the destination (interruptible without harm).
-3. `mv` renames `.staging/` to `nanoclaw-YYYY-MM-DD_HHMMSS` atomically (same-filesystem rename is uninterruptible).
+**Prerequisite:** Docker must be running and the `nanoclaw-postgres-1` container must be up. The script checks this at startup and fails with a notification if not.
 
-**Rotation:** Keeps the last 4 backups. Older ones are deleted automatically.
+**Safety model:** Multi-phase, power-fail safe:
+1. **Phase A1** — SQLite `.backup` snapshot (legacy safety net — PG is the primary store).
+2. **Phase A2** — `pg_dump` via `docker compose exec -T postgres pg_dump -U nanoclaw nanoclaw | gzip` → `nanoclaw.sql.gz`. Validates non-empty output.
+3. **Phase B** — `rsync` stages everything to `.staging/` on the destination (interruptible without harm). The PG dump is placed in `postgres/nanoclaw.sql.gz`.
+4. **Phase C** — `mv` renames `.staging/` to `nanoclaw-YYYY-MM-DD_HHMMSS` atomically (same-filesystem rename is uninterruptible).
+5. **Phase C2** — Atomic compression: `zip` the committed backup, atomic rename `.zip.tmp` → `.zip`, then remove uncompressed directory.
+
+**Rotation:** Keeps the last 5 `.zip` backups. Older ones are deleted automatically.
 
 **Manual run:** `launchctl start com.nanoclaw.backup-personas`
 
-**Restore:** Copy the relevant directories from the backup back into `$NANOCLAW_ROOT/`, then restart the service.
+**Restore (PostgreSQL):**
+```bash
+# Start the PG container
+docker compose up -d
+
+# Restore from the backup
+gunzip -c /Volumes/nanoclaw-personas-bak/nanoclaw-YYYY-MM-DD_HHMMSS/postgres/nanoclaw.sql.gz \
+  | docker compose exec -T postgres psql -U nanoclaw nanoclaw
+```
+
+Copy group/session directories from the backup back into `$NANOCLAW_ROOT/`, then restart the service.
+
+---
+
+## PostgreSQL Setup
+
+NanoClaw uses PostgreSQL as its primary database, running in a Docker container.
+
+### Requirements
+
+- **Docker Desktop** — must be installed and configured to start on boot (macOS: System Settings → General → Login Items → add Docker).
+- Docker Compose (bundled with Docker Desktop).
+
+### Starting PostgreSQL
+
+```bash
+cd $NANOCLAW_ROOT
+docker compose up -d
+```
+
+This starts the `nanoclaw-postgres-1` container (`postgres:16-alpine`) with:
+- Database: `nanoclaw`
+- User: `nanoclaw`
+- Password: `nanoclaw_dev`
+- Port: `5432` (host-mapped)
+- Volume: `pgdata` (persistent across restarts)
+- Restart policy: `unless-stopped` (auto-restarts on reboot as long as Docker is running)
+
+### Environment Configuration
+
+In `.env` (or `~/.config/nanoclaw/secrets.env` for credentials):
+
+```bash
+DATABASE_URL=postgres://nanoclaw:nanoclaw_dev@localhost:5432/nanoclaw
+USE_POSTGRES=true
+```
+
+### psql Shell Access
+
+```bash
+docker compose exec postgres psql -U nanoclaw nanoclaw
+```
+
+### Upgrading from SQLite
+
+If upgrading from a pre-PostgreSQL installation:
+
+1. Ensure Docker is running and the PG container is up (`docker compose up -d`)
+2. Set `DATABASE_URL` and `USE_POSTGRES=true` in `.env`
+3. Run the migration script:
+   ```bash
+   npm run migrate:sqlite-to-pg
+   ```
+4. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
+
+The `store/messages.db` SQLite file is retained as a legacy artifact but is no longer read by the application.
 
 ---
 
@@ -496,7 +569,7 @@ The agent-runner source is copied into a per-group writable location on first ru
 
 ### Per-Group Configuration (`containerConfig`)
 
-Configure group behaviour via the `containerConfig` JSON column in the `registered_groups` table:
+Configure group behaviour via the `containerConfig` JSONB column in the `registered_groups` table:
 
 ```json
 {
@@ -745,7 +818,7 @@ Host commands are intercepted on the host process before reaching the agent cont
 Gated commands require the group's `containerConfig.allowedHostCommands` array to include the command name:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.allowedHostCommands', json('[\"model\", \"version\", \"newsession\"]')) WHERE folder = '<folder>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{allowedHostCommands}', '[\"model\", \"version\", \"newsession\"]'::jsonb) WHERE folder = '<folder>'"
 ```
 
 Only senders on the sender allowlist can invoke any host command (gated or ungated).
@@ -811,7 +884,7 @@ See the **Container Image Channels** section for what `:stable` and `:next` mean
 
 ### `/newsession` — Reset Session
 
-Stops the container and deletes the session from both the in-memory cache and SQLite. The JSONL transcript file is left on disk by design (auto-prune is a separate manual step). The next message starts a completely fresh session with a new ID.
+Stops the container and deletes the session from both the in-memory cache and PostgreSQL. The JSONL transcript file is left on disk by design (auto-prune is a separate manual step). The next message starts a completely fresh session with a new ID.
 
 **Two-message UX:**
 1. Reply 1 (immediate): `"Clearing session..."`
@@ -845,7 +918,7 @@ The agent-runner inside each container uses the Claude Agent SDK (`@anthropic-ai
 | `model` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.model` | (from preset) | Yes |
 | `contextWindow` | Resolved from `containerConfig.preset` via `resolvePreset()` → `preset.contextWindow` (default: 128000) | 128000 | Yes |
 | `systemPrompt` | `claude_code` preset + `containerConfig.systemPrompt` | Preset only | Yes |
-| `resume` | `sessionId` from SQLite | None (new session) | Per-group |
+| `resume` | `sessionId` from PostgreSQL | None (new session) | Per-group |
 | `permissionMode` | Hardcoded | `bypassPermissions` | No |
 | `mcpServers` | `nanoclaw` (hardcoded) + `containerConfig.mcpServers` | NanoClaw IPC server only | Yes |
 | `cwd` | Hardcoded | `/workspace/group` | Per-group folder |
@@ -1156,7 +1229,7 @@ Example with all security flags:
 }
 ```
 
-Invalid values log a warning and fall back to the secure default (`validateContainerConfig()` in `src/lib/config-validator.ts`). No database migration is needed — the `containerConfig` JSON column is schema-less.
+Invalid values log a warning and fall back to the secure default (`validateContainerConfig()` in `src/lib/config-validator.ts`). No database migration is needed — the `containerConfig` JSONB column is schema-less.
 
 ### SSRF Protection
 
@@ -1348,7 +1421,7 @@ $NANOCLAW_ROOT/
 │       ├── brave-search/             ← Brave Search API wrapper
 │       └── nanoclaw-web-search/      ← Web search via credential proxy (any vendor)
 ├── store/
-│   └── messages.db                   ← SQLite (messages, groups, sessions, tasks)
+│   └── messages.db                   ← legacy artifact (SQLite, pre-migration; PG is primary)
 ├── logs/                             ← service logs (stdout.log)
 └── src/                              ← NanoClaw source code
 ```
@@ -1380,7 +1453,7 @@ The project hash `-workspace-group` is derived from the container WORKDIR (`/wor
 
 ## Group Creation Checklist
 
-The `register_group` MCP tool (admin group only) and the `/add-internal-group` skill register a group in SQLite and create the group folder. However, it does NOT automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
+The `register_group` MCP tool (admin group only) and the `/add-internal-group` skill register a group in PostgreSQL and create the group folder. However, it does NOT automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
 
 > **Group removal** is CLI-operator-only via `setup/unregister.ts` (`npm run unregister`). There is no MCP/IPC removal verb. Removal transactionally handles active tasks (delete or relocate to another group) and keeps on-disk directories intact (soft removal).
 
@@ -1506,7 +1579,7 @@ To start fresh without recreating the group:
 
 ```bash
 # 1. Delete session row from database
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<folder>'"
 
 # 2. Delete transcript files
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
@@ -1523,7 +1596,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 For `telegram_main`:
 
 ```bash
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='telegram_main'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='telegram_main'"
 rm -f data/sessions/telegram_main/.claude/projects/-workspace-group/*.jsonl
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
@@ -1556,9 +1629,9 @@ When working on NanoClaw tasks:
 
 - NanoClaw codebase lives at `$NANOCLAW_ROOT/`
 - Mount configuration is in `src/container-runtime.ts` (`buildVolumeMounts()`)
-- Group registration and `containerConfig` are in the `registered_groups` SQLite table
+- Group registration and `containerConfig` are in the `registered_groups` PostgreSQL table
 - The agent-runner at `container/agent-runner/src/index.ts` controls SDK invocation
-- Session IDs flow: container output → `src/index.ts` → SQLite `sessions` table → next container input
+- Session IDs flow: container output → `src/index.ts` → PostgreSQL `sessions` table → next container input
 - To expose external data to agents: use `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 - Tests: `npm test` (vitest, currently ~900 tests)

@@ -88,14 +88,9 @@ install_deps() {
     return
   fi
 
-  # Verify native module (better-sqlite3)
-  log "Verifying native modules"
-  if node -e "require('better-sqlite3')" >> "$LOG_FILE" 2>&1; then
-    NATIVE_OK="true"
-    log "better-sqlite3 loads OK"
-  else
-    log "better-sqlite3 failed to load"
-  fi
+  # Native module check skipped — better-sqlite3 is devDeps only (migration script).
+  NATIVE_OK="true"
+  log "Native module check skipped (better-sqlite3 is devDeps only)"
 }
 
 # --- Build tools check ---

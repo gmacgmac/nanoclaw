@@ -372,14 +372,14 @@ Note: Changing schedule values recalculates `next_run` automatically.
 
 ## Database Tables (Read-Only Access)
 
-The Express server can read directly from `STORE_DIR/messages.db`:
+The Express server reads from PostgreSQL via `DATABASE_URL` (postgres.js connection pool):
 
 ### `chats`
 | Column | Type | Description |
 |--------|------|-------------|
 | `jid` | TEXT PK | Chat identifier |
 | `name` | TEXT | Display name |
-| `last_message_time` | TEXT | ISO timestamp |
+| `last_message_time` | TIMESTAMPTZ | Last message timestamp |
 | `channel` | TEXT | `whatsapp`, `telegram`, `discord`, etc. |
 | `is_group` | INTEGER | 1 for groups, 0 for DMs |
 
@@ -391,7 +391,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `sender` | TEXT | Sender JID |
 | `sender_name` | TEXT | Sender display name |
 | `content` | TEXT | Message content |
-| `timestamp` | TEXT | ISO timestamp |
+| `timestamp` | TIMESTAMPTZ | Message timestamp |
 | `is_from_me` | INTEGER | 1 if sent by bot |
 | `is_bot_message` | INTEGER | 1 if bot response |
 
@@ -407,18 +407,18 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `schedule_value` | TEXT | Schedule definition |
 | `context_mode` | TEXT | `isolated` or `group` (default: `isolated`) |
 | `script` | TEXT | Optional script content |
-| `next_run` | TEXT | Next execution time |
-| `last_run` | TEXT | Last execution time |
+| `next_run` | TIMESTAMPTZ | Next execution time |
+| `last_run` | TIMESTAMPTZ | Last execution time |
 | `last_result` | TEXT | Result summary |
 | `status` | TEXT | `active`, `paused`, `completed` |
-| `created_at` | TEXT | Creation timestamp |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
 
 ### `task_run_logs`
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | INTEGER PK | Log entry ID |
+| `id` | SERIAL PK | Log entry ID |
 | `task_id` | TEXT FK | Task reference |
-| `run_at` | TEXT | Execution timestamp |
+| `run_at` | TIMESTAMPTZ | Execution timestamp |
 | `duration_ms` | INTEGER | Execution duration |
 | `status` | TEXT | `started`, `success`, or `error` |
 | `result` | TEXT | Result text |
@@ -431,7 +431,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `name` | TEXT | Display name |
 | `folder` | TEXT | Group folder path (unique) |
 | `trigger_pattern` | TEXT | Trigger regex |
-| `added_at` | TEXT | Registration timestamp |
+| `added_at` | TIMESTAMPTZ | Registration timestamp |
 | `container_config` | TEXT | JSON config |
 | `requires_trigger` | INTEGER | Trigger required flag (default: 1) |
 | `is_main` | INTEGER | Main group flag (default: 0) |
@@ -442,11 +442,11 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 ### `error_log`
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | INTEGER PK | Log entry ID |
+| `id` | SERIAL PK | Log entry ID |
 | `level` | TEXT | `error`, `fatal`, or `warn` |
 | `message` | TEXT | Log message |
 | `context` | TEXT | JSON context object |
-| `timestamp` | TEXT | ISO timestamp |
+| `timestamp` | TIMESTAMPTZ | Log timestamp (default: NOW()) |
 
 ### `delegations`
 | Column | Type | Description |
@@ -454,8 +454,8 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `uuid` | TEXT PK | Delegation identifier |
 | `caller_jid` | TEXT | JID of the group that initiated the delegation |
 | `target_jid` | TEXT | JID of the target group |
-| `created_at` | TEXT | Creation timestamp |
-| `expires_at` | TEXT | Expiry timestamp |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+| `expires_at` | TIMESTAMPTZ | Expiry timestamp |
 | `status` | TEXT | `pending`, `fulfilled` (default: `pending`) |
 
 ### `router_state`
@@ -478,7 +478,7 @@ The Express server can read directly from `STORE_DIR/messages.db`:
 | `sender` | TEXT | Sender identifier |
 | `sender_name` | TEXT | Sender display name |
 | `content` | TEXT | Message content |
-| `timestamp` | TEXT | ISO timestamp |
+| `timestamp` | TIMESTAMPTZ | Message timestamp |
 | `is_from_user` | INTEGER | 1 for user messages, 0 for bot responses |
 
 ---

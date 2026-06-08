@@ -25,7 +25,7 @@ You are FORBIDDEN from reading secrets.env
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in isolated Docker containers. Each group has its own filesystem, session state, and memory. Credentials never reach containers — a host-side proxy injects them at request time. Per-group behaviour is controlled via `containerConfig` stored in SQLite.
+Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in isolated Docker containers. Each group has its own filesystem, session state, and memory. Credentials never reach containers — a host-side proxy injects them at request time. Per-group behaviour is controlled via `containerConfig` stored in PostgreSQL.
 
 ## Key Files
 
@@ -38,7 +38,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/config.ts` | Trigger pattern, paths, intervals, proxy port |
 | `src/container-runner.ts` | Spawns agent containers with mounts and per-group config |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations (messages, groups, sessions, tasks, errors) |
+| `src/db.ts` | PostgreSQL operations via postgres.js (messages, groups, sessions, tasks, errors) |
 | `src/credential-proxy.ts` | Host-side API proxy — injects real credentials into container requests |
 | `src/group-queue.ts` | Per-group FIFO queue with global concurrency limit |
 | `src/mount-security.ts` | Mount allowlist validation for container volumes |
@@ -49,7 +49,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/types.ts` | TypeScript interfaces (ContainerConfig, Channel, RegisteredGroup) |
 | `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
 | `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop, /context) |
-| `store/messages.db` | SQLite database (registered_groups, messages, sessions, scheduled_tasks, delegations, dashboard_chat_log tables) |
+| `store/messages.db` | **Legacy artifact** — no longer the primary store. Data lives in PostgreSQL (Docker volume `pgdata`, container `nanoclaw-postgres-1`) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers (SDK invocation) |
@@ -58,7 +58,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 
 When working in Claude Code CLI on the host (this context), write memories to this CLAUDE.md file, not to `~/.claude/projects/` auto-memory. The auto-memory system is machine-specific and not portable. Group chats use their own memory system inside containers (`groups/{name}/CLAUDE.md` + `data/sessions/{group}/memory/`).
 
-Query the database with: `sqlite3 store/messages.db`
+Query the database with: `docker compose exec postgres psql -U nanoclaw nanoclaw`
 
 ### DB Schema (source of truth: `src/db.ts`)
 
@@ -182,14 +182,14 @@ Stored as JSON in the `registered_groups.container_config` PostgreSQL column. Al
 
 ### Applying Group Config
 
-Use `json_set()` to update nested fields:
+Use `jsonb_set()` to update nested fields:
 
 ```bash
 # Set endpoint
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.endpoint', 'ollama') WHERE folder = 'mygroup'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{endpoint}', to_jsonb('ollama'::text)) WHERE folder = 'mygroup'"
 
 # View current config
-sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
 ```
 
 ### Model Configuration
@@ -200,7 +200,7 @@ Models are configured via presets defined in `~/.config/nanoclaw/model-presets.j
 
 **To set via database**:
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.preset', 'OK2.6') WHERE folder = 'mygroup'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{preset}', to_jsonb('OK2.6'::text)) WHERE folder = 'mygroup'"
 ```
 
 **`settings.json` is auto-generated** at container spawn from the resolved preset. Do not edit it manually — changes will be overwritten on next container start. It contains `ANTHROPIC_MODEL`, `autoCompactEnabled`, and `autoCompactWindow`.
@@ -210,7 +210,7 @@ sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_
 Sessions persist across container restarts — agents are NOT stateless between messages.
 
 1. First message → no session ID → SDK starts a fresh session, returns `newSessionId`
-2. NanoClaw stores the ID in SQLite (`sessions` table) via `setSession()`
+2. NanoClaw stores the ID in PostgreSQL (`sessions` table) via `setSession()`
 3. Next message → stored `sessionId` passed to SDK → resumes from `.jsonl` transcript
 4. Containers are NOT one-per-message: they stay alive (IPC polling), idle-timeout after 30 min, then next message spawns a new container that resumes the same session
 
@@ -338,23 +338,24 @@ docker ps --filter ancestor=nanoclaw-agent:stable -q | xargs -r docker kill  # S
 **If agent reports outdated tools after image rebuild**, the session transcript may have cached tool definitions. Clear it:
 ```bash
 rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<group>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<group>'"
 ```
 
 **"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing the session row and restarting (see "To clear chat history for a group" below).
 
 **To clear chat history for a group** (fresh start, no conversation memory):
 
-**CRITICAL:**
-1. Run DELETE and VERIFY in a single chained command with `&&` — sqlite3 commands in separate shell invocations may not commit properly.
-2. Restart is REQUIRED — NanoClaw holds session IDs in memory (`src/index.ts:357`). The database delete will be undone if you don't restart.
+**CRITICAL:** Restart is REQUIRED — NanoClaw holds session IDs in memory (`src/index.ts:357`). The database delete will be undone if you don't restart.
 
 ```bash
-# 1. Delete session row from database (MUST chain with VERIFY)
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder='<folder>'" && sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder='<folder>'"
-# Expected: no output (empty result means DELETE succeeded)
+# 1. Delete session row from database
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<folder>'"
 
-# 2. Restart service (REQUIRED — clears in-memory session cache)
+# 2. Verify deletion
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT * FROM sessions WHERE group_folder='<folder>'"
+# Expected: (0 rows)
+
+# 3. Restart service (REQUIRED — clears in-memory session cache)
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
@@ -363,7 +364,8 @@ That's it. The JSONL file can remain — without a session row, the SDK starts a
 **Optional additional cleanup:**
 ```bash
 # Delete message history from database (incoming + outgoing)
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid='<jid>'" && sqlite3 store/messages.db "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM messages WHERE chat_jid='<jid>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
 # Expected: "0"
 
 # Clear auto-memory
