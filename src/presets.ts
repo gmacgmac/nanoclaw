@@ -91,7 +91,10 @@ function validateCapabilities(
   };
 }
 
-export function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
+export function validatePresetEntry(
+  key: string,
+  value: unknown,
+): ModelPreset | null {
   if (typeof value !== 'object' || value === null) {
     logger.warn({ preset: key }, 'Skipping invalid model preset entry');
     return null;
@@ -298,7 +301,9 @@ export function getPresetsHealth(): PresetsHealth {
   }
 
   let count = 0;
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(
+    parsed as Record<string, unknown>,
+  )) {
     if (validatePresetEntry(key, value)) count++;
   }
   return { healthy: true, count };
@@ -350,7 +355,9 @@ export function writeRawPresets(raw: string): WriteRawResult {
 
   const validPresets: Record<string, ModelPreset> = {};
   const invalidKeys: string[] = [];
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(
+    parsed as Record<string, unknown>,
+  )) {
     const validated = validatePresetEntry(key, value);
     if (validated) {
       validPresets[key] = validated;
@@ -359,7 +366,8 @@ export function writeRawPresets(raw: string): WriteRawResult {
     }
   }
 
-  const originalHadEntries = Object.keys(parsed as Record<string, unknown>).length > 0;
+  const originalHadEntries =
+    Object.keys(parsed as Record<string, unknown>).length > 0;
   if (Object.keys(validPresets).length === 0 && originalHadEntries) {
     return {
       ok: false,
@@ -390,14 +398,21 @@ export function upsertPreset(
   try {
     const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return {
         ok: false,
-        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        error:
+          'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
         code: 'PRESETS_CORRUPT',
       };
     }
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
       const validated = validatePresetEntry(key, value);
       if (validated) currentPresets[key] = validated;
     }
@@ -405,7 +420,8 @@ export function upsertPreset(
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       return {
         ok: false,
-        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        error:
+          'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
         code: 'PRESETS_CORRUPT',
       };
     }
@@ -428,15 +444,22 @@ export function deletePreset(name: string): DeletePresetResult {
   try {
     const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return {
         ok: false,
         found: false,
-        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        error:
+          'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
         code: 'PRESETS_CORRUPT',
       };
     }
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
       const validated = validatePresetEntry(key, value);
       if (validated) currentPresets[key] = validated;
     }
@@ -445,7 +468,8 @@ export function deletePreset(name: string): DeletePresetResult {
       return {
         ok: false,
         found: false,
-        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        error:
+          'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
         code: 'PRESETS_CORRUPT',
       };
     }

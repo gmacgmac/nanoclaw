@@ -234,7 +234,9 @@ registry.registerPath({
       description: 'Preset map keyed by preset name',
       content: {
         'application/json': {
-          schema: z.object({ data: z.record(z.string(), ModelPresetInputSchema) }),
+          schema: z.object({
+            data: z.record(z.string(), ModelPresetInputSchema),
+          }),
         },
       },
     },
@@ -299,7 +301,9 @@ registry.registerPath({
   description:
     'Full-file replacement for model-presets.json. Validates that the submitted content is valid JSON and contains at least one valid preset entry before writing. Atomic write (tmp → rename). Use for repairs when individual preset endpoints fail due to corrupt file.',
   request: {
-    body: { content: { 'application/json': { schema: WriteRawPresetsSchema } } },
+    body: {
+      content: { 'application/json': { schema: WriteRawPresetsSchema } },
+    },
   },
   responses: {
     200: {
@@ -335,7 +339,9 @@ registry.registerPath({
       description: 'Preset details',
       content: {
         'application/json': {
-          schema: z.object({ data: ModelPresetInputSchema.extend({ name: z.string() }) }),
+          schema: z.object({
+            data: ModelPresetInputSchema.extend({ name: z.string() }),
+          }),
         },
       },
     },
@@ -355,14 +361,18 @@ registry.registerPath({
     'Creates a new preset or fully replaces an existing one. Validates the preset body before writing. Atomic write (tmp → rename). Returns 409 if the presets file is currently corrupt — use PUT /api/presets/raw to repair first.',
   request: {
     params: PresetNameParamSchema,
-    body: { content: { 'application/json': { schema: ModelPresetInputSchema } } },
+    body: {
+      content: { 'application/json': { schema: ModelPresetInputSchema } },
+    },
   },
   responses: {
     200: {
       description: 'Created or updated preset',
       content: {
         'application/json': {
-          schema: z.object({ data: ModelPresetInputSchema.extend({ name: z.string() }) }),
+          schema: z.object({
+            data: ModelPresetInputSchema.extend({ name: z.string() }),
+          }),
         },
       },
     },
