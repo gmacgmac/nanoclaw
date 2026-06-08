@@ -1119,7 +1119,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=ollama
 
 # Z.ai
-ZAI_BASE_URL=https://api.z.ai
+ZAI_BASE_URL=https://api.z.ai/api/anthropic
 ZAI_API_KEY=...
 
 # Amazon Bedrock via Mantle — Claude track (/anthropic prefix, no transform)
@@ -1396,8 +1396,8 @@ Controls who can trigger the agent in each group. Configured via `~/.config/nano
 {
   "default": { "allow": "*", "mode": "trigger" },
   "chats": {
-    "tg:123456789": { "allow": "123456789", "mode": "drop", "logDenied": true },
-    "tg:123456789:fin": { "allow": "123456789", "mode": "trigger" }
+    "tg:123456789": { "allow": ["123456789"], "mode": "drop", "logDenied": true },
+    "tg:123456789:fin": { "allow": ["123456789"], "mode": "trigger" }
   }
 }
 ```
@@ -1406,11 +1406,9 @@ Controls who can trigger the agent in each group. Configured via `~/.config/nano
 |-------|------|-------------|
 | `default` | object | Fallback for unlisted chats |
 | `chats.{jid}` | object | Per-chat override |
-| `allow` | string | `"*"` = anyone, `"123456789"` = specific sender only |
+| `allow` | `"*"` \| `string[]` | `"*"` = anyone, `["123456789"]` = specific sender(s) only |
 | `mode` | string | `"trigger"` = trigger word required, `"drop"` = silently drop non-allowed senders |
 | `logDenied` | boolean | Log dropped messages (default: false) |
-
-The `default.allow` field can also be an array: `["123456789", "9876543210"]`.
 
 **How it works:**
 - `trigger` mode: allowed senders can trigger the bot with the group's trigger word. Non-allowed senders' messages are stored but not processed.

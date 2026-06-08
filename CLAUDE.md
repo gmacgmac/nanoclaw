@@ -111,7 +111,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=placeholder
 
-ZAI_BASE_URL=https://api.z.ai
+ZAI_BASE_URL=https://api.z.ai/api/anthropic
 ZAI_API_KEY=...
 ```
 

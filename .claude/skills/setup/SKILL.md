@@ -265,6 +265,84 @@ Tell the user to open `~/.config/nanoclaw/secrets.env` in their editor and make 
 
 **Store the chosen provider name** (e.g. `ollama`, `zai`, `anthropic`) — this is required when registering groups in Step 5. Each group must be explicitly configured with an endpoint via `--endpoint`.
 
+> **Advanced: Amazon Bedrock** is also supported (via Mantle proxy or Direct Invoke API). Bedrock setup requires additional configuration (`_AUTH`, `_REGION` fields, optional `transform`/`sdkMode` in presets). See `README.md §Multi-Endpoint Routing` and `docs/credential-proxy-extensions.md` for full details. Bedrock is not covered in this first-time setup flow.
+
+## 4d. Model Presets
+
+NanoClaw resolves model configuration from `~/.config/nanoclaw/model-presets.json`. This file MUST exist before group registration (Step 5) — the `--preset` flag on registration validates against it. Without it, registration fails.
+
+### Check for existing presets file
+
+```bash
+test -f ~/.config/nanoclaw/model-presets.json && echo "EXISTS" || echo "NOT_FOUND"
+```
+
+**If EXISTS:** Tell the user: "Your model-presets.json already exists." Show available presets via:
+```bash
+cat ~/.config/nanoclaw/model-presets.json | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8');const p=JSON.parse(d);console.log(Object.keys(p).join(', '))"
+```
+Ask: "Which preset should be used for your main group?" Record their choice for Step 5.
+
+**If NOT_FOUND:** Create a starter presets file based on the provider chosen in Step 4c.
+
+**Ollama:**
+```bash
+mkdir -p ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/model-presets.json << 'EOF'
+{
+  "default": {
+    "endpoint": "ollama",
+    "model": "kimi-k2.6:cloud",
+    "capabilities": { "vision": false, "tools": true },
+    "contextWindow": 262144,
+    "compactThreshold": 0.57,
+    "webSearchVendor": "ollama"
+  }
+}
+EOF
+```
+
+AskUserQuestion: "I've created a default preset using `kimi-k2.6:cloud` on Ollama. Would you like to change the model name? (Run `ollama list` to see available models.)" If they provide a different model, update the file.
+
+**Z.ai:**
+```bash
+mkdir -p ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/model-presets.json << 'EOF'
+{
+  "default": {
+    "endpoint": "zai",
+    "model": "glm-4.7-flash",
+    "capabilities": { "vision": false, "tools": true },
+    "contextWindow": 128000,
+    "webSearchVendor": "ollama"
+  }
+}
+EOF
+```
+
+AskUserQuestion: "I've created a default preset using `glm-4.7-flash` on Z.ai. Available models include: glm-5.1, glm-5, glm-4.7, glm-4.7-flash, glm-4.5-air. Would you like a different model?"
+
+**Anthropic (direct or OAuth):**
+```bash
+mkdir -p ~/.config/nanoclaw
+cat > ~/.config/nanoclaw/model-presets.json << 'EOF'
+{
+  "default": {
+    "endpoint": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "capabilities": { "vision": true, "tools": true },
+    "contextWindow": 200000
+  }
+}
+EOF
+```
+
+AskUserQuestion: "I've created a default preset using `claude-sonnet-4-20250514`. Would you like a different model? (e.g. claude-opus-4-20250514, claude-sonnet-4-5-20250514)"
+
+**Record the preset name** (e.g. `default`) — this is passed as `--preset` during group registration in Step 5.
+
+> Presets can be managed later via the REST API (`PUT /api/presets/:name`) or by editing the file directly. See `README.md §Per-Group Configuration — preset` for the full schema.
+
 ## 5. Set Up Channels
 
 AskUserQuestion (multiSelect): Which messaging channels do you want to enable?
