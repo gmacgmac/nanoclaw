@@ -91,7 +91,7 @@ function validateCapabilities(
   };
 }
 
-function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
+export function validatePresetEntry(key: string, value: unknown): ModelPreset | null {
   if (typeof value !== 'object' || value === null) {
     logger.warn({ preset: key }, 'Skipping invalid model preset entry');
     return null;
@@ -254,4 +254,208 @@ export function findPresetByModelEndpoint(
     }
   }
   return undefined;
+}
+
+// --- Health / Raw / Write API ---
+
+export interface PresetsHealth {
+  healthy: boolean;
+  count: number;
+  error?: string;
+  parseError?: string;
+}
+
+export function getPresetsHealth(): PresetsHealth {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { healthy: true, count: 0 };
+    }
+    throw err;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      healthy: false,
+      count: 0,
+      error: 'model-presets.json failed to parse',
+      parseError: message,
+    };
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return {
+      healthy: false,
+      count: 0,
+      error: 'model-presets.json is not an object',
+    };
+  }
+
+  let count = 0;
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (validatePresetEntry(key, value)) count++;
+  }
+  return { healthy: true, count };
+}
+
+export function readRawPresets(): { exists: boolean; content: string } {
+  try {
+    const content = fs.readFileSync(PRESETS_PATH, 'utf-8');
+    return { exists: true, content };
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { exists: false, content: '' };
+    }
+    throw err;
+  }
+}
+
+export function writePresets(presets: Record<string, ModelPreset>): void {
+  fs.mkdirSync(path.dirname(PRESETS_PATH), { recursive: true });
+  const tmpPath = `${PRESETS_PATH}.tmp`;
+  const serialized = JSON.stringify(presets, null, 2);
+  fs.writeFileSync(tmpPath, serialized, 'utf-8');
+  fs.renameSync(tmpPath, PRESETS_PATH);
+  logger.info(
+    { path: PRESETS_PATH, count: Object.keys(presets).length },
+    'model-presets.json written',
+  );
+}
+
+export interface WriteRawResult {
+  ok: boolean;
+  error?: string;
+  validCount?: number;
+  invalidKeys?: string[];
+}
+
+export function writeRawPresets(raw: string): WriteRawResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: 'Invalid JSON: ' + message };
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: 'Content must be a JSON object' };
+  }
+
+  const validPresets: Record<string, ModelPreset> = {};
+  const invalidKeys: string[] = [];
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const validated = validatePresetEntry(key, value);
+    if (validated) {
+      validPresets[key] = validated;
+    } else {
+      invalidKeys.push(key);
+    }
+  }
+
+  const originalHadEntries = Object.keys(parsed as Record<string, unknown>).length > 0;
+  if (Object.keys(validPresets).length === 0 && originalHadEntries) {
+    return {
+      ok: false,
+      error: 'No valid preset entries found',
+      invalidKeys,
+    };
+  }
+
+  writePresets(validPresets);
+  return {
+    ok: true,
+    validCount: Object.keys(validPresets).length,
+    invalidKeys,
+  };
+}
+
+export interface UpsertPresetResult {
+  ok: boolean;
+  error?: string;
+  code?: 'PRESETS_CORRUPT' | 'VALIDATION_ERROR';
+}
+
+export function upsertPreset(
+  name: string,
+  preset: ModelPreset,
+): UpsertPresetResult {
+  let currentPresets: Record<string, ModelPreset> = {};
+  try {
+    const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        code: 'PRESETS_CORRUPT',
+      };
+    }
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const validated = validatePresetEntry(key, value);
+      if (validated) currentPresets[key] = validated;
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return {
+        ok: false,
+        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        code: 'PRESETS_CORRUPT',
+      };
+    }
+  }
+
+  currentPresets[name] = preset;
+  writePresets(currentPresets);
+  return { ok: true };
+}
+
+export interface DeletePresetResult {
+  ok: boolean;
+  found: boolean;
+  error?: string;
+  code?: 'PRESETS_CORRUPT';
+}
+
+export function deletePreset(name: string): DeletePresetResult {
+  let currentPresets: Record<string, ModelPreset> = {};
+  try {
+    const raw = fs.readFileSync(PRESETS_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        found: false,
+        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        code: 'PRESETS_CORRUPT',
+      };
+    }
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const validated = validatePresetEntry(key, value);
+      if (validated) currentPresets[key] = validated;
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return {
+        ok: false,
+        found: false,
+        error: 'model-presets.json is corrupt — use PUT /api/presets/raw to repair',
+        code: 'PRESETS_CORRUPT',
+      };
+    }
+  }
+
+  if (!(name in currentPresets)) {
+    return { ok: true, found: false };
+  }
+
+  delete currentPresets[name];
+  writePresets(currentPresets);
+  return { ok: true, found: true };
 }
