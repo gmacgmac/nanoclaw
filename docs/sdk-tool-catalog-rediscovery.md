@@ -1,3 +1,9 @@
+---
+title: SDK Tool Catalog Rediscovery
+created: 2026-06-02
+last_updated: 2026-06-02
+---
+
 # SDK Tool Catalog Rediscovery
 
 > **Category**: `nanoclaw-container`, `nanoclaw-security`  

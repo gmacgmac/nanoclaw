@@ -1,3 +1,9 @@
+---
+title: Group Debug Checklist
+created: 2026-04-15
+last_updated: 2026-04-15
+---
+
 # Group Debug Checklist
 
 Troubleshooting guide for group-specific issues in NanoClaw.

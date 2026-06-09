@@ -1,3 +1,9 @@
+---
+title: NanoClaw Debug Checklist
+created: 2026-04-15
+last_updated: 2026-05-27
+---
+
 # NanoClaw Debug Checklist
 
 ## Known Issues (2026-02-08)

@@ -625,23 +625,10 @@ describe('handleHostCommand', () => {
 
   // --- /newsession tests ---
 
-  it('/newsession is gated — returns false when not in allowedHostCommands', async () => {
-    const result = await handleHostCommand(
-      makeMsg('/newsession'),
-      makeCtx({ allowedHostCommands: ['model'] }),
-      closeStdin,
-      onAfterExit,
-      clearSessionState,
-      updateGroup,
-    );
-    expect(result).toBe(false);
-    expect(replies).toEqual([]);
-  });
-
   it('/newsession sends Reply 1 immediately, defers clear + Reply 2 to onAfterExit', async () => {
     const result = await handleHostCommand(
       makeMsg('/newsession'),
-      makeCtx({ allowedHostCommands: ['newsession'] }),
+      makeCtx({}),
       closeStdin,
       onAfterExit,
       clearSessionState,
@@ -670,7 +657,7 @@ describe('handleHostCommand', () => {
 
     const result = await handleHostCommand(
       makeMsg('/newsession'),
-      makeCtx({ allowedHostCommands: ['newsession'] }),
+      makeCtx({}),
       noopCloseStdin,
       onAfterExit,
       clearSessionState,
@@ -688,7 +675,7 @@ describe('handleHostCommand', () => {
 
     const result = await handleHostCommand(
       makeMsg('/newsession'),
-      makeCtx({ allowedHostCommands: ['newsession'] }),
+      makeCtx({}),
       closeStdin,
       onAfterExit,
       clearSessionState,
@@ -702,7 +689,7 @@ describe('handleHostCommand', () => {
   it('/newsession is case-insensitive', async () => {
     const result = await handleHostCommand(
       makeMsg('/NewSession'),
-      makeCtx({ allowedHostCommands: ['newsession'] }),
+      makeCtx({}),
       closeStdin,
       onAfterExit,
       clearSessionState,

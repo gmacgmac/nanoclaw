@@ -1,3 +1,9 @@
+---
+title: Ollama Web Search Integration
+created: 2026-04-15
+last_updated: 2026-05-27
+---
+
 # Ollama Web Search Integration
 
 > Design doc for web search support on non-Anthropic endpoints.

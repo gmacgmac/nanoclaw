@@ -1,3 +1,9 @@
+---
+title: Running NanoClaw in Docker Sandboxes (Manual Setup)
+created: 2026-03-13
+last_updated: 2026-05-22
+---
+
 # Running NanoClaw in Docker Sandboxes (Manual Setup)
 
 This guide walks through setting up NanoClaw inside a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/) from scratch — no install script, no pre-built fork. You'll clone the upstream repo, apply the necessary patches, and have agents running in full hypervisor-level isolation.

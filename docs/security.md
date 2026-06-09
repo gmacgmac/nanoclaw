@@ -1,3 +1,9 @@
+---
+title: NanoClaw Security Model
+created: 2026-04-15
+last_updated: 2026-05-31
+---
+
 # NanoClaw Security Model
 
 ## Trust Model

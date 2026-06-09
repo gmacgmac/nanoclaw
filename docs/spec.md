@@ -1,3 +1,9 @@
+---
+title: NanoClaw Specification
+created: 2026-04-15
+last_updated: 2026-06-08
+---
+
 # NanoClaw Specification
 
 A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled tasks, and container-isolated agent execution.

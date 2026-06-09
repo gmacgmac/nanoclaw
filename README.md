@@ -587,7 +587,7 @@ Configure group behaviour via the `containerConfig` JSONB column in the `registe
   },
   "systemPrompt": "You are a financial analyst. Be concise and data-driven.",
   "timeout": 3600000,
-  "allowedHostCommands": ["model", "version", "newsession"],
+  "allowedHostCommands": ["model", "version"],
   "additionalMounts": [
     { "hostPath": "~/Documents/finance", "containerPath": "finance", "readonly": true }
   ]
@@ -874,18 +874,18 @@ Host commands are intercepted on the host process before reaching the agent cont
 - `/stop` — abort the in-flight model request, keep the session
 - `/shutdown` — stop the container, keep the session
 - `/context` — show current context window size and last input token usage
+- `/newsession` — stop the container, delete the session, start fresh
 
 **Gated** (require `allowedHostCommands` entry on the group's `containerConfig`):
 - `/model [<preset>]` — show or switch the active model preset
 - `/version [info|stable|next]` — show or switch the container channel
-- `/newsession` — stop the container, delete the session, start fresh
 
 ### Enabling Gated Commands
 
 Gated commands require the group's `containerConfig.allowedHostCommands` array to include the command name:
 
 ```bash
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{allowedHostCommands}', '[\"model\", \"version\", \"newsession\"]'::jsonb) WHERE folder = '<folder>'"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{allowedHostCommands}', '[\"model\", \"version\"]'::jsonb) WHERE folder = '<folder>'"
 ```
 
 Only senders on the sender allowlist can invoke any host command (gated or ungated).
@@ -1281,7 +1281,7 @@ NanoClaw's primary security boundary is container isolation — agents run in ep
 | `commandAllowlist` | `string[]` | `[]` | Regex patterns for commands that skip approval |
 | `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during memory nudge |
 | `telegramBot` | `string` | `undefined` | Named Telegram bot instance for this group's outbound replies |
-| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model', 'version', 'newsession']` enables gated commands |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Per-group host command allowlist. `['model', 'version']` enables gated commands |
 
 Example with all security flags:
 
@@ -1711,5 +1711,5 @@ When working on NanoClaw tasks:
 - Skills: `container/skills/capabilities/SKILL.md` and `container/skills/status/SKILL.md` list web search tools as `mcp__nanoclaw-web-search__*` — these are only available when the group has the MCP server configured via `containerConfig.mcpServers`
 - Security features: SSRF (`src/lib/ssrf-validator.ts`), injection scanning (`src/lib/context-scanner.ts` + `src/lib/injection-scanner.ts`), command approval (`src/lib/command-approval.ts`), config validation (`src/lib/config-validator.ts`) — all behind `containerConfig` flags
 - Learning loop: `container/agent-runner/src/lib/nudge-prompt.ts` (`buildNudgePrompt()`), `src/lib/skill-manager.ts` (`getExtractedSkills()`), `container/skills/learning-loop/SKILL.md` — enabled via `containerConfig.learningLoop`
-- Host commands: `repo/src/host-commands.ts` defines all handlers. Ungated (`/stop`, `/shutdown`) only check sender allowlist. Gated (`/model`, `/version`, `/newsession`) also check `containerConfig.allowedHostCommands`. Post-exit work uses `queue.onAfterExit(jid, cb)` so the work runs after the container actually exits, not before.
+- Host commands: `repo/src/host-commands.ts` defines all handlers. Ungated (`/stop`, `/shutdown`, `/newsession`) only check sender allowlist. Gated (`/model`, `/version`) also check `containerConfig.allowedHostCommands`. Post-exit work uses `queue.onAfterExit(jid, cb)` so the work runs after the container actually exits, not before.
 - Container channel routing: `:stable`/`:next` aliases over immutable versioned tags. `resolveImageTag(channel)` in `src/container-runtime.ts` resolves the tag at spawn time. Per-group via `registered_groups.container_channel`. Manage via `./container/scripts/container.sh`. See `container/VERSIONING.md`.

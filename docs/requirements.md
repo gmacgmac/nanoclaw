@@ -1,3 +1,9 @@
+---
+title: NanoClaw Requirements
+created: 2026-04-15
+last_updated: 2026-06-08
+---
+
 # NanoClaw Requirements
 
 Original requirements and design decisions from the project creator.

@@ -95,6 +95,22 @@ export async function handleHostCommand(
     return handleContextCommand(ctx);
   }
 
+  if (commandName === 'newsession') {
+    // Sender auth check
+    const allowlistCfg = loadSenderAllowlist();
+    if (!isSenderAllowed(ctx.jid, ctx.sender, allowlistCfg)) {
+      await ctx.reply('Not authorised.');
+      return true;
+    }
+
+    return handleNewSessionCommand(
+      ctx,
+      closeStdin,
+      onAfterExit,
+      clearSessionState,
+    );
+  }
+
   // --- Gated commands (require allowedHostCommands config) ---
 
   const allowed = ctx.group.containerConfig?.allowedHostCommands;
@@ -116,15 +132,6 @@ export async function handleHostCommand(
       closeStdin,
       onAfterExit,
       updateGroup,
-    );
-  }
-
-  if (commandName === 'newsession') {
-    return handleNewSessionCommand(
-      ctx,
-      closeStdin,
-      onAfterExit,
-      clearSessionState,
     );
   }
 

@@ -10,14 +10,9 @@ import { mountRoutes } from './routes/index.js';
  * the set of paths documented in the generated OpenAPI doc. A path that is
  * served but undocumented (or documented but unserved) is drift.
  *
- * IMPORTANT — expected intermediate failures:
- *   While Wave 2 (BE_03..BE_07) is in progress, paths may be registered TWICE
- *   (once in src/api/openapi.ts, once via defineRoute in the route files).
- *   This test will fail in that window. That's expected — BE_08 (Wave 3)
- *   removes the legacy registrations, at which point this test should pass.
- *
- *   The deliberate failure message is the regression-guard signal during
- *   the migration: it lists exactly which routes drift in either direction.
+ * Paths are registered exclusively via `defineRoute` in route files; the
+ * generated OpenAPI doc reads from the same registry, so served and
+ * documented sets must match by construction.
  */
 
 interface RouteEntry {

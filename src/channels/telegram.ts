@@ -615,16 +615,13 @@ export class TelegramChannel implements Channel {
       command: 'context',
       description: 'Show context window usage',
     });
+    commands.push({
+      command: 'newsession',
+      description: 'Start fresh session',
+    });
 
     const allowedHostCommands =
       group.containerConfig?.allowedHostCommands ?? [];
-
-    if (allowedHostCommands.includes('newsession')) {
-      commands.push({
-        command: 'newsession',
-        description: 'Start fresh session',
-      });
-    }
 
     if (allowedHostCommands.includes('model')) {
       commands.push({

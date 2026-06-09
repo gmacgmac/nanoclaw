@@ -1171,7 +1171,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('sets /shutdown and /stop but not /newsession when newsession is not in allowedHostCommands', async () => {
+    it('sets /shutdown, /stop, /newsession, and /model even when newsession is not in allowedHostCommands', async () => {
       const opts = createTestOpts();
       opts.registeredGroups = vi.fn(() => ({
         'tg:100200300': {
@@ -1198,13 +1198,17 @@ describe('TelegramChannel', () => {
           },
           { command: 'stop', description: 'Stop current container' },
           { command: 'context', description: 'Show context window usage' },
+          {
+            command: 'newsession',
+            description: 'Start fresh session',
+          },
           { command: 'model', description: 'Switch model preset' },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );
     });
 
-    it('sets only /chatid, /ping, /shutdown, and /stop when no host commands are allowed', async () => {
+    it('sets only /chatid, /ping, /shutdown, /stop, /context, and /newsession when no host commands are allowed', async () => {
       const opts = createTestOpts();
       opts.registeredGroups = vi.fn(() => ({
         'tg:100200300': {
@@ -1231,6 +1235,10 @@ describe('TelegramChannel', () => {
           },
           { command: 'stop', description: 'Stop current container' },
           { command: 'context', description: 'Show context window usage' },
+          {
+            command: 'newsession',
+            description: 'Start fresh session',
+          },
         ],
         { scope: { type: 'chat', chat_id: '100200300' } },
       );

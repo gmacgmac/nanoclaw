@@ -1,3 +1,9 @@
+---
+title: NanoClaw IPC Protocol
+created: 2026-04-15
+last_updated: 2026-06-08
+---
+
 # NanoClaw IPC Protocol
 
 Inter-process communication for triggering actions from external tools (dashboards, scripts, other agents).

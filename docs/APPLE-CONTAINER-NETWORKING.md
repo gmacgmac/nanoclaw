@@ -1,3 +1,9 @@
+---
+title: Apple Container Networking Setup (macOS 26)
+created: -
+last_updated: -
+---
+
 # Apple Container Networking Setup (macOS 26)
 
 Apple Container's vmnet networking requires manual configuration for containers to access the internet. Without this, containers can communicate with the host but cannot reach external services (DNS, HTTPS, APIs).

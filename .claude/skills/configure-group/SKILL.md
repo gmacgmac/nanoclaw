@@ -175,7 +175,6 @@ AskUserQuestion (multiSelect): "Which host commands should be enabled for this g
 Options:
 - model (enables `/model` to switch model presets)
 - version (enables `/version` to show/switch container channel)
-- newsession (enables `/newsession` to reset the session)
 - None (secure default)
 
 Store as `allowedHostCommands`. If "None" selected, set to `[]` or undefined.
@@ -183,7 +182,7 @@ Store as `allowedHostCommands`. If "None" selected, set to `[]` or undefined.
 Example:
 ```json
 {
-  "allowedHostCommands": ["model", "version", "newsession"]
+  "allowedHostCommands": ["model", "version"]
 }
 ```
 
@@ -306,7 +305,7 @@ After collecting changes, show a summary:
 ```
 Changes for '<folder>':
   ~ preset: "ollama_k2.6"
-  + allowedHostCommands: ["model", "version", "newsession"]
+  + allowedHostCommands: ["model", "version"]
   ~ allowedTools: ["Read", "Write", "Grep", "Bash"]
 ```
 
@@ -362,7 +361,7 @@ docker ps --filter "name=nanoclaw-<folder>" --format "{{.Names}}" | xargs -r doc
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
 | `telegramBot` | `string` | `undefined` | Named Telegram bot instance |
-| `allowedHostCommands` | `string[]` | `undefined` = none | Gated host command allowlist (`'model'`, `'version'`, `'newsession'`) |
+| `allowedHostCommands` | `string[]` | `undefined` = none | Gated host command allowlist (`'model'`, `'version'`) |
 | `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning |
 | `approvalMode` | `boolean` | `true` | Command approval gate |

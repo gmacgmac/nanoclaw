@@ -1,3 +1,9 @@
+---
+title: Delegation Setup
+created: 2026-04-15
+last_updated: 2026-05-29
+---
+
 # Delegation Setup
 
 Configuration guide for multi-agent routing and delegation in NanoClaw.

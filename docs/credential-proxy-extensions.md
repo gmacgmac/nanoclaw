@@ -1,3 +1,9 @@
+---
+title: Credential Proxy Extensions
+created: 2026-06-03
+last_updated: 2026-06-04
+---
+
 # Credential Proxy Extensions
 
 > A reference for extending NanoClaw's credential proxy: adding MCP services, proxy plugins, transform modules, and vendor endpoints (including Amazon Bedrock via Mantle).
