@@ -147,7 +147,10 @@ async function persistField(
   configKey: string,
   newValue: unknown,
 ): Promise<void> {
-  const nextConfig = { ...(group.containerConfig ?? {}), [configKey]: newValue };
+  const nextConfig = {
+    ...(group.containerConfig ?? {}),
+    [configKey]: newValue,
+  };
   const updated: RegisteredGroup = {
     ...group,
     containerConfig: nextConfig as RegisteredGroup['containerConfig'],
@@ -158,7 +161,10 @@ async function persistField(
 // --- Handlers ---
 
 function makeGetHandler(field: FieldDef) {
-  return async (req: import('express').Request, res: import('express').Response) => {
+  return async (
+    req: import('express').Request,
+    res: import('express').Response,
+  ) => {
     const jid = req.params.jid as string;
     const group = await loadGroup(jid, res);
     if (!group) return;
@@ -169,7 +175,10 @@ function makeGetHandler(field: FieldDef) {
 }
 
 function makePatchHandler(field: FieldDef) {
-  return async (req: import('express').Request, res: import('express').Response) => {
+  return async (
+    req: import('express').Request,
+    res: import('express').Response,
+  ) => {
     const jid = req.params.jid as string;
     const group = await loadGroup(jid, res);
     if (!group) return;
@@ -215,7 +224,10 @@ function makePatchHandler(field: FieldDef) {
 }
 
 function makePutHandler(field: FieldDef) {
-  return async (req: import('express').Request, res: import('express').Response) => {
+  return async (
+    req: import('express').Request,
+    res: import('express').Response,
+  ) => {
     const jid = req.params.jid as string;
     const group = await loadGroup(jid, res);
     if (!group) return;
@@ -257,7 +269,10 @@ for (const field of FIELD_DEFS) {
         : `Returns the current ${field.label} array for the group. \`undefined\` if unset.`,
     request: { params: z.object({ jid: JidSchema }) },
     responses: {
-      200: { description: `${field.label} value`, schema: FieldValueResponseSchema },
+      200: {
+        description: `${field.label} value`,
+        schema: FieldValueResponseSchema,
+      },
       404: { description: 'Group not found', schema: ApiErrorSchema },
     },
     handler: makeGetHandler(field),
@@ -266,7 +281,10 @@ for (const field of FIELD_DEFS) {
   defineRoute(router, {
     method: 'patch',
     path: pathBase,
-    summary: field.kind === 'map' ? `Add/remove ${field.label}` : `Add/remove ${field.label}`,
+    summary:
+      field.kind === 'map'
+        ? `Add/remove ${field.label}`
+        : `Add/remove ${field.label}`,
     description:
       field.kind === 'map'
         ? `Add entries (merged by key, overwriting existing) and/or remove keys from ${field.label}. Idempotent.`
@@ -277,7 +295,10 @@ for (const field of FIELD_DEFS) {
         field.kind === 'map' ? McpServersPatchSchema : StringArrayPatchSchema,
     },
     responses: {
-      200: { description: `Updated ${field.label}`, schema: FieldValueResponseSchema },
+      200: {
+        description: `Updated ${field.label}`,
+        schema: FieldValueResponseSchema,
+      },
       400: { description: 'Validation error', schema: ApiErrorSchema },
       404: { description: 'Group not found', schema: ApiErrorSchema },
     },
@@ -297,7 +318,10 @@ for (const field of FIELD_DEFS) {
       body: field.kind === 'map' ? McpServersPutSchema : StringArrayPutSchema,
     },
     responses: {
-      200: { description: `Replaced ${field.label}`, schema: FieldValueResponseSchema },
+      200: {
+        description: `Replaced ${field.label}`,
+        schema: FieldValueResponseSchema,
+      },
       400: { description: 'Validation error', schema: ApiErrorSchema },
       404: { description: 'Group not found', schema: ApiErrorSchema },
     },

@@ -145,8 +145,10 @@ describe('OpenAPI drift: served Express routes === documented OpenAPI paths', ()
     const servedFiltered = served.filter((r) => !isMeta(r));
     const documentedFiltered = documented.filter((r) => !isMeta(r));
 
-    const { onlyA: servedButUndocumented, onlyB: documentedButUnserved } =
-      diff(servedFiltered, documentedFiltered);
+    const { onlyA: servedButUndocumented, onlyB: documentedButUnserved } = diff(
+      servedFiltered,
+      documentedFiltered,
+    );
 
     const messages: string[] = [];
     if (servedButUndocumented.length > 0) {

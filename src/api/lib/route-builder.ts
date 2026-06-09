@@ -34,13 +34,20 @@ export function defineRoute(router: Router, def: RouteDef): void {
       ...(def.request?.params ? { params: def.request.params } : {}),
       ...(def.request?.query ? { query: def.request.query } : {}),
       ...(def.request?.body
-        ? { body: { content: { 'application/json': { schema: def.request.body } } } }
+        ? {
+            body: {
+              content: { 'application/json': { schema: def.request.body } },
+            },
+          }
         : {}),
     },
     responses: Object.fromEntries(
       Object.entries(def.responses).map(([code, r]) => [
         code,
-        { description: r.description, content: { 'application/json': { schema: r.schema } } },
+        {
+          description: r.description,
+          content: { 'application/json': { schema: r.schema } },
+        },
       ]),
     ),
   });
@@ -51,5 +58,8 @@ export function defineRoute(router: Router, def: RouteDef): void {
   handlers.push(def.handler);
   router[def.method](expressPath, ...handlers);
 
-  registeredRoutes.push({ method: def.method.toUpperCase(), path: expressPath });
+  registeredRoutes.push({
+    method: def.method.toUpperCase(),
+    path: expressPath,
+  });
 }
