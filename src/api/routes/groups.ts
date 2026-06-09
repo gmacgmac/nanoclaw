@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 
 import { DEFAULT_TRIGGER } from '../../config.js';
 import {
@@ -9,47 +10,121 @@ import {
   updateRegisteredGroup,
 } from '../../group-registry.js';
 import { getAvailablePresetNames, resolvePreset } from '../../presets.js';
-import { validateBody } from '../middleware/validate.js';
+import { defineRoute } from '../lib/route-builder.js';
 import {
   CreateGroupSchema,
+  JidSchema,
   PatchConfigSchema,
   SwitchPresetSchema,
   UpdateGroupSchema,
+  GroupResponseSchema,
+  GroupListResponseSchema,
+  ApiErrorSchema,
+  ContainerConfigSchema,
 } from '../schemas/index.js';
 import type { RegisteredGroup } from '../../types.js';
 
 const router = Router();
 
-router.get('/api/groups', (_req, res) => {
-  const groups = getRegisteredGroups();
-  const data = Object.entries(groups).map(([jid, g]) => ({ jid, ...g }));
-  res.json({ data });
+const GroupConfigResponseSchema = z.object({ data: ContainerConfigSchema });
+const GroupDeleteResponseSchema = z.object({ ok: z.boolean() });
+
+defineRoute(router, {
+  method: 'get',
+  path: '/api/groups',
+  summary: 'List all registered groups',
+  description:
+    'Returns all registered groups with their full configuration. Reads from in-memory cache (always in sync with DB).',
+  responses: {
+    200: {
+      description: 'Group list',
+      schema: GroupListResponseSchema,
+    },
+  },
+  handler: (_req, res) => {
+    const groups = getRegisteredGroups();
+    const data = Object.entries(groups).map(([jid, g]) => ({ jid, ...g }));
+    res.json({ data });
+  },
 });
 
-router.get('/api/groups/:jid', (req, res) => {
-  const jid = req.params.jid as string;
-  const group = getRegisteredGroup(jid);
-  if (!group) {
-    res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
-    return;
-  }
-  res.json({ data: { jid, ...group } });
+defineRoute(router, {
+  method: 'get',
+  path: '/api/groups/{jid}',
+  summary: 'Get a single group',
+  description: 'Returns one group by JID with full containerConfig.',
+  request: { params: z.object({ jid: JidSchema }) },
+  responses: {
+    200: {
+      description: 'Group details',
+      schema: GroupResponseSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: (req, res) => {
+    const jid = req.params.jid as string;
+    const group = getRegisteredGroup(jid);
+    if (!group) {
+      res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
+      return;
+    }
+    res.json({ data: { jid, ...group } });
+  },
 });
 
-router.get('/api/groups/:jid/config', (req, res) => {
-  const jid = req.params.jid as string;
-  const group = getRegisteredGroup(jid);
-  if (!group) {
-    res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
-    return;
-  }
-  res.json({ data: group.containerConfig ?? {} });
+defineRoute(router, {
+  method: 'get',
+  path: '/api/groups/{jid}/config',
+  summary: 'Get group containerConfig',
+  description:
+    'Returns only the containerConfig object for a group. Returns {} if no config is set.',
+  request: { params: z.object({ jid: JidSchema }) },
+  responses: {
+    200: {
+      description: 'Container config',
+      schema: GroupConfigResponseSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: (req, res) => {
+    const jid = req.params.jid as string;
+    const group = getRegisteredGroup(jid);
+    if (!group) {
+      res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
+      return;
+    }
+    res.json({ data: group.containerConfig ?? {} });
+  },
 });
 
-router.post(
-  '/api/groups',
-  validateBody(CreateGroupSchema),
-  async (req, res) => {
+defineRoute(router, {
+  method: 'post',
+  path: '/api/groups',
+  summary: 'Register a new group',
+  description:
+    'Creates a new group. Creates the group folder on disk, seeds CLAUDE.md and memory files from templates.',
+  request: { body: CreateGroupSchema },
+  responses: {
+    201: {
+      description: 'Group created',
+      schema: GroupResponseSchema,
+    },
+    400: {
+      description: 'Validation error',
+      schema: ApiErrorSchema,
+    },
+    409: {
+      description: 'Group already exists (JID or folder conflict)',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: async (req, res) => {
     const {
       jid,
       name,
@@ -80,12 +155,29 @@ router.post(
     await registerGroup(jid, group);
     res.status(201).json({ data: { jid, ...group } });
   },
-);
+});
 
-router.patch(
-  '/api/groups/:jid',
-  validateBody(UpdateGroupSchema),
-  async (req, res) => {
+defineRoute(router, {
+  method: 'patch',
+  path: '/api/groups/{jid}',
+  summary: 'Update group top-level fields',
+  description:
+    'Updates name, trigger, requiresTrigger, multiAgentRouter, or containerChannel. Does NOT touch containerConfig.',
+  request: {
+    params: z.object({ jid: JidSchema }),
+    body: UpdateGroupSchema,
+  },
+  responses: {
+    200: {
+      description: 'Updated group',
+      schema: GroupResponseSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: async (req, res) => {
     const jid = req.params.jid as string;
     const current = getRegisteredGroup(jid);
     if (!current) {
@@ -106,12 +198,36 @@ router.patch(
     await updateRegisteredGroup(jid, updated);
     res.json({ data: { jid, ...updated } });
   },
-);
+});
 
-router.patch(
-  '/api/groups/:jid/config',
-  validateBody(PatchConfigSchema),
-  async (req, res) => {
+defineRoute(router, {
+  method: 'patch',
+  path: '/api/groups/{jid}/config',
+  summary: 'Merge-patch containerConfig',
+  description:
+    'Partially updates containerConfig using shallow merge at the top level. ' +
+    'Only provided fields change — omitted fields are untouched. Set a field to null to remove it.\n\n' +
+    '**Merge behavior:**\n' +
+    '- Scalar/array fields (preset, skills, timeout, deniedTools, etc.): safe to send individually. ' +
+    'Sending `{"preset": "claude-opus"}` changes only the preset; everything else is preserved.\n' +
+    '- Object/array-of-object fields (mcpServers, additionalMounts): REPLACED WHOLESALE when included. ' +
+    'If you send `{"mcpServers": {"brave": {...}}}` and the group has 3 existing servers, you end up with 1.\n\n' +
+    '**To safely update mcpServers or additionalMounts:** GET /api/groups/{jid}/config first, merge your changes into the existing object/array locally, then PATCH with the complete value.',
+  request: {
+    params: z.object({ jid: JidSchema }),
+    body: PatchConfigSchema,
+  },
+  responses: {
+    200: {
+      description: 'Updated group',
+      schema: GroupResponseSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: async (req, res) => {
     const jid = req.params.jid as string;
     const current = getRegisteredGroup(jid);
     if (!current) {
@@ -137,12 +253,33 @@ router.patch(
     await updateRegisteredGroup(jid, updated);
     res.json({ data: { jid, ...updated } });
   },
-);
+});
 
-router.patch(
-  '/api/groups/:jid/preset',
-  validateBody(SwitchPresetSchema),
-  async (req, res) => {
+defineRoute(router, {
+  method: 'patch',
+  path: '/api/groups/{jid}/preset',
+  summary: 'Switch model preset',
+  description:
+    'Changes the group primary model preset. Must match a key in model-presets.json. Running container is not affected until next spawn.',
+  request: {
+    params: z.object({ jid: JidSchema }),
+    body: SwitchPresetSchema,
+  },
+  responses: {
+    200: {
+      description: 'Updated group',
+      schema: GroupResponseSchema,
+    },
+    400: {
+      description: 'Unknown preset',
+      schema: ApiErrorSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: async (req, res) => {
     const jid = req.params.jid as string;
     const current = getRegisteredGroup(jid);
     if (!current) {
@@ -170,15 +307,33 @@ router.patch(
     await updateRegisteredGroup(jid, updated);
     res.json({ data: { jid, ...updated } });
   },
-);
+});
 
-router.delete('/api/groups/:jid', async (req, res) => {
-  const deleted = await deleteGroup(req.params.jid as string);
-  if (!deleted) {
-    res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
-    return;
-  }
-  res.json({ ok: true });
+defineRoute(router, {
+  method: 'delete',
+  path: '/api/groups/{jid}',
+  summary: 'Unregister a group',
+  description:
+    'Removes the group from registry and DB. Does NOT delete the group folder on disk (data preservation).',
+  request: { params: z.object({ jid: JidSchema }) },
+  responses: {
+    200: {
+      description: 'Group removed',
+      schema: GroupDeleteResponseSchema,
+    },
+    404: {
+      description: 'Group not found',
+      schema: ApiErrorSchema,
+    },
+  },
+  handler: async (req, res) => {
+    const deleted = await deleteGroup(req.params.jid as string);
+    if (!deleted) {
+      res.status(404).json({ error: 'Group not found', code: 'NOT_FOUND' });
+      return;
+    }
+    res.json({ ok: true });
+  },
 });
 
 export default router;
