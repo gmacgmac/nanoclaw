@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 
-import { deleteSession, getAllSessions } from '../../db.js';
+import { deleteSession, getAllSessions, getSession } from '../../db.js';
 import { defineRoute } from '../lib/route-builder.js';
 
 const router = Router();
@@ -40,6 +40,34 @@ defineRoute(router, {
   handler: async (req, res) => {
     await deleteSession(req.params.folder as string);
     res.json({ ok: true });
+  },
+});
+
+defineRoute(router, {
+  method: 'get',
+  path: '/api/sessions/{folder}',
+  summary: 'Get session for a group folder',
+  description:
+    'Returns the active session ID for a specific group folder. 404 if no session exists.',
+  request: { params: z.object({ folder: z.string() }) },
+  responses: {
+    200: {
+      description: 'Session found',
+      schema: z.object({ data: z.object({ folder: z.string(), sessionId: z.string() }) }),
+    },
+    404: {
+      description: 'No session for this folder',
+      schema: z.object({ error: z.string() }),
+    },
+  },
+  handler: async (req, res) => {
+    const folder = req.params.folder as string;
+    const sessionId = await getSession(folder);
+    if (!sessionId) {
+      res.status(404).json({ error: `No session for folder '${folder}'` });
+      return;
+    }
+    res.json({ data: { folder, sessionId } });
   },
 });
 

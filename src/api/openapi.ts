@@ -31,6 +31,11 @@ registry.register('ModelCapabilities', ModelCapabilitiesSchema);
 registry.register('ModelPresetInput', ModelPresetInputSchema);
 registry.register('WriteRawPresets', WriteRawPresetsSchema);
 
+registry.registerComponent('securitySchemes', 'bearerAuth', {
+  type: 'http',
+  scheme: 'bearer',
+});
+
 /**
  * Generate the complete OpenAPI 3.1 document from registered schemas and paths.
  * Called on each request to /api/openapi.json (stateless, no caching needed at this scale).
@@ -46,5 +51,6 @@ export function generateOpenApiDocument() {
         'REST API for managing NanoClaw groups, sessions, presets, and containers. All write operations update both the in-memory cache and PostgreSQL atomically — no restart required after changes.',
     },
     servers: [{ url: 'http://localhost:3100' }],
+    security: [{ bearerAuth: [] }],
   });
 }

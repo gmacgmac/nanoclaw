@@ -287,6 +287,26 @@ export async function getAllChats(): Promise<ChatInfo[]> {
 }
 
 /**
+ * Look up a single chat by its JID. Returns undefined if not found.
+ */
+export async function getChatByJid(jid: string): Promise<ChatInfo | undefined> {
+  const rows = await sql`
+    SELECT jid, name, last_message_time, channel, is_group
+    FROM chats
+    WHERE jid = ${jid}
+  `;
+  if (rows.length === 0) return undefined;
+  const r = rows[0];
+  return {
+    jid: r.jid,
+    name: r.name,
+    last_message_time: toIso(r.last_message_time) || '',
+    channel: r.channel,
+    is_group: r.is_group,
+  };
+}
+
+/**
  * Get timestamp of last group metadata sync.
  */
 export async function getLastGroupSync(): Promise<string | null> {
@@ -448,6 +468,15 @@ export async function getLastBotMessageTimestamp(
   `;
   if (rows.length === 0 || rows[0].ts === null) return undefined;
   return toIso(rows[0].ts) ?? undefined;
+}
+
+/**
+ * Delete all messages for a chat. Returns the number of rows deleted.
+ * Destructive — caller should require explicit confirmation before invoking.
+ */
+export async function deleteMessagesForChat(chatJid: string): Promise<number> {
+  const result = await sql`DELETE FROM messages WHERE chat_jid = ${chatJid}`;
+  return result.count;
 }
 
 // --- Task operations ---
