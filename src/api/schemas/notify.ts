@@ -18,7 +18,9 @@ export const NotifyRequestSchema = z.object({
 
 export const NotifyResponseSchema = z.object({
   ok: z.boolean(),
-  delivered: z.array(z.string()).describe('JIDs where message was sent successfully.'),
+  delivered: z
+    .array(z.string())
+    .describe('JIDs where message was sent successfully.'),
   failed: z
     .array(
       z.object({

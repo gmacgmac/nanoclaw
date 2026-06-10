@@ -1,9 +1,6 @@
 import { Router } from 'express';
 
-import {
-  getChannelList,
-  getRegisteredGroups,
-} from '../../group-registry.js';
+import { getChannelList, getRegisteredGroups } from '../../group-registry.js';
 import { logger } from '../../logger.js';
 import { findChannel } from '../../router.js';
 import {
