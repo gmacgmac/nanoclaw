@@ -371,8 +371,7 @@ nanoclaw/
 │       ├── add-gmail/                  # /add-gmail - Gmail integration
 │       ├── add-internal-group/         # /add-internal-group - Internal groups
 │       ├── add-image-vision/           # /add-image-vision - Image vision
-│       ├── add-voice-transcription/    # /add-voice-transcription - Whisper
-│       ├── add-transcription/          # /add-transcription - Transcription
+│       ├── add-whisper-transcription/  # /add-whisper-transcription - Transcription
 │       ├── add-reactions/              # /add-reactions - Message reactions
 │       ├── add-parallel/               # /add-parallel - Parallel agents
 │       ├── add-compact/                # /add-compact - Compaction

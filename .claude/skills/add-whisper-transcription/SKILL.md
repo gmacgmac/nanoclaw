@@ -1,5 +1,5 @@
 ---
-name: add-transcription
+name: add-whisper-transcription
 description: Add local audio transcription to NanoClaw using whisper.cpp. Agents transcribe audio files on demand via the `transcribe_audio` MCP tool. Runs entirely on-device — no API keys, no cloud, no cost.
 ---
 
