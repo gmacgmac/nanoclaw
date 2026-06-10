@@ -6,9 +6,9 @@
 ---
 category: agentic-tools
 scope: nanoclaw
-last_updated: 2026-05-26
+last_updated: 2026-06-10
 status: active
-keywords: nanoclaw, agent, telegram, dashboard, claude-agent-sdk, sessions, memory, isolation, containerConfig, credential-proxy, multi-endpoint, context-management, nudge, memory-nudge, delegation, web-search, presets, vision, image-vision, channels, versioning, canary, host-commands, scheduled-tasks
+keywords: nanoclaw, agent, telegram, dashboard, claude-agent-sdk, sessions, memory, isolation, containerConfig, credential-proxy, multi-endpoint, context-management, nudge, memory-nudge, delegation, web-search, presets, vision, image-vision, channels, versioning, canary, host-commands, scheduled-tasks, management-api, openapi, rest-api, transcription, glm-ocr, whisper
 ---
 
 # NanoClaw
@@ -34,6 +34,141 @@ Response → Channel Out (Telegram API / Dashboard DB poll)
 ```
 
 Each group gets an isolated Docker container with its own filesystem, session state, IPC namespace, and skills. Containers are ephemeral but sessions persist — the agent resumes full conversational context across container restarts.
+
+---
+
+## Management API
+
+NanoClaw is **fully configurable via its REST API**. Every writable surface an operator or AI agent needs — groups, `containerConfig`, sessions, scheduled tasks, presets, containers — is exposed at `http://localhost:3100/api/`. All writes apply hot; the next container spawn picks up the new config. No host restart required.
+
+> **Source of truth — in priority order:**
+> 1. **`GET /api/openapi.json`** — the live OpenAPI 3.1 spec, served by the host. **Drift-tested** against served routes by `src/api/openapi-drift.test.ts` — a route that ships must be documented, and a route that is documented must ship. New routes are added via `defineRoute` (`src/api/lib/route-builder.ts`), which writes the Express handler and the OpenAPI path from a single declaration.
+> 2. **[`docs/api.md`](docs/api.md)** — the human reference. Cookbook, JID formats, error codes, the `PATCH /config` shallow-merge safety rule, and the full discovery-endpoint reference.
+> 3. **This README** — feature inventory and headlines only. The catalogue is intentionally abbreviated here to keep this document in sync with the spec; exhaustive tables live in `docs/api.md`.
+
+### What's Exposed
+
+| Resource | Operations | Reference |
+|----------|-----------|-----------|
+| Groups | list / get / create / patch / delete; get & patch `containerConfig`; switch preset; **18 field-level endpoints** for `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `command-allowlist` (GET / PATCH with `add`/`remove` / PUT) | `docs/api.md` §3 Groups |
+| Chats | list / upsert / get / messages (`?since`, `?limit` ≤ 200) / delete messages (`?confirm=true`) | `docs/api.md` §3 Chats |
+| Sessions | list / get one / clear | `docs/api.md` §3 Sessions |
+| Scheduled tasks | list (`?groupFolder`, `?status`) / get / create / patch / delete (cascades to run logs) | `docs/api.md` §3 Scheduled Tasks |
+| Presets | list / health / raw tree / single CRUD | `docs/api.md` §3 Presets |
+| Containers & admin | list containers / stop / `POST /admin/reload-groups` / `GET /health` | `docs/api.md` §3 Containers & Admin |
+| Operator notifications | `POST /api/notify` — one-way host→group outbound (no `messages` row, no container spawn) | [§Operator Notifications](#operator-notifications--post-apinotify) |
+| Discovery | `GET /api/mcp/servers` (catalog), `GET /api/groups/{jid}/mcp-tools` (per-group effective toolset), `GET /api/host-commands` (gated vs ungated) | `docs/api.md` §5 |
+
+### Authentication
+
+`API_TOKEN` env var in `.env` (or `~/.config/nanoclaw/secrets.env`):
+
+- **Set** → all requests require `Authorization: Bearer <token>`. Missing → `401`. Wrong → `403`.
+- **Unset** (dev default) → all requests allowed, no header required.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups
+```
+
+The OpenAPI spec declares `bearerAuth` as the top-level default — every path inherits it.
+
+### Quickstart
+
+```bash
+# Discover what's available
+curl http://localhost:3100/api/openapi.json | jq '.paths | keys'
+
+# List groups
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups
+
+# Add a skill to a group (idempotent, validated)
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add": ["telegram-formatting"]}' \
+  http://localhost:3100/api/groups/tg:12345/skills
+
+# Switch a group's preset (hot — no restart)
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"preset":"OK2.6"}' \
+  http://localhost:3100/api/groups/tg:12345/preset
+```
+
+### Operator Notifications — `POST /api/notify`
+
+One-way outbound channel for the host to reach operators via their existing group chats — no `messages` row, no container spawn, no agent run.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"targets": ["tg:123456789"], "message": "⚠️ Host alert: web search MCP returned 5xx 12x in 10 min."}' \
+  http://localhost:3100/api/notify
+```
+
+**Body:** `targets: string[]` (JIDs, or `["*"]` to broadcast) · `message: string` (1–4096 chars; Markdown on Telegram, plain text on dashboard).
+
+**Response** (always 200, delivery is best-effort — per-target failures reported, not thrown):
+```json
+{ "ok": false, "delivered": ["tg:123456789"], "failed": [{ "jid": "tg:9999:ops", "reason": "Channel disconnected" }] }
+```
+
+**Use cases** (all driven from a host-side cron or external monitor — not yet wired in the host itself): host health alerts, model/endpoint failures, web search upstream errors, security events (injection findings, SSRF blocks, approval timeouts), scheduled-task anomalies, backup verification.
+
+**Not:** does not inject into a session, wake an agent, or write to `messages` / `dashboard_chat_log`. Recipient sees a fresh bot message with no conversational follow-up — for interactive reply, use a normal user message or delegation.
+
+> Symmetric with the inbound `messages` queue: `messages` = inbound user queue, `POST /api/notify` = outbound host queue.
+
+### ⚠️ Field-Endpoint Safety Rule
+
+`PATCH /api/groups/{jid}/config` is a **shallow merge**. Top-level scalars (`model`, `timeout`, `env`) merge cleanly, but **arrays and objects are replaced wholesale** — sending `{"skills": ["new-skill"]}` wipes the existing array.
+
+**Wrong** (clobbers existing skills):
+
+```bash
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"skills": ["new-skill"]}' \
+  http://localhost:3100/api/groups/tg:12345/config
+```
+
+**Right** — use the dedicated field endpoint, which is idempotent and validated:
+
+```bash
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add": ["new-skill"]}' \
+  http://localhost:3100/api/groups/tg:12345/skills
+```
+
+The 18 field endpoints (`skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `command-allowlist` × GET / PATCH with `{add, remove}` / PUT with `{value}`) are the safe path. `PUT` replaces the field wholesale if you need a clean slate; for object fields (`mcp-servers`), `GET` first, merge locally, then `PUT`. Full deep-dive: `docs/api.md` §4.
+
+### Discovery — Validate Before You Write
+
+Three read-only endpoints expose catalogs that the host can offer to operators and skills. Use them to validate a `containerConfig` write *before* it lands:
+
+- **`GET /api/mcp/servers`** — static catalog (built at API startup from `container/mcp-servers/`). Includes the always-on `nanoclaw` IPC server. 503 if the startup scan failed.
+- **`GET /api/groups/{jid}/mcp-tools`** — `ceiling` (built-in tools from `tool-allowlist.json`), `mcpAvailable` (full catalog), `denied` (intersection of `containerConfig.deniedTools` with the union of known tools). Entries not matching a known tool are silently dropped — typos in `deniedTools` show up as missing entries here, not as 4xx.
+- **`GET /api/host-commands`** — canonical list split into `gated` (require `allowedHostCommands` opt-in; today: `model`, `version`) and `ungated` (always available; today: `shutdown`, `stop`, `context`, `newsession`).
+
+Full reference: `docs/api.md` §5.
+
+### When to Use psql Instead
+
+Most workflows go through the API. Drop to direct DB access only for:
+
+- **Test DB create/drop** — operator setup/teardown of the test database
+- **Backup / restore pipelines** — `pg_dump` / `pg_restore` for disaster recovery
+- **Diagnostic queries during incidents** — message counts, schema inspection, joined reports the API does not yet expose
+
+Everything else (group config, sessions, chats, tasks, presets) goes through the API. Direct DB writes bypass validation, the in-memory cache, and the OpenAPI spec — they will silently drift.
+
+### Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `400` | Validation failed, invalid preset name, missing `?confirm=true` on destructive ops, or missing/invalid body shape |
+| `401` | No `Authorization` header (when `API_TOKEN` is set) |
+| `403` | Bearer token present but does not match `API_TOKEN` |
+| `404` | Resource not found (unknown JID, folder, task ID) |
+| `409` | Duplicate (e.g. task ID already exists) |
+| `500` | DB or internal error — check host logs |
+
+Error bodies are `{ "error": "<message>" }`. Per-path response shapes for `4xx` codes are documented in the OpenAPI spec.
 
 ---
 
@@ -196,7 +331,16 @@ NanoClaw runs agents in isolated Docker containers. Each group (personal, resear
 
 ---
 
-## Configuring NanoClaw (via Claude Code)
+## Configuring NanoClaw
+
+Two complementary surfaces — pick the one that matches the task:
+
+| Surface | Best for | Live? |
+|---------|----------|-------|
+| **Management API** (`http://localhost:3100/api/`) | Group registration, `containerConfig` patches, preset switches, session management, scheduled task CRUD, preset CRUD. Hot — no restart. | Yes |
+| **Claude Code** pointed at the repo | Reading docs, ad-hoc inspection, running setup skills, debugging with `/debug`, getting status with `/status`, registering channels with `/add-telegram`, `/add-slack`, etc. | No (read-only on config) |
+
+> Most configuration should flow through the API. Claude Code is the **lens** for reading, debugging, and one-shot setup actions — not the primary write path. See [Management API](#management-api) for the full surface.
 
 Open Claude Code pointed at the NanoClaw repo:
 
@@ -204,9 +348,7 @@ Open Claude Code pointed at the NanoClaw repo:
 cd $NANOCLAW_ROOT && claude
 ```
 
-Then describe changes in plain English or use slash commands (`/add-telegram`, `/debug`, `/status`).
-
-Claude Code is the wrench. NanoClaw is the engine.
+Describe changes in plain English, or use slash commands (`/add-telegram`, `/debug`, `/status`). Claude Code is the wrench. The API is the engine.
 
 ---
 
@@ -392,6 +534,8 @@ curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: applicatio
   http://localhost:3100/api/groups/myhub@internal
 ```
 
+See [Management API](#management-api) for the full group PATCH surface.
+
 ---
 
 ## Data Storage
@@ -412,9 +556,11 @@ The database serves the application layer — message routing, group registratio
 | `router_state` | Internal state (timestamps, cursors) |
 | `error_log` | Structured error logging |
 
+> **Read & write via the API.** `GET /api/groups` is the canonical list; `GET /api/chats/{jid}/messages` is the canonical message read. The psql shell is for diagnostics, schema inspection, and one-time backup/restore only — see [Management API — When to Use psql](#when-to-use-psql-instead) for the rule of thumb.
+>
 > **psql shell**: `docker compose exec postgres psql -U nanoclaw nanoclaw`
 >
-> For programmatic access, see [docs/api.md](docs/api.md).
+> Full reference: [docs/api.md](docs/api.md).
 
 ### The `messages` Table: Input Queue, Not Conversation Store
 
@@ -554,6 +700,38 @@ If upgrading from a pre-PostgreSQL installation:
 4. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 
 The `store/messages.db` SQLite file is retained as a legacy artifact but is no longer read by the application.
+
+---
+
+## Optional MCP Setup
+
+NanoClaw ships with several MCP servers under `container/mcp-servers/`. They appear in `GET /api/mcp/servers` once the API starts — so they are **available** to agents — but they are not necessarily **functional** until the ancillary steps below are completed. An MCP listed in the catalog but missing its dependency will silently no-op (or return errors at the tool call).
+
+This is the same partial-feature pattern as the `ANTHROPIC_API_KEY=placeholder` requirement for non-Anthropic endpoints: the surface is wired, the dependency is yours.
+
+| MCP | What it does | What you must do first | Setup steps |
+|-----|--------------|------------------------|-------------|
+| `transcription` (Whisper) | Audio transcription via local Whisper | Download a Whisper model to the path the MCP expects | `repo/.claude/skills/add-whisper-transcription/SKILL.md` |
+| `glm-ocr` (Ollama) | Local OCR via a GLM vision model on Ollama | Pull the GLM OCR model (`ollama pull …`) and confirm `ollama serve` is up; the MCP proxies requests through the credential proxy the same way LLM endpoints do | `repo/.claude/skills/glm-ocr/SKILL.md` |
+| `brave-search` | Web search via Brave Search API | Provide `BRAVE_SEARCH_API_KEY` in `~/.config/nanoclaw/secrets.env` | Inline in [MCP Servers — `mcpServers`](#mcpservers--per-group-mcp-servers) below |
+| `nanoclaw-web-search` | Web search via your chosen vendor (default: Ollama) | Provide `{VENDOR}_WEB_SEARCH_BASE_URL` / `{VENDOR}_WEB_SEARCH_API_KEY` in `secrets.env`; set `webSearchVendor` on the preset; add the MCP to `containerConfig.mcpServers` | [Web Search Proxy](#web-search-proxy) below |
+
+**How to verify an MCP is functional:**
+
+```bash
+# 1. Confirm it's in the catalog
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/mcp/servers | jq '.data.servers[].name'
+
+# 2. Confirm it's available to a specific group's toolset
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups/tg:12345/mcp-tools | jq '.data.mcpAvailable[].name'
+
+# 3. Add it to a group's containerConfig if not already present
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add": ["mcp-name"]}' \
+  http://localhost:3100/api/groups/tg:12345/mcp-servers
+```
+
+If the catalog 503s, the startup FS scan over `container/mcp-servers/` failed — check the host log. The catalog is read from disk on every request, but the underlying `mcp-catalog.json` is only refreshed at API startup; restart the API to pick up newly added `server.tool(` calls.
 
 ---
 
@@ -894,7 +1072,7 @@ curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: applicatio
   http://localhost:3100/api/groups/tg:12345/allowed-host-commands
 ```
 
-Only senders on the sender allowlist can invoke any host command (gated or ungated).
+Only senders on the sender allowlist can invoke any host command (gated or ungated). See [Management API](#management-api) for the full surface and the field-endpoint safety rules in [docs/api.md §4](docs/api.md).
 
 ### `/stop` — Abort In-Flight Request
 
@@ -1524,7 +1702,7 @@ The project hash `-workspace-group` is derived from the container WORKDIR (`/wor
 
 ## Group Creation Checklist
 
-The `register_group` MCP tool (admin group only) and the `/add-internal-group` skill register a group in PostgreSQL and create the group folder. However, it does NOT automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
+The `register_group` MCP tool (admin group only), the `/add-internal-group` skill, and `POST /api/groups` (see [Management API](#management-api)) all register a group in PostgreSQL and create the group folder. However, none of them automatically create the `CLAUDE.md` file, the `memory/` directory, or the memory seed files. These must be created manually or the agent will start without instructions and the `@import` directives will fail silently.
 
 > **Group removal** is CLI-operator-only via `setup/unregister.ts` (`npm run unregister`). There is no MCP/IPC removal verb. Removal transactionally handles active tasks (delete or relocate to another group) and keeps on-disk directories intact (soft removal).
 
@@ -1652,6 +1830,9 @@ To start fresh without recreating the group:
 # 1. Delete session row (API clears both DB and in-memory cache — no restart needed)
 curl -X DELETE -H "Authorization: Bearer $API_TOKEN" \
   http://localhost:3100/api/sessions/<folder>
+```
+
+See [Management API](#management-api) for the full session surface.
 
 # 2. Delete transcript files
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
@@ -1703,7 +1884,8 @@ When working on NanoClaw tasks:
 - Session IDs flow: container output → `src/index.ts` → PostgreSQL `sessions` table → next container input
 - To expose external data to agents: use `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-- Tests: `npm test` (vitest, currently ~900 tests)
+- Tests: `npm test` (vitest, currently 1042 tests)
+- Management API: `http://localhost:3100/api/`; live spec at `GET /api/openapi.json` (drift-tested by `src/api/openapi-drift.test.ts`); routes declared via `defineRoute` in `src/api/lib/route-builder.ts`; full human reference in `repo/docs/api.md`
 - Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup; also reads optional `{VENDOR}_AUTH` (x-api-key/bearer/sigv4) and `{VENDOR}_REGION`
 - Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, configurable nightly via `NIGHTLY_NUDGE_THRESHOLD` default 0.7); `src/nightly-maintenance.ts` orchestrates nightly cron; two nudge prompt functions: `buildNudgePrompt()` in `container/agent-runner/src/lib/nudge-prompt.ts` (periodic + threshold, container-side) and `getNightlyNudgePrompt()` in `src/lib/nudge-prompt.ts` (nightly, host-side)
 - Model presets: `src/presets.ts` (`loadPresets`, `resolvePreset`, `getAvailablePresetNames`); preset file at `~/.config/nanoclaw/model-presets.json`; only `containerConfig.preset` stored in DB
