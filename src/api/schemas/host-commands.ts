@@ -27,9 +27,7 @@ export const HostCommandsResponseSchema = z.object({
 });
 
 export const HostCommandsNotConfiguredSchema = z.object({
-  error: z
-    .string()
-    .describe('Human-readable error message'),
+  error: z.string().describe('Human-readable error message'),
   code: z.literal('NOT_CONFIGURED'),
 });
 

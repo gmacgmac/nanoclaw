@@ -21,11 +21,11 @@ defineRoute(router, {
     'Returns the per-group view of available tools: the built-in ceiling ' +
     '(from `tool-allowlist.json`), the full MCP catalog, and the ' +
     'intersection of `containerConfig.deniedTools` with the union of ' +
-    'ceiling + MCP tool names. Use this to validate that a group\'s deny ' +
+    "ceiling + MCP tool names. Use this to validate that a group's deny " +
     'list only contains real tool names — typos are silently dropped ' +
     'from the `denied` response array.\n\n' +
     'Note: `repo/container/agent-runner/src/index.ts` hard-codes ' +
-    '`mcp__nanoclaw__*` into the agent\'s `allowedTools` regardless of ' +
+    "`mcp__nanoclaw__*` into the agent's `allowedTools` regardless of " +
     '`deniedTools`. The concrete-name deny in `options.tools` is the ' +
     'effective gate; the wildcard is defence-in-depth, not a leak. ' +
     'Future hardening: drop the wildcard in favour of the 15 concrete ' +

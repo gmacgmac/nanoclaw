@@ -12,7 +12,15 @@ vi.mock('../logger.js', () => ({
   logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
 }));
 
-const mockGroups: Record<string, { jid: string; name: string; folder: string; containerConfig?: Record<string, unknown> }> = {};
+const mockGroups: Record<
+  string,
+  {
+    jid: string;
+    name: string;
+    folder: string;
+    containerConfig?: Record<string, unknown>;
+  }
+> = {};
 
 vi.mock('../group-registry.js', () => ({
   getRegisteredGroup: (jid: string) => mockGroups[jid] ?? null,

@@ -16,10 +16,7 @@ import { z } from 'zod';
  * (~3KB) and per-request `readFileSync` is fine.
  */
 
-export const MCP_CATALOG_PATH = path.resolve(
-  process.cwd(),
-  'mcp-catalog.json',
-);
+export const MCP_CATALOG_PATH = path.resolve(process.cwd(), 'mcp-catalog.json');
 
 const McpToolSchema = z.object({ name: z.string().min(1) });
 const McpServerDescriptorSchema = z.object({
