@@ -107,12 +107,8 @@ defineRoute(router, {
   },
   handler: async (req, res) => {
     const jid = req.params.jid as string;
-    const limit = Math.min(
-      Math.max(Number(req.query.limit) || 50, 1),
-      200,
-    );
-    const since =
-      typeof req.query.since === 'string' ? req.query.since : '';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const since = typeof req.query.since === 'string' ? req.query.since : '';
     const messages = await getMessagesSince(jid, since, limit);
     res.json({ data: messages });
   },

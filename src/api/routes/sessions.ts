@@ -53,7 +53,9 @@ defineRoute(router, {
   responses: {
     200: {
       description: 'Session found',
-      schema: z.object({ data: z.object({ folder: z.string(), sessionId: z.string() }) }),
+      schema: z.object({
+        data: z.object({ folder: z.string(), sessionId: z.string() }),
+      }),
     },
     404: {
       description: 'No session for this folder',
