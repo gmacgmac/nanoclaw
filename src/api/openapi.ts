@@ -13,6 +13,9 @@ import {
   ModelCapabilitiesSchema,
   ModelPresetInputSchema,
   WriteRawPresetsSchema,
+  McpCatalogSchema,
+  GroupMcpToolsResponseSchema,
+  HostCommandsResponseSchema,
 } from './schemas/index.js';
 
 export const registry = new OpenAPIRegistry();
@@ -30,6 +33,9 @@ registry.register('ApiError', ApiErrorSchema);
 registry.register('ModelCapabilities', ModelCapabilitiesSchema);
 registry.register('ModelPresetInput', ModelPresetInputSchema);
 registry.register('WriteRawPresets', WriteRawPresetsSchema);
+registry.register('McpCatalog', McpCatalogSchema);
+registry.register('GroupMcpTools', GroupMcpToolsResponseSchema);
+registry.register('HostCommands', HostCommandsResponseSchema);
 
 registry.registerComponent('securitySchemes', 'bearerAuth', {
   type: 'http',

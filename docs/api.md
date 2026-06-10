@@ -59,7 +59,7 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 | Method | Path | Body | Notes |
 |--------|------|------|-------|
 | `GET` | `/api/groups/{jid}/{field}` | — | Returns current value. |
-| `PATCH` | `/api/groups/{jid}/{field}` | `{ add?: [], remove?: [] }` | Idempotent; validated server-side (e.g. skills checked against `container/skills/`). |
+| `PATCH` | `/api/groups/{jid}/{field}` | `{ add?: [], remove?: [] }` | Idempotent; validated server-side (skills checked against `container/skills/`, hooks against `docs/hooks/`, host-commands against `GET /api/host-commands`). Unknown entries return `400 INVALID_VALUE`. |
 | `PUT` | `/api/groups/{jid}/{field}` | `{ value: ... }` | Replace wholesale. |
 
 > **18 field endpoints** total (6 fields × 3 methods). Prefer these over `PATCH /config` for array/object fields — see §4.
@@ -94,6 +94,14 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 | Reload groups | `POST` | `/api/admin/reload-groups` | |
 | Health | `GET` | `/api/health` | |
 
+### Discovery (read-only catalogs)
+
+| Task | Method | Path | Notes |
+|------|--------|------|-------|
+| MCP server catalog | `GET` | `/api/mcp/servers` | Static catalog generated at API startup. 503 if the startup scan failed. |
+| Group effective toolset | `GET` | `/api/groups/{jid}/mcp-tools` | Built-in ceiling + MCP catalog + intersection of `deniedTools` with known tools. 404 for unknown JID. |
+| Valid host commands | `GET` | `/api/host-commands` | Gated commands (require `allowedHostCommands` opt-in) + ungated commands (always available). |
+
 For request/response schemas: `GET /api/openapi.json` → `components.schemas`.
 
 ---
@@ -123,7 +131,59 @@ curl -X PATCH "$API/groups/$JID/skills" -H "Authorization: Bearer $API_TOKEN" \
 
 ---
 
-## 5. Discovering JIDs
+## 5. Discovery Endpoints
+
+Three read-only endpoints expose catalogs that the host can offer to operators and skills. Use them to validate a `containerConfig` write *before* it lands.
+
+### `GET /api/mcp/servers` — MCP server catalog
+
+Returns the static catalog generated at API startup by a one-shot FS scan + regex over each server's `server.tool(` calls. Contains the always-on `nanoclaw` IPC server plus every opt-in server under `container/mcp-servers/`. Each entry has `name`, `source` (`ipc-builtin` | `opt-in`), and `tools[].name`.
+
+```bash
+curl "$API/mcp/servers" -H "Authorization: Bearer $API_TOKEN" | jq .data.servers[].name
+# "nanoclaw"
+# "brave-search"
+# "nanoclaw-transcription"
+# "nanoclaw-web-search"
+```
+
+**When it 503s**: the startup scan couldn't write `mcp-catalog.json` to the repo root. Check the host log for the underlying error and confirm `cwd` is the repo root.
+
+**When to restart the API**: the catalog is read from disk on every request, but the *file* is only refreshed at startup. Restart the API to pick up newly added `server.tool(` calls.
+
+### `GET /api/groups/{jid}/mcp-tools` — group effective toolset
+
+Returns the per-group view of available tools:
+
+- `ceiling` — built-in tool names from `tool-allowlist.json` (the hard ceiling for every group).
+- `mcpAvailable` — the full MCP catalog (same as `GET /api/mcp/servers`).
+- `denied` — the **intersection** of `containerConfig.deniedTools` with the union of `ceiling` + every MCP tool name. Entries not matching a known tool are silently dropped, so a typo in `deniedTools` shows up as a missing entry here — not as a 4xx.
+
+```bash
+curl "$API/groups/$JID/mcp-tools" -H "Authorization: Bearer $API_TOKEN" | jq .data.denied
+# ["send_message"]
+```
+
+**Known sharp edge**: `repo/container/agent-runner/src/index.ts` hard-codes `mcp__nanoclaw__*` into the agent's `allowedTools` regardless of `deniedTools`. The concrete-name deny in `options.tools` is the effective gate (the model never sees the denied tool), so the wildcard is defence-in-depth, not a leak. Future hardening: drop the wildcard in favour of the 15 concrete names from the catalog.
+
+### `GET /api/host-commands` — valid host commands
+
+Returns the canonical list of host commands, split into:
+
+- `gated` — commands that require the group to opt in via `containerConfig.allowedHostCommands`. Today: `model`, `version`.
+- `ungated` — commands available to every group with no allowlist entry needed. Today: `shutdown`, `stop`, `context`, `newsession`.
+
+```bash
+curl "$API/host-commands" -H "Authorization: Bearer $API_TOKEN" | jq .data.gated[].name
+# "model"
+# "version"
+```
+
+`PATCH /api/groups/{jid}/allowed-host-commands` rejects values not in `gated` with `400 INVALID_VALUE`. If a workflow needs a new gated command, the dispatch in `src/host-commands.ts` and the `GATED_HOST_COMMANDS` constant in `src/api/routes/host-commands.ts` must be updated together.
+
+---
+
+## 6. Discovering JIDs
 
 `GET /api/groups` returns the canonical list with JIDs. Formats:
 
@@ -137,7 +197,7 @@ curl -X PATCH "$API/groups/$JID/skills" -H "Authorization: Bearer $API_TOKEN" \
 
 ---
 
-## 6. Switching a Preset
+## 7. Switching a Preset
 
 ```bash
 curl -X POST "$API/groups/$JID/preset" -H "Authorization: Bearer $API_TOKEN" \
@@ -148,7 +208,7 @@ Unknown preset name → `400` with the list of available preset names in the res
 
 ---
 
-## 7. Error Codes
+## 8. Error Codes
 
 | Code | Meaning |
 |------|---------|
@@ -163,7 +223,7 @@ Error bodies are `{ "error": "<message>" }`. The OpenAPI spec documents the per-
 
 ---
 
-## 8. When to Use psql
+## 9. When to Use psql
 
 Most workflows should go through the API. Drop to direct DB access only for:
 
@@ -175,7 +235,7 @@ Everything else (group config, sessions, chats, tasks, presets) goes through the
 
 ---
 
-## 9. Validation Guarantee
+## 10. Validation Guarantee
 
 `src/api/openapi-drift.test.ts` asserts the served Express routes and the generated OpenAPI paths are identical sets. Every route is registered via `defineRoute` (`src/api/lib/route-builder.ts`), which writes **both** the Express handler and the OpenAPI path entry from a single declaration. Consequence:
 

@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 import type { GroupQueue } from '../group-queue.js';
 import { authMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { refreshMcpCatalog } from './mcp-catalog.js';
 import { generateOpenApiDocument } from './openapi.js';
 import { mountRoutes } from './routes/index.js';
 
@@ -14,6 +15,10 @@ import { mountRoutes } from './routes/index.js';
  * @param queue - The GroupQueue instance (needed by container routes)
  */
 export function startApiServer(queue: GroupQueue): Express {
+  // Refresh MCP catalog before routes mount so handlers reading
+  // `mcp-catalog.json` see fresh data on the first request.
+  refreshMcpCatalog();
+
   const app = express();
 
   app.use(express.json());

@@ -18,6 +18,7 @@ import {
 import { ApiErrorSchema } from '../schemas/index.js';
 import { defineRoute } from '../lib/route-builder.js';
 import type { RegisteredGroup } from '../../types.js';
+import { GATED_HOST_COMMANDS } from './host-commands.js';
 
 const router = Router();
 
@@ -109,7 +110,10 @@ const FIELD_DEFS: FieldDef[] = [
     urlSegment: 'allowed-host-commands',
     configKey: 'allowedHostCommands',
     label: 'allowedHostCommands',
-    validator: nonEmptyValidator,
+    validator: makeDirValidator(
+      GATED_HOST_COMMANDS as unknown as string[],
+      'host commands',
+    ),
   },
   {
     kind: 'string-array',

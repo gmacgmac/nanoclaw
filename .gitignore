@@ -18,6 +18,9 @@ groups/*
 
 # tool-allowlist.json is intentionally TRACKED (security ceiling) — do not ignore
 
+# mcp-catalog.json is intentionally UNTRACKED (regenerated at API startup)
+mcp-catalog.json
+
 # Prompt behaviour snippets (operational IP, not public — remove after de-fork)
 # docs/prompt-behaviours/
 

@@ -4,6 +4,8 @@ export * from './common.js';
 export * from './config-array-fields.js';
 export * from './container-config.js';
 export * from './group.js';
+export * from './host-commands.js';
+export * from './mcp-catalog.js';
 export * from './presets.js';
 export * from './chat.js';
 export * from './scheduled-task.js';

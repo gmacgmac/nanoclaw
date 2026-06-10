@@ -7,6 +7,9 @@ import { createContainerRoutes } from './containers.js';
 import groupConfigFieldsRouter from './group-config-fields.js';
 import groupsRouter from './groups.js';
 import { createHealthRoute } from './health.js';
+import hostCommandsRouter from './host-commands.js';
+import mcpServersRouter from './mcp-servers.js';
+import mcpToolsRouter from './mcp-tools.js';
 import presetsRouter from './presets.js';
 import scheduledTasksRouter from './scheduled-tasks.js';
 import sessionsRouter from './sessions.js';
@@ -21,4 +24,7 @@ export function mountRoutes(app: Express, queue: GroupQueue): void {
   app.use(createContainerRoutes(queue));
   app.use(adminRouter);
   app.use(createHealthRoute(queue));
+  app.use(mcpServersRouter);
+  app.use(mcpToolsRouter);
+  app.use(hostCommandsRouter);
 }
