@@ -93,6 +93,7 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 | Stop | `POST` | `/api/containers/{id}/stop` | |
 | Reload groups | `POST` | `/api/admin/reload-groups` | |
 | Health | `GET` | `/api/health` | |
+| Send notification | `POST` | `/api/notify` | One-way message into group channels. No agent run. See §5.
 
 ### Discovery (read-only catalogs)
 
@@ -244,3 +245,73 @@ Everything else (group config, sessions, chats, tasks, presets) goes through the
 - Adding a route without a spec entry is a test failure.
 
 If you add or change a route, this test must pass.
+
+---
+
+## 11. Sending Notifications
+
+`POST /api/notify` is a **one-way** push into group channels. It does not insert into the `messages` table, does not spawn a container, and does not trigger an agent run. Use it for ops alerts (DB issues, maintenance windows, scheduled-task failures) — never for things the agent should respond to.
+
+### Request
+
+```json
+{
+  "targets": ["admin@internal", "ops@internal"],
+  "message": "⚠️ Scheduled task `cleanup-archive` failed at 03:00."
+}
+```
+
+| Field | Type | Constraints | Notes |
+|-------|------|-------------|-------|
+| `targets` | string[] | min 1, no max | Group JIDs, or `["*"]` to broadcast to all registered groups. |
+| `message` | string | 1–4096 chars | Markdown is rendered on Telegram; plain text on dashboard. |
+
+### Response (200)
+
+```json
+{
+  "ok": false,
+  "delivered": ["admin@internal"],
+  "failed": [
+    { "jid": "ops@internal", "reason": "Channel disconnected" }
+  ]
+}
+```
+
+`ok` is `true` only when **every** target was delivered. The endpoint still returns 200 when some targets fail — check `failed[]` and retry if needed.
+
+### Failure reasons (in `failed[].reason`)
+
+- `"Group not found"` — JID is not in the registered-groups cache.
+- `"No channel owns JID"` — no channel registered for this JID.
+- `"Channel disconnected"` — channel is registered for the JID but currently disconnected.
+- `"Send failed: <error>"` — `channel.sendMessage` threw; the underlying error is appended.
+
+### Delivery semantics
+
+- **Best-effort, no retry.** Callers must retry on partial failure.
+- **No persistence in `messages`.** Notifications are not visible to the agent loop and do not appear in session transcripts.
+- **Dashboard channels** persist the message in `dashboard_chat_log` (because `DashboardChannel.sendMessage` does so internally) — Telegram and other external channels just deliver in-band.
+- **No rate limiting.** Add client-side throttling if you broadcast at high frequency.
+
+### Examples
+
+Single group:
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"targets":["admin@internal"],"message":"DB connection restored."}' \
+  http://localhost:3100/api/notify
+```
+
+Broadcast to all groups:
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"targets":["*"],"message":"Scheduled maintenance in 10 minutes."}' \
+  http://localhost:3100/api/notify
+```
+
+Resolve JIDs first via `GET /api/groups` if you don't know them.

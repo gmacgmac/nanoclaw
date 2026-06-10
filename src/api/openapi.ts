@@ -16,6 +16,7 @@ import {
   McpCatalogSchema,
   GroupMcpToolsResponseSchema,
   HostCommandsResponseSchema,
+  NotifyResponseSchema,
 } from './schemas/index.js';
 
 export const registry = new OpenAPIRegistry();
@@ -36,6 +37,7 @@ registry.register('WriteRawPresets', WriteRawPresetsSchema);
 registry.register('McpCatalog', McpCatalogSchema);
 registry.register('GroupMcpTools', GroupMcpToolsResponseSchema);
 registry.register('HostCommands', HostCommandsResponseSchema);
+registry.register('NotifyResponse', NotifyResponseSchema);
 
 registry.registerComponent('securitySchemes', 'bearerAuth', {
   type: 'http',

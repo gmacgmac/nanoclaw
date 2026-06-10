@@ -10,6 +10,7 @@ import { createHealthRoute } from './health.js';
 import hostCommandsRouter from './host-commands.js';
 import mcpServersRouter from './mcp-servers.js';
 import mcpToolsRouter from './mcp-tools.js';
+import notifyRouter from './notify.js';
 import presetsRouter from './presets.js';
 import scheduledTasksRouter from './scheduled-tasks.js';
 import sessionsRouter from './sessions.js';
@@ -27,4 +28,5 @@ export function mountRoutes(app: Express, queue: GroupQueue): void {
   app.use(mcpServersRouter);
   app.use(mcpToolsRouter);
   app.use(hostCommandsRouter);
+  app.use(notifyRouter);
 }
