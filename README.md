@@ -387,7 +387,9 @@ Sub-agents respond via `send_message` to the hub's JID (the user sees the respon
 
 ```bash
 # Enable hub routing
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET multi_agent_router = true WHERE folder = 'myhub'"
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"multiAgentRouter": true}' \
+  http://localhost:3100/api/groups/myhub@internal
 ```
 
 ---
@@ -411,6 +413,8 @@ The database serves the application layer — message routing, group registratio
 | `error_log` | Structured error logging |
 
 > **psql shell**: `docker compose exec postgres psql -U nanoclaw nanoclaw`
+>
+> For programmatic access, see [docs/api.md](docs/api.md).
 
 ### The `messages` Table: Input Queue, Not Conversation Store
 
@@ -885,7 +889,9 @@ Host commands are intercepted on the host process before reaching the agent cont
 Gated commands require the group's `containerConfig.allowedHostCommands` array to include the command name:
 
 ```bash
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{allowedHostCommands}', '[\"model\", \"version\"]'::jsonb) WHERE folder = '<folder>'"
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"value": ["model", "version"]}' \
+  http://localhost:3100/api/groups/tg:12345/allowed-host-commands
 ```
 
 Only senders on the sender allowlist can invoke any host command (gated or ungated).
@@ -1643,17 +1649,15 @@ cd $NANOCLAW_ROOT && claude
 To start fresh without recreating the group:
 
 ```bash
-# 1. Delete session row from database
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<folder>'"
+# 1. Delete session row (API clears both DB and in-memory cache — no restart needed)
+curl -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/<folder>
 
 # 2. Delete transcript files
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/*.jsonl
 
 # 3. (Optional) Clear auto-memory
 rm -f data/sessions/<folder>/.claude/projects/-workspace-group/memory/*.md
-
-# 4. Restart service
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
 > Auto-memory survives session resets by design — skip step 3 if you want to keep learned preferences.
@@ -1661,9 +1665,9 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 For `telegram_main`:
 
 ```bash
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='telegram_main'"
+curl -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/telegram_main
 rm -f data/sessions/telegram_main/.claude/projects/-workspace-group/*.jsonl
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
 ---

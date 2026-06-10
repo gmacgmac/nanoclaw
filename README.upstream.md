@@ -185,7 +185,9 @@ Host commands are intercepted on the host process before reaching the agent cont
 Enable it for a group by adding `allowedHostCommands: ['model']` to the group's `containerConfig`:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.allowedHostCommands', json_array('model')) WHERE folder = 'mygroup'"
+curl -sS -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add":["model"]}' \
+  "http://localhost:3100/api/groups/tg:<jid>/allowed-host-commands"
 ```
 
 Then send `/model` in the group to see the active preset and available choices, or `/model <preset>` to switch.

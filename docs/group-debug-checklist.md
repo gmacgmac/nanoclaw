@@ -24,7 +24,7 @@ When a group's container fails to start or shows session errors, the session may
 
 | Component | Location |
 |-----------|----------|
-| Session ID | SQLite `sessions` table (`group_folder` → `session_id`) |
+| Session ID | PostgreSQL `sessions` table (`group_folder` → `session_id`) |
 | Transcript file | `data/sessions/{group}/.claude/projects/-workspace-group/{session-id}.jsonl` |
 | In-memory cache | `sessions` object in running host process |
 
@@ -33,20 +33,23 @@ When a group's container fails to start or shows session errors, the session may
 | Scenario | Result |
 |----------|--------|
 | `.jsonl` deleted, session ID remains | "No conversation found" error |
-| Session ID in SQLite, file missing | Container fails, ID re-saved on error |
-| SQLite cleared, in-memory cache persists | Stale ID keeps being used |
+| Session ID in DB, file missing | Container fails, ID re-saved on error |
+| DB cleared, in-memory cache persists | Stale ID keeps being used |
 
 ### Correct Way to Reset a Session
 
 Use this when the session is corrupted but you want to **keep message history**:
+
+> Set `API_TOKEN` if auth is enabled: `export API_TOKEN=$(grep API_TOKEN .env | cut -d= -f2)`
 
 ```bash
 # 1. Stop the host (clears in-memory cache)
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 # On Linux: systemctl --user stop nanoclaw
 
-# 2. Delete session entry from SQLite
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '{group}'"
+# 2. Delete session entry via API
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/{group}
 
 # 3. Delete transcript files
 rm -rf data/sessions/{group}/.claude/projects/
@@ -67,14 +70,16 @@ JID="tg:123456789"  # The chat_jid for this group
 # 1. Stop the host (clears in-memory cache)
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 
-# 2. Delete session entry from SQLite
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '$GROUP'"
+# 2. Delete session entry via API
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/$GROUP
 
 # 3. Delete transcript files (agent's conversation context)
 rm -rf data/sessions/$GROUP/.claude/projects/
 
 # 4. Delete message history (incoming + outgoing)
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '$JID'"
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:3100/api/chats/$JID/messages?confirm=true"
 
 # 5. Restart host
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
@@ -137,7 +142,10 @@ ls -la data/ipc/{group}/
 ### Check Session ID
 
 ```bash
-sqlite3 store/messages.db "SELECT * FROM sessions WHERE group_folder = '{group}'"
+# Via API:
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/sessions/{group} | jq .
+# Via psql (advanced debugging):
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT * FROM sessions WHERE group_folder = '{group}'"
 ```
 
 ### Check Transcript File Exists
@@ -195,17 +203,19 @@ Nuclear option - completely reset a group to fresh state:
 
 ```bash
 GROUP="dashboard"          # Folder name
-JID="dashboard@internal"   # Chat JID (check registered_groups table)
+JID="dashboard@internal"   # Chat JID (see `GET /api/groups`)
 
 # Stop host
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 
 # Clear session (agent's conversation context)
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '$GROUP'"
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/$GROUP
 rm -rf data/sessions/$GROUP/.claude/projects/
 
 # Clear message history (incoming + outgoing)
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '$JID'"
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:3100/api/chats/$JID/messages?confirm=true"
 
 # Clear IPC queue
 rm -rf data/ipc/$GROUP/messages/*
@@ -220,7 +230,7 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 
 **To find the JID for a group:**
 ```bash
-sqlite3 store/messages.db "SELECT jid, folder FROM registered_groups"
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups | jq '.data[] | {jid, folder}'
 ```
 
 ---
@@ -238,7 +248,11 @@ Any message stored in the `messages` table with `is_bot_message = 0` is treated 
 
 **Check:**
 ```bash
-sqlite3 store/messages.db "
+# Via API:
+curl -sS -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:3100/api/chats/tg:YOUR_JID/messages?limit=10" | jq .
+# Via psql (advanced debugging):
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "
   SELECT id, sender_name, content, is_bot_message
   FROM messages
   WHERE chat_jid = 'tg:YOUR_JID'
@@ -265,7 +279,7 @@ If you do call send_message, wrap any follow-up text in <internal> tags:
 
 ## In-Memory Cache
 
-The host process caches session IDs in memory. After modifying SQLite directly, **you must restart the host** for changes to take effect.
+The host process caches session IDs in memory. After modifying the database directly, **you must restart the host** for changes to take effect.
 
 ```bash
 # macOS

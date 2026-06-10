@@ -55,8 +55,10 @@ If not a main group, trigger pattern should:
 - Start with `@` (e.g., `@research`)
 - Not conflict with existing groups:
 
+> Set `API_TOKEN` if auth is enabled: `export API_TOKEN=$(grep API_TOKEN .env | cut -d= -f2)`
+
 ```bash
-sqlite3 store/messages.db "SELECT jid, name, trigger_pattern FROM registered_groups"
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups | jq '.data[] | {jid, name, trigger}'
 ```
 
 ## Phase 3: Register the Group
@@ -121,12 +123,16 @@ npx tsx setup/index.ts register -- \
 **CRITICAL:** Internal groups require a row in the `chats` table for message processing. The foreign key constraint in `messages` table requires a valid chat_jid reference.
 
 ```bash
-sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('{folder}@internal', '{name}', datetime('now'), 'dashboard', 0)"
+curl -sS -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"jid\":\"{folder}@internal\",\"name\":\"{name}\",\"channel\":\"dashboard\",\"isGroup\":false}" \
+  http://localhost:3100/api/chats
 ```
 
 Example:
 ```bash
-sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('research@internal', 'Research', datetime('now'), 'dashboard', 0)"
+curl -sS -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"research@internal","name":"Research","channel":"dashboard","isGroup":false}' \
+  http://localhost:3100/api/chats
 ```
 
 **Without this row, messages queued for the internal group will not be processed.**
@@ -216,7 +222,8 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 Check registration:
 
 ```bash
-sqlite3 store/messages.db "SELECT jid, name, folder, trigger_pattern, is_main FROM registered_groups WHERE jid LIKE '%@internal'"
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+  | jq '.data[] | select(.jid | endswith("@internal")) | {jid, name, folder, trigger, isMain}'
 ```
 
 Test by delegating from another group:
@@ -239,7 +246,9 @@ If this internal group should be reachable via `@mention` from another group (e.
 2. The calling group's `multi_agent_router` is enabled:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET multi_agent_router = 1 WHERE folder = 'telegram_main'"
+curl -sS -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"multiAgentRouter": true}' \
+  http://localhost:3100/api/groups/tg:telegram_main
 ```
 
 3. The delegation flow works:
@@ -256,17 +265,22 @@ sqlite3 store/messages.db "UPDATE registered_groups SET multi_agent_router = 1 W
 
 Check:
 ```bash
-sqlite3 store/messages.db "SELECT * FROM chats WHERE jid='{folder}@internal'"
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/chats/{folder}@internal | jq .
 ```
 
 If empty, create it:
 ```bash
-sqlite3 store/messages.db "INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES ('{folder}@internal', '{name}', datetime('now'), 'dashboard', 0)"
+curl -sS -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"jid\":\"{folder}@internal\",\"name\":\"{name}\",\"channel\":\"dashboard\",\"isGroup\":false}" \
+  http://localhost:3100/api/chats
 ```
 
 ### Group not responding to delegation
 
-1. Check group is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE folder = '{folder}'"`
+1. Check group is registered:
+   ```bash
+   curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups/{folder}@internal | jq .
+   ```
 2. Check logs: `tail -f logs/nanoclaw.log`
 3. Verify trigger pattern matches what you're sending
 
@@ -284,8 +298,10 @@ See "To clear chat history for a group" in CLAUDE.md. For internal groups:
 GROUP="{folder}"
 JID="{folder}@internal"
 
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '$GROUP'"
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '$JID'"
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/$GROUP
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:3100/api/chats/$JID/messages?confirm=true"
 rm -rf data/sessions/$GROUP/.claude/projects/
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
@@ -295,9 +311,15 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 To remove an internal group:
 
 ```bash
-sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid = '{folder}@internal'"
-sqlite3 store/messages.db "DELETE FROM messages WHERE chat_jid = '{folder}@internal'"
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '{folder}'"
+# Remove the group registration
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/groups/{folder}@internal
+# Clear session
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/{folder}
+# Clear message history
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:3100/api/chats/{folder}@internal/messages?confirm=true"
 rm -rf groups/{folder}
 rm -rf data/sessions/{folder}
 ```

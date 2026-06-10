@@ -184,15 +184,20 @@ Stored as JSON in the `registered_groups.container_config` PostgreSQL column. Al
 
 ### Applying Group Config
 
-Use `jsonb_set()` to update nested fields:
+Use the Management API to update nested fields:
 
 ```bash
-# Set endpoint
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{endpoint}', to_jsonb('ollama'::text)) WHERE folder = 'mygroup'"
+# Set preset (preferred over the legacy `endpoint` field)
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"preset":"OK2.6"}' \
+  http://localhost:3100/api/groups/tg:12345/preset
 
 # View current config
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT container_config FROM registered_groups WHERE folder = 'mygroup'"
+curl -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/groups/tg:12345/config
 ```
+
+> **Note**: The `endpoint` field is legacy — use `preset` for model selection.
 
 ### Model Configuration
 
@@ -200,9 +205,11 @@ Models are configured via presets defined in `~/.config/nanoclaw/model-presets.j
 
 **To switch presets at runtime**: Use `/model <preset>` (requires `allowedHostCommands: ['model']`). The container is recycled on switch.
 
-**To set via database**:
+**To set via API**:
 ```bash
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "UPDATE registered_groups SET container_config = jsonb_set(container_config, '{preset}', to_jsonb('OK2.6'::text)) WHERE folder = 'mygroup'"
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"preset":"OK2.6"}' \
+  http://localhost:3100/api/groups/tg:12345/preset
 ```
 
 **`settings.json` is auto-generated** at container spawn from the resolved preset. Do not edit it manually — changes will be overwritten on next container start. It contains `ANTHROPIC_MODEL`, `autoCompactEnabled`, and `autoCompactWindow`.
@@ -361,25 +368,22 @@ docker ps --filter ancestor=nanoclaw-agent:stable -q | xargs -r docker kill  # S
 **If agent reports outdated tools after image rebuild**, the session transcript may have cached tool definitions. Clear it:
 ```bash
 rm data/sessions/<group>/.claude/projects/-workspace-group/*.jsonl
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<group>'"
+curl -X DELETE -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/sessions/<group>
 ```
 
-**"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing the session row and restarting (see "To clear chat history for a group" below).
+**"No conversation found with session ID" error**: The database has a session ID but the JSONL transcript is missing. This happens if you delete files without deleting the database row. Fix by clearing the session row (see "To clear chat history for a group" below).
 
 **To clear chat history for a group** (fresh start, no conversation memory):
 
-**CRITICAL:** Restart is REQUIRED — NanoClaw holds session IDs in memory (`src/index.ts:357`). The database delete will be undone if you don't restart.
+The Management API clears both the DB row and the in-memory session cache — no restart needed:
 
 ```bash
-# 1. Delete session row from database
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM sessions WHERE group_folder='<folder>'"
+# 1. Delete session row (and in-memory cache)
+curl -X DELETE -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/sessions/<folder>
 
 # 2. Verify deletion
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT * FROM sessions WHERE group_folder='<folder>'"
-# Expected: (0 rows)
-
-# 3. Restart service (REQUIRED — clears in-memory session cache)
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/sessions/<folder>
+# Expected: 404 (no session for that folder)
 ```
 
 That's it. The JSONL file can remain — without a session row, the SDK starts a fresh session on the next message.
@@ -387,7 +391,9 @@ That's it. The JSONL file can remain — without a session row, the SDK starts a
 **Optional additional cleanup:**
 ```bash
 # Delete message history from database (incoming + outgoing)
-docker compose exec postgres psql -U nanoclaw nanoclaw -c "DELETE FROM messages WHERE chat_jid='<jid>'"
+curl -X DELETE -H "Authorization: Bearer $API_TOKEN" "http://localhost:3100/api/chats/<jid>/messages?confirm=true"
+
+# Diagnostic only (API returns messages, not counts):
 docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT COUNT(*) FROM messages WHERE chat_jid='<jid>'"
 # Expected: "0"
 

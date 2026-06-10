@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 """
-claw — NanoClaw CLI
-Run a NanoClaw agent container from the command line.
+claw — NanoClaw management helper.
 
-Usage:
-  claw "What is 2+2?"
-  claw -g <channel_name> "Review this code"
-  claw -g "<channel name with spaces>" "What's the latest issue?"
-  claw -j "<chatJid>" "Hello"
-  claw -g <channel_name> -s <session-id> "Continue"
-  claw --list-groups
-  echo "prompt text" | claw --pipe -g <channel_name>
-  cat prompt.txt | claw --pipe
+Uses the NanoClaw Management API (http://localhost:3100/api/openapi.json).
+Set API_TOKEN env var when auth is enabled.
+Set NANOCLAW_API_URL to override the base URL (default: http://localhost:3100).
 """
 
 from __future__ import annotations
@@ -20,10 +13,11 @@ import argparse
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ── Globals ─────────────────────────────────────────────────────────────────
@@ -36,6 +30,9 @@ def dbg(*args):
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
+BASE_URL  = os.environ.get("NANOCLAW_API_URL", "http://localhost:3100").rstrip("/")
+API_TOKEN = os.environ.get("API_TOKEN", "")
+
 def _find_nanoclaw_dir() -> Path:
     """Locate the NanoClaw installation directory.
 
@@ -46,15 +43,13 @@ def _find_nanoclaw_dir() -> Path:
     """
     if env := os.environ.get("NANOCLAW_DIR"):
         return Path(env).expanduser()
-    # If this script lives inside the NanoClaw tree (e.g. scripts/claw), walk up
     here = Path(__file__).resolve()
     for parent in [here.parent, here.parent.parent]:
-        if (parent / "store" / "messages.db").exists() or (parent / ".env").exists():
+        if (parent / ".env").exists() or (parent / "src").is_dir():
             return parent
     return Path.home() / "src" / "nanoclaw"
 
 NANOCLAW_DIR = _find_nanoclaw_dir()
-DB_PATH      = NANOCLAW_DIR / "store" / "messages.db"
 ENV_FILE     = NANOCLAW_DIR / ".env"
 IMAGE        = "nanoclaw-agent:stable"
 
@@ -66,7 +61,25 @@ SECRET_KEYS = [
     "OLLAMA_HOST",
 ]
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── API helper ──────────────────────────────────────────────────────────────
+
+def api(method: str, path: str, body: dict | None = None) -> dict:
+    url = f"{BASE_URL}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if API_TOKEN:
+        req.add_header("Authorization", f"Bearer {API_TOKEN}")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")
+        sys.exit(f"error: API {method} {path} → {e.code} {e.reason}: {detail}")
+    except urllib.error.URLError as e:
+        sys.exit(f"error: cannot reach NanoClaw API at {url}: {e.reason}")
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def detect_runtime(preference: str | None) -> str:
     if preference:
@@ -96,22 +109,25 @@ def read_secrets(env_file: Path) -> dict:
     return secrets
 
 
-def get_groups(db: Path) -> list[dict]:
-    conn = sqlite3.connect(db)
-    rows = conn.execute(
-        "SELECT jid, name, folder, is_main FROM registered_groups ORDER BY name"
-    ).fetchall()
-    conn.close()
-    return [{"jid": r[0], "name": r[1], "folder": r[2], "is_main": bool(r[3])} for r in rows]
+def get_groups() -> list[dict]:
+    resp = api("GET", "/api/groups")
+    rows = resp.get("data", [])
+    return [
+        {
+            "jid": r["jid"],
+            "name": r.get("name", ""),
+            "folder": r.get("folder", ""),
+            "is_main": bool(r.get("isMain", False)),
+        }
+        for r in rows
+    ]
 
 
 def find_group(groups: list[dict], query: str) -> dict | None:
     q = query.lower()
-    # Exact name match
     for g in groups:
         if g["name"].lower() == q or g["folder"].lower() == q:
             return g
-    # Partial match
     matches = [g for g in groups if q in g["name"].lower() or q in g["folder"].lower()]
     if len(matches) == 1:
         return matches[0]
@@ -125,7 +141,6 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
     cmd = [runtime, "run", "-i", "--rm", image]
     dbg(f"cmd: {' '.join(cmd)}")
 
-    # Show payload sans secrets
     if VERBOSE:
         safe = {k: v for k, v in payload.items() if k != "secrets"}
         safe["secrets"] = {k: "***" for k in payload.get("secrets", {})}
@@ -139,7 +154,6 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
     )
     dbg(f"container pid: {proc.pid}")
 
-    # Write JSON payload and close stdin
     proc.stdin.write(json.dumps(payload).encode())
     proc.stdin.close()
     dbg("stdin closed, waiting for response...")
@@ -161,8 +175,6 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
             line = raw.decode(errors="replace").rstrip()
             stdout_lines.append(line)
             dbg(f"stdout: {line}")
-            # Kill the container as soon as we see the closing sentinel —
-            # the Node.js event loop often keeps the process alive indefinitely.
             if line.strip() == "---NANOCLAW_OUTPUT_END---":
                 dbg("output sentinel found, terminating container")
                 done.set()
@@ -177,9 +189,7 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
     t_err.start()
     t_out.start()
 
-    # Wait for sentinel or timeout
     if not done.wait(timeout=timeout):
-        # Also check if process exited naturally
         t_out.join(timeout=2)
         if not done.is_set():
             proc.kill()
@@ -191,7 +201,6 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
     dbg(f"container done (rc={proc.returncode}), {len(stdout_lines)} stdout lines")
     stdout = "\n".join(stdout_lines)
 
-    # Parse output block
     match = re.search(
         r"---NANOCLAW_OUTPUT_START---\n(.*?)\n---NANOCLAW_OUTPUT_END---",
         stdout,
@@ -212,7 +221,6 @@ def run_container(runtime: str, image: str, payload: dict, timeout: int = 300) -
         except json.JSONDecodeError:
             print(match.group(1))
     else:
-        # No structured output — print raw stdout
         print(stdout)
 
     if proc.returncode not in (0, None):
@@ -246,7 +254,12 @@ def main():
     global VERBOSE
     VERBOSE = args.verbose
 
-    groups = get_groups(DB_PATH) if DB_PATH.exists() else []
+    try:
+        groups = get_groups()
+    except SystemExit:
+        raise
+    except Exception as e:
+        sys.exit(f"error: failed to fetch groups from API at {BASE_URL}: {e}")
 
     if args.list_groups:
         print(f"{'NAME':<35} {'FOLDER':<30} {'JID'}")
@@ -256,7 +269,6 @@ def main():
             print(f"{g['name']:<35} {g['folder']:<30} {g['jid']}{main_tag}")
         return
 
-    # Resolve prompt: --pipe reads stdin, optionally prepended with positional arg
     if args.pipe or (not sys.stdin.isatty() and not args.prompt):
         stdin_text = sys.stdin.read().strip()
         if args.prompt:
@@ -270,7 +282,6 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Resolve group → jid
     jid = args.jid
     group_name = None
     is_main = False
@@ -283,7 +294,6 @@ def main():
         group_name = g["name"]
         is_main = g["is_main"]
     elif not jid:
-        # Default: main group
         mains = [g for g in groups if g["is_main"]]
         if mains:
             jid = mains[0]["jid"]

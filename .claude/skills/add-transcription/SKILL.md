@@ -87,10 +87,11 @@ npx vitest run src/transcription.test.ts
 The transcription MCP server must be added to each group's `containerConfig`:
 
 ```bash
-sqlite3 store/messages.db "
-UPDATE registered_groups SET container_config = json_set(container_config, '$.mcpServers.nanoclaw-transcription', json('{\"command\":\"node\",\"args\":[\"/app/mcp-servers/nanoclaw-transcription/dist/index.js\"]}'))
-WHERE folder = '<group-folder>';
-"
+JID=$(curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+  | jq -r '.data[] | select(.folder=="<group-folder>") | .jid')
+curl -sS -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add":{"nanoclaw-transcription":{"command":"node","args":["/app/mcp-servers/nanoclaw-transcription/dist/index.js"]}}}' \
+  "http://localhost:3100/api/groups/${JID}/mcp-servers"
 ```
 
 Repeat for each group that should have transcription access.
@@ -230,7 +231,11 @@ To remove transcription:
 
 1. Remove `nanoclaw-transcription` from group `containerConfig`:
    ```bash
-   sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_remove(container_config, '$.mcpServers.nanoclaw-transcription') WHERE folder = '<group-folder>'"
+   JID=$(curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+     | jq -r '.data[] | select(.folder=="<group-folder>") | .jid')
+   curl -sS -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+     -d '{"remove":["nanoclaw-transcription"]}' \
+     "http://localhost:3100/api/groups/${JID}/mcp-servers"
    ```
 2. Remove host-side code: `src/transcription.ts`, `src/transcription.test.ts`, and the `/transcribe` endpoint from `src/credential-proxy.ts`
 3. Remove container MCP server: `container/mcp-servers/nanoclaw-transcription/`

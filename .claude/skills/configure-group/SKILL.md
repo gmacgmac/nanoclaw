@@ -15,8 +15,11 @@ If the user provided a folder name (e.g. `/configure-group telegram_main`), use 
 
 If no folder provided, query registered groups:
 
+> Set `API_TOKEN` if auth is enabled: `export API_TOKEN=$(grep API_TOKEN .env | cut -d= -f2)`
+
 ```bash
-sqlite3 store/messages.db "SELECT folder, name, container_config FROM registered_groups ORDER BY added_at DESC"
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+  | jq '.data | sort_by(.addedAt) | reverse | .[] | {folder, name}'
 ```
 
 Display as a numbered list. AskUserQuestion: "Which group would you like to configure?"
@@ -24,7 +27,9 @@ Display as a numbered list. AskUserQuestion: "Which group would you like to conf
 ### 2. Fetch Current Config
 
 ```bash
-sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = '<folder>'"
+JID=$(curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+  | jq -r ".data[] | select(.folder==\"<folder>\") | .jid")
+curl -sS -H "Authorization: Bearer $API_TOKEN" "http://localhost:3100/api/groups/${JID}/config" | jq .
 ```
 
 Parse the JSON. If `container_config` is NULL or empty, treat as `{}`.
@@ -156,7 +161,7 @@ All host commands require the sender to be on the sender allowlist (`~/.config/n
 |---------|-----------|---------------|
 | `/model [<preset>]` | No args: shows active preset + available list. With arg: switches to the named preset, recycles container, sanitizes session JSONL for cross-provider safety. | Two-message UX: Reply 1 `"Switching to <preset>..."` (immediate), Reply 2 `"Switched to <preset> (endpoint / model)."` (after container exits) |
 | `/version [info\|stable\|next]` | No args: shows current channel, image tag, SDK/CLI versions, drift detection. With arg: switches the group's container channel, recycles container. | Two-message UX: Reply 1 `"Switching to channel <ch>..."` (immediate), Reply 2 `"✅ Switched to channel: <ch>."` (after container exits) |
-| `/newsession` | Stops container, deletes session from memory + SQLite. JSONL transcript left on disk. Next message starts a completely fresh session. | Two-message UX: Reply 1 `"Clearing session..."` (immediate), Reply 2 `"Session cleared. Next message starts fresh."` (after container exits) |
+| `/newsession` | Stops container, deletes session from memory + the database. JSONL transcript left on disk. Next message starts a completely fresh session. | Two-message UX: Reply 1 `"Clearing session..."` (immediate), Reply 2 `"Session cleared. Next message starts fresh."` (after container exits) |
 
 #### How the Two-Message UX Works
 
@@ -313,23 +318,23 @@ Use `+` for additions, `~` for changes, `-` for removals.
 
 AskUserQuestion: "Apply these changes?"
 
-If yes, build `json_set` / `json_remove` commands:
+If yes, apply the changes via the API. PATCH `/api/groups/{jid}/config` is a **merge-patch** — only the keys you send are updated, the rest are preserved:
 
 ```bash
+JID="tg:..."  # resolved from folder via /api/groups
+
 # Example: set preset and allowedHostCommands
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(container_config, '$.preset', 'ollama_k2.6'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
+curl -sS -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"preset":"ollama_k2.6","allowedHostCommands":["model"]}' \
+  "http://localhost:3100/api/groups/${JID}/config"
 ```
 
-**Important:** Chain multiple operations into a single UPDATE statement. SQLite's JSON functions are composable:
-
-```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(json_set(container_config, '$.preset', 'ollama_k2.6'), '$.allowedHostCommands', json('[\"model\"]')) WHERE folder = 'telegram_main'"
-```
+**Important:** Multiple fields can be sent in a single PATCH body; the API merges them into the existing `containerConfig`. See `docs/api.md` for the merge vs replace semantics.
 
 Verify:
 
 ```bash
-sqlite3 store/messages.db "SELECT container_config FROM registered_groups WHERE folder = '<folder>'"
+curl -sS -H "Authorization: Bearer $API_TOKEN" "http://localhost:3100/api/groups/${JID}/config" | jq .
 ```
 
 Show the updated config and confirm success.

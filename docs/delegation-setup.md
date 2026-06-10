@@ -37,17 +37,19 @@ orchestrated delegation), see [agent-team-patterns.md](claude-code/agent-team-pa
 
 Set `multiAgentRouter: true` on the hub group's registration:
 
-```sql
-UPDATE registered_groups SET multi_agent_router = 1 WHERE folder = 'telegram_main';
+```bash
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"multiAgentRouter": true}' \
+  http://localhost:3100/api/groups/tg:12345
 ```
 
 Verify:
 
-```sql
-SELECT jid, name, folder, is_main, multi_agent_router FROM registered_groups;
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups
 ```
 
-No restart needed if you use the `register_group` MCP tool (it updates both DB and in-memory state). If you use raw SQL instead, restart NanoClaw for the change to take effect.
+No restart needed — the API updates both DB and in-memory state.
 
 **First time only**: restart NanoClaw after deploying the code so the DB migration creates the `multi_agent_router` column and the `delegations` table.
 
@@ -55,15 +57,19 @@ No restart needed if you use the `register_group` MCP tool (it updates both DB a
 
 Each sub-agent needs its own group registration with a unique JID and trigger:
 
-```sql
--- For Flow 1 (auto-routed dispatch, sub-agent responds directly to user)
-INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, requires_trigger, multi_agent_router)
-VALUES ('dashboard@internal', 'Dashboard', 'dashboard', '@dashboard', datetime('now'), 1, 1, 0);
+```bash
+# Flow 1 (auto-routed dispatch, sub-agent responds directly to user)
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"dashboard@internal","name":"Dashboard","folder":"dashboard","trigger":"@dashboard","isMain":true,"requiresTrigger":true,"multiAgentRouter":false}' \
+  http://localhost:3100/api/groups
 
--- For Flow 2 (orchestrated delegation, sub-agent responds via respond_to_group)
-INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, requires_trigger, multi_agent_router)
-VALUES ('fin@internal', 'Fin', 'fin', '@fin', datetime('now'), 0, 1, 0);
+# Flow 2 (orchestrated delegation, sub-agent responds via respond_to_group)
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"fin@internal","name":"Fin","folder":"fin","trigger":"@fin","isMain":false,"requiresTrigger":true,"multiAgentRouter":false}' \
+  http://localhost:3100/api/groups
 ```
+
+> Note: the API field is `trigger` (not `trigger_pattern`).
 
 **Key difference**: Flow 1 sub-agents need `is_main=1` to use `send_message(target_jid)`. Flow 2 sub-agents can have `is_main=0` since they use `respond_to_group`.
 
@@ -80,9 +86,10 @@ Create a `CLAUDE.md` in each sub-agent folder. See templates below.
 
 Internal groups require a row in the `chats` table:
 
-```sql
-INSERT INTO chats (jid, name, last_message_time, channel, is_group)
-VALUES ('dashboard@internal', 'Dashboard', datetime('now'), 'dashboard', 0);
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"dashboard@internal","name":"Dashboard","channel":"internal","isGroup":false}' \
+  http://localhost:3100/api/chats
 ```
 
 Without this row, messages queued for the internal group will not be processed.
@@ -213,7 +220,7 @@ List all registered groups and their JIDs. Main group only.
 
 ### Sub-agent never wakes up
 
-- Check the sub-agent's group is registered: `SELECT * FROM registered_groups WHERE folder = 'dashboard'`
+- Check the sub-agent's group is registered: `curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups/dashboard@internal`
 - Check the trigger pattern matches: triggers are case-insensitive, matched at start of message
 - Check `multiAgentRouter: true` is set on the hub group
 - Check the hub group has `isMain: true`
@@ -236,21 +243,24 @@ The `"@X is not a registered agent"` message fires for any `@mention` at the
 start of a message that doesn't match a registered trigger. Disable by removing
 the `multiAgentRouter` flag:
 
-```sql
-UPDATE registered_groups SET multi_agent_router = 0 WHERE folder = 'telegram_main';
+```bash
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"multiAgentRouter": false}' \
+  http://localhost:3100/api/groups/tg:12345
 ```
 
 ### Internal group not receiving messages
 
 Check the `chats` table has a row for the internal group's JID:
 
-```sql
-SELECT * FROM chats WHERE jid = 'dashboard@internal';
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/chats/dashboard@internal
 ```
 
 If empty, create it:
 
-```sql
-INSERT INTO chats (jid, name, last_message_time, channel, is_group)
-VALUES ('dashboard@internal', 'Dashboard', datetime('now'), 'dashboard', 0);
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"dashboard@internal","name":"Dashboard","channel":"internal","isGroup":false}' \
+  http://localhost:3100/api/chats
 ```

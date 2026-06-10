@@ -252,14 +252,17 @@ JID.** Each JID maps to exactly one group/agent.
 
 **DB config for Flow 1:**
 
-```sql
--- Hub group: multiAgentRouter enabled, isMain
-UPDATE registered_groups SET multi_agent_router = 1 WHERE folder = 'telegram_main';
+```bash
+# Hub group: multiAgentRouter enabled, isMain
+curl -X PATCH -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"multiAgentRouter": true}' \
+  http://localhost:3100/api/groups/tg:12345
 
--- Sub-agent: own JID, own trigger, MUST have is_main=1 to use send_message(target_jid)
--- requires_trigger=1 means it only responds when @mentioned
-INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, requires_trigger, multi_agent_router)
-VALUES ('dashboard@internal', 'Dashboard', 'dashboard', '@dashboard', datetime('now'), 1, 1, 0);
+# Sub-agent: own JID, own trigger, MUST have isMain=true to use send_message(target_jid)
+# requiresTrigger=true means it only responds when @mentioned
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"dashboard@internal","name":"Dashboard","folder":"dashboard","trigger":"@dashboard","isMain":true,"requiresTrigger":true,"multiAgentRouter":false}' \
+  http://localhost:3100/api/groups
 ```
 
 **Why `is_main=1` for sub-agents in Flow 1:**
@@ -293,16 +296,18 @@ Without `is_main=1`, the sub-agent can only send to its own chat. `requires_trig
 
 **DB config for Flow 2:**
 
-```sql
--- Hub group: isMain (already set), multiAgentRouter can be on or off for this flow
--- (delegate_to_group is an explicit MCP tool call, doesn't need the router flag)
+```bash
+# Hub group: isMain (already set), multiAgentRouter can be on or off for this flow
+# (delegate_to_group is an explicit MCP tool call, doesn't need the router flag)
 
--- Sub-agents: own JIDs, own triggers, is_main=0 (they respond via respond_to_group, not send_message)
-INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, multi_agent_router)
-VALUES ('fin@internal', 'Fin', 'fin', '@fin', datetime('now'), 0, 0);
+# Sub-agents: own JIDs, own triggers, isMain=false (they respond via respond_to_group, not send_message)
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"fin@internal","name":"Fin","folder":"fin","trigger":"@fin","isMain":false,"multiAgentRouter":false}' \
+  http://localhost:3100/api/groups
 
-INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, is_main, multi_agent_router)
-VALUES ('cherry@internal', 'Cherry', 'cherry', '@cherry', datetime('now'), 0, 0);
+curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jid":"cherry@internal","name":"Cherry","folder":"cherry","trigger":"@cherry","isMain":false,"multiAgentRouter":false}' \
+  http://localhost:3100/api/groups
 ```
 
 ---

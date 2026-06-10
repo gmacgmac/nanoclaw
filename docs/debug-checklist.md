@@ -96,7 +96,7 @@ grep -E 'Piped messages|sendMessage' logs/nanoclaw.log | tail -10
 grep -E 'Starting container|Container active|concurrency limit' logs/nanoclaw.log | tail -10
 
 # Check lastAgentTimestamp vs latest message timestamp
-sqlite3 store/messages.db "SELECT chat_jid, MAX(timestamp) as latest FROM messages GROUP BY chat_jid ORDER BY latest DESC LIMIT 5;"
+docker compose exec postgres psql -U nanoclaw nanoclaw -c "SELECT chat_jid, MAX(timestamp) as latest FROM messages GROUP BY chat_jid ORDER BY latest DESC LIMIT 5;"
 ```
 
 ## Container Mount Issues
@@ -108,8 +108,8 @@ grep -E 'Mount validated|Mount.*REJECTED|mount' logs/nanoclaw.log | tail -10
 # Verify the mount allowlist is readable
 cat ~/.config/nanoclaw/mount-allowlist.json
 
-# Check group's container_config in DB
-sqlite3 store/messages.db "SELECT name, container_config FROM registered_groups;"
+# Check group's container_config
+curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups | jq '.data[] | {name, containerConfig}'
 
 # Test-run a container to check mounts (dry run)
 # Replace <group-folder> with the group's folder name

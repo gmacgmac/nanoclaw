@@ -223,7 +223,11 @@ tail -f logs/nanoclaw.log
 ### Bot not responding
 
 1. Check `DISCORD_BOT_TOKEN` is set in `~/.config/nanoclaw/secrets.env`
-2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'dc:%'"`
+2. Check channel is registered:
+   ```bash
+   curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+     | jq '.data[] | select(.jid | startswith("dc:"))'
+   ```
 3. For non-main channels: message must include trigger pattern (@mention the bot)
 4. Service is running: `launchctl list | grep nanoclaw`
 5. Verify the bot has been invited to the server (check OAuth2 URL was used)

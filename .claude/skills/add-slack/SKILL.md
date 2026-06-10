@@ -178,7 +178,11 @@ If files already exist, tell the user: "Memory seed files already exist — skip
 Slack uses mrkdwn syntax which differs from standard Markdown. Add the `slack-formatting` skill to the group's containerConfig:
 
 ```bash
-sqlite3 store/messages.db "UPDATE registered_groups SET container_config = json_set(container_config, '$.skills', json('[\"capabilities\", \"status\", \"slack-formatting\"]')) WHERE folder = '<folder>'"
+JID=$(curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+  | jq -r '.data[] | select(.folder=="<folder>") | .jid')
+curl -sS -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"value":["capabilities","status","slack-formatting"]}' \
+  "http://localhost:3100/api/groups/${JID}/skills"
 ```
 
 Then clear the skills cache so the new skill is loaded on next container spawn:
@@ -225,7 +229,11 @@ tail -f logs/nanoclaw.log
 ### Bot not responding
 
 1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `~/.config/nanoclaw/secrets.env`
-2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
+2. Check channel is registered:
+   ```bash
+   curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+     | jq '.data[] | select(.jid | startswith("slack:"))'
+   ```
 3. For non-main channels: message must include trigger pattern
 4. Service is running: `launchctl list | grep nanoclaw`
 

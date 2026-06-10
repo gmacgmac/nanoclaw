@@ -389,7 +389,11 @@ pkill -f "node dist/index.js"
 
 Check:
 1. Auth credentials exist: `ls store/auth/creds.json`
-3. Chat is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE '%whatsapp%' OR jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net'"`
+3. Chat is registered:
+   ```bash
+   curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+     | jq '.data[] | select(.jid | test("whatsapp|@g\\.us|@s\\.whatsapp\\.net"))'
+   ```
 4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
 5. Logs: `tail -50 logs/nanoclaw.log`
 
@@ -425,5 +429,12 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 To remove WhatsApp integration:
 
 1. Delete auth credentials: `rm -rf store/auth/`
-2. Remove WhatsApp registrations: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net'"`
+2. Remove WhatsApp registrations:
+   ```bash
+   for JID in $(curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups \
+     | jq -r '.data[].jid | select(test("@g\\.us|@s\\.whatsapp\\.net"))'); do
+     curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+       "http://localhost:3100/api/groups/${JID}"
+   done
+   ```
 3. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)

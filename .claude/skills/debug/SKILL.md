@@ -273,8 +273,9 @@ rm -rf data/sessions/
 # Clear sessions for a specific group
 rm -rf data/sessions/{groupFolder}/.claude/
 
-# Also clear the session ID from NanoClaw's tracking (stored in SQLite)
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '{groupFolder}'"
+# Also clear the session ID from NanoClaw's tracking (PostgreSQL)
+curl -sS -X DELETE -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:3100/api/sessions/{groupFolder}
 ```
 
 To verify session resumption is working, check the logs for the same session ID across messages:

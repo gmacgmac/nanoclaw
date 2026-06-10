@@ -9,7 +9,7 @@ condition: dedicated admin group ONLY — do NOT assign to any group yet (no adm
 
 ### Registered Groups Config
 
-Groups are registered in the SQLite `registered_groups` table:
+Groups are registered in the PostgreSQL `registered_groups` table:
 
 ```json
 {

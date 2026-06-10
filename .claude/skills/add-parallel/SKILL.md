@@ -277,7 +277,11 @@ Look for: `Parallel AI MCP servers configured`
 - Check agent-runner logs for "Parallel AI MCP servers configured" message
 
 **Task polling not working:**
-- Verify scheduled task was created: `sqlite3 store/messages.db "SELECT * FROM scheduled_tasks"`
+
+- Verify scheduled task was created:
+  ```bash
+  curl -sS -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/scheduled-tasks | jq .
+  ```
 - Check task runs: `tail -f logs/nanoclaw.log | grep "scheduled task"`
 - Ensure task prompt includes proper Parallel MCP tool names
 
