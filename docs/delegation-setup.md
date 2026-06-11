@@ -49,9 +49,7 @@ Verify:
 curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3100/api/groups
 ```
 
-No restart needed — the API updates both DB and in-memory state.
-
-**First time only**: restart NanoClaw after deploying the code so the DB migration creates the `multi_agent_router` column and the `delegations` table.
+No restart needed — the API updates both DB and in-memory state, and both the `multi_agent_router` column and the `delegations` table are part of the base schema created by `createSchema()` in `src/db.ts` on first startup.
 
 ### 2. Register sub-agent groups
 

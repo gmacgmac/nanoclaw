@@ -113,12 +113,12 @@ Options (full list):
 - SendMessage
 - Agent
 - Skill
-- RemoteTrigger
 - AskUserQuestion
-- TodoWrite
 - ToolSearch
 
 > Note: `mcp__nanoclaw__*` is always included regardless of selection.
+>
+> **Permanently blocked tools**: `RemoteTrigger` and `TodoWrite` are intentionally absent from the tool allowlist ceiling and **cannot be enabled** for any group. Do not offer them as choices — they are documented as permanently blocked in `docs/sdk-tool-catalog-rediscovery.md`.
 
 If they select all or most, set `allowedTools` to undefined (all tools).
 If they select a subset, set exactly those.
@@ -154,6 +154,8 @@ All host commands require the sender to be on the sender allowlist (`~/.config/n
 |---------|-----------|---------------|
 | `/stop` | Aborts the in-flight model request via AbortController. Session preserved — next message resumes the same conversation. | Single deferred reply after container exits: `"⏹ Stopped. Next message continues the conversation."` |
 | `/shutdown` | Stops the container. Session preserved — next message starts a new container with the same session. | Single deferred reply after container exits: `"Container stopped. Next message will start a new container with the same session."` |
+| `/context` | Shows current context window usage for the active session. | Single immediate reply with token usage details. |
+| `/newsession` | Stops container, deletes session from memory + the database. JSONL transcript left on disk. Next message starts a completely fresh session. | Two-message UX: Reply 1 `"Clearing session..."` (immediate), Reply 2 `"Session cleared. Next message starts fresh."` (after container exits) |
 
 #### Gated Commands (require `allowedHostCommands` config)
 
@@ -161,7 +163,6 @@ All host commands require the sender to be on the sender allowlist (`~/.config/n
 |---------|-----------|---------------|
 | `/model [<preset>]` | No args: shows active preset + available list. With arg: switches to the named preset, recycles container, sanitizes session JSONL for cross-provider safety. | Two-message UX: Reply 1 `"Switching to <preset>..."` (immediate), Reply 2 `"Switched to <preset> (endpoint / model)."` (after container exits) |
 | `/version [info\|stable\|next]` | No args: shows current channel, image tag, SDK/CLI versions, drift detection. With arg: switches the group's container channel, recycles container. | Two-message UX: Reply 1 `"Switching to channel <ch>..."` (immediate), Reply 2 `"✅ Switched to channel: <ch>."` (after container exits) |
-| `/newsession` | Stops container, deletes session from memory + the database. JSONL transcript left on disk. Next message starts a completely fresh session. | Two-message UX: Reply 1 `"Clearing session..."` (immediate), Reply 2 `"Session cleared. Next message starts fresh."` (after container exits) |
 
 #### How the Two-Message UX Works
 
@@ -359,13 +360,15 @@ docker ps --filter "name=nanoclaw-<folder>" --format "{{.Names}}" | xargs -r doc
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `preset` | `string` | `undefined` | Named model preset from `~/.config/nanoclaw/model-presets.json` — resolves endpoint, model, capabilities, contextWindow, webSearchVendor |
+| `taskPreset` | `string \| null` | `undefined` = inherits `preset` | Model preset override for scheduled/delegated task runs. `null`/omitted = use main `preset`. Use a cheaper model for automated tasks. |
+| `nudgePreset` | `string \| null` | `undefined` = inherits `preset` | Model preset override for nightly nudge (memory maintenance) runs. `null`/omitted = use main `preset`. |
 | `skills` | `string[]` | `undefined` = all | Per-group skill selection. `[]` = none |
 | `allowedTools` | `string[]` | `undefined` = default | Per-group tool restrictions |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt |
 | `timeout` | `number` | `300000` (5 min) | Container timeout in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories |
-| `telegramBot` | `string` | `undefined` | Named Telegram bot instance |
+| `telegramBot` | `string` | `undefined` | Named Telegram bot instance. Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in `secrets.env`. |
 | `allowedHostCommands` | `string[]` | `undefined` = none | Gated host command allowlist (`'model'`, `'version'`) |
 | `ssrfProtection` | `boolean \| SsrfConfig` | `true` | SSRF protection |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning |
@@ -373,3 +376,5 @@ docker ps --filter "name=nanoclaw-<folder>" --format "{{.Names}}" | xargs -r doc
 | `approvalTimeout` | `number` | `120` | Approval timeout in seconds |
 | `commandAllowlist` | `string[]` | `[]` | Pre-approved command patterns |
 | `learningLoop` | `boolean \| 'extract-only'` | `false` | Skill extraction during flush |
+| `deniedTools` | `string[]` | `undefined` = deny nothing | Tool names subtracted from the system allowlist ceiling |
+| `hooks` | `string[]` | `undefined` = none | Ordered list of reminder hook keys (filenames in `docs/hooks/`) injected via UserPromptSubmit on live chat turns |

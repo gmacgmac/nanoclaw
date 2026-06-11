@@ -332,7 +332,84 @@ Note: Changing schedule values recalculates `next_run` automatically.
 
 ---
 
-## Group Management Operations
+## Approval Operations
+
+When `containerConfig.approvalMode: true` is set, the `execute_command` MCP tool sends a command-approval request via IPC for any command targeting write-mounted paths. The host (or a delegated channel) must respond to allow or deny the command.
+
+### Approval Request
+
+```json
+{
+  "type": "approval_request",
+  "chatJid": "tg:123456789",
+  "command": "rm -rf build/",
+  "patterns": [
+    { "name": "rm-rf", "description": "Recursive force delete", "matched": "rm -rf" }
+  ],
+  "targetPaths": ["/workspace/group/build/"],
+  "timestamp": 1718700000000,
+  "ttl": 120,
+  "groupFolder": "telegram_main"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | `"approval_request"` |
+| `chatJid` | string | yes | Chat to send the approval prompt to (must have a channel) |
+| `command` | string | yes | The full shell command awaiting approval |
+| `patterns` | `Array<{ name, description, matched }>` | yes | Risk patterns matched (from `lib/command-approval.ts`) |
+| `targetPaths` | `string[]` | yes | Container paths the command will write to |
+| `timestamp` | number | yes | Wall-clock time of the request (ms since epoch) |
+| `ttl` | number | yes | Seconds before unanswered request auto-denies (range 10–600, from `containerConfig.approvalTimeout`) |
+| `groupFolder` | string | no | Originating group folder (for response routing) |
+
+**Host behaviour** (`src/ipc.ts` `approval_request` handler):
+1. Sends a formatted approval prompt to the user via the channel for `chatJid`
+2. Tracks the pending request in the `pendingApprovals` map keyed by `chatJid` (one pending per chat)
+3. If a channel is unavailable for the JID, **auto-denies immediately** (fail-closed)
+4. If a previous pending request exists for the same JID, **auto-denies the old one** before queuing the new
+5. Waits up to `ttl` seconds for an `approval_response`
+
+**Response sent to user:**
+
+```
+⚠️ Command requires approval:
+
+Command: `rm -rf build/`
+Risk: Recursive force delete
+Targets: /workspace/group/build/ (write-mounted)
+
+Reply "yes" to approve, "no" to deny.
+Auto-deny in 120s.
+```
+
+### Approval Response
+
+The agent-runner writes the response to a sentinel file (NOT a `{uuid}.json` message file):
+
+`DATA_DIR/ipc/{group_folder}/input/_approval_response`
+
+```json
+{ "type": "approval_response", "approved": true }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | `"approval_response"` |
+| `approved` | boolean | yes | `true` to allow the command, `false` to deny |
+
+**Sentinel semantics**: The `_approval_response` filename (prefixed with `_`) is reserved and processed out-of-band by the approval watcher — it does not flow through the regular `{uuid}.json` message processing path. The host reads the file, parses the JSON, resolves the pending request for that `sourceGroup`, and either executes or blocks the command.
+
+**Auto-deny cases** (host writes `{ "type": "approval_response", "approved": false }` itself):
+- TTL expires with no user reply
+- No channel available for the request's `chatJid`
+- A new `approval_request` arrives while a previous one is still pending (old one auto-denied)
+- Process shutdown or container recycle mid-approval
+
+See `src/lib/command-approval.ts` for the matching risk-pattern definitions and the allowlist (`containerConfig.commandAllowlist`).
+
+---
 
 ### Register Group
 

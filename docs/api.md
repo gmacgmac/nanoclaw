@@ -82,7 +82,8 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 |------|--------|------|
 | List | `GET` | `/api/presets` |
 | Health | `GET` | `/api/presets/health` |
-| Raw tree | `GET` | `/api/presets/raw` |
+| Get raw | `GET` | `/api/presets/raw` |
+| Replace raw | `PUT` | `/api/presets/raw` | Full-file replacement. Validates JSON + at least one valid preset before writing. Use for repair when individual preset endpoints return 409. |
 | Single CRUD | `GET` / `PUT` / `DELETE` | `/api/presets/{name}` |
 
 ### Containers & Admin
@@ -90,7 +91,7 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 | Task | Method | Path | Notes |
 |------|--------|------|-------|
 | List | `GET` | `/api/containers` | |
-| Stop | `POST` | `/api/containers/{id}/stop` | |
+| Stop | `POST` | `/api/containers/{jid}/stop` | |
 | Reload groups | `POST` | `/api/admin/reload-groups` | |
 | Health | `GET` | `/api/health` | |
 | Send notification | `POST` | `/api/notify` | One-way message into group channels. No agent run. See §11. Common failure reasons: `jid_not_found`, `channel_unavailable`, `message_too_long` (per-target). |

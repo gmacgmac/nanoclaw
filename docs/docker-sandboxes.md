@@ -1,410 +1,158 @@
 ---
-title: Running NanoClaw in Docker Sandboxes (Manual Setup)
-created: 2026-03-13
-last_updated: 2026-05-22
+title: Docker Sandboxes (Container Architecture)
+created: 2026-06-11
+last_updated: 2026-06-11
 ---
 
-# Running NanoClaw in Docker Sandboxes (Manual Setup)
+# Docker Sandboxes (Container Architecture)
 
-This guide walks through setting up NanoClaw inside a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/) from scratch — no install script, no pre-built fork. You'll clone the upstream repo, apply the necessary patches, and have agents running in full hypervisor-level isolation.
+This document describes how NanoClaw uses Docker containers to run agents in isolation. It is the user-facing reference for container behaviour. For build mechanics, image channels, and the promotion workflow, see [`container/VERSIONING.md`](../container/VERSIONING.md).
 
-## Architecture
+## Overview
 
-```
-Host (macOS / Windows WSL)
-└── Docker Sandbox (micro VM with isolated kernel)
-    ├── NanoClaw process (Node.js)
-    │   ├── Channel adapters (WhatsApp, Telegram, etc.)
-    │   └── Container spawner → nested Docker daemon
-    └── Docker-in-Docker
-        └── nanoclaw-agent containers
-            └── Claude Agent SDK
-```
+NanoClaw is a single Node.js host process. When a message needs a response, the host spawns a **per-session Linux container** running the Claude Agent SDK, waits for it to finish, and routes the reply back through the channel adapter.
 
-Each agent runs in its own container, inside a micro VM that is fully isolated from your host. Two layers of isolation: per-agent containers + the VM boundary.
+Each container:
 
-The sandbox provides a MITM proxy at `host.docker.internal:3128` that handles network access and injects your Anthropic API key automatically.
+- Runs as a non-root user (`node`) inside a Linux VM or `node:22-slim`-based image.
+- Has its own writable group folder (bind-mounted from the host).
+- Receives its initial prompt via **stdin JSON** and emits its reply on **stdout JSON**.
+- Has no real credentials — the host injects them on demand through a local proxy (see [Credential Proxy](#credential-proxy)).
+- Can be recycled between messages; sessions persist across container restarts as JSONL transcripts plus a `session_id` stored in PostgreSQL.
 
-> **Note:** This guide is based on a validated setup running on macOS (Apple Silicon) with WhatsApp. Other channels (Telegram, Slack, etc.) and environments (Windows WSL) may require additional proxy patches for their specific HTTP/WebSocket clients. The core patches (container runner, credential proxy, Dockerfile) apply universally — channel-specific proxy configuration varies.
+Containers are **not** one-per-message. They stay alive between turns (idle-polling for IPC follow-ups) and time out after 30 minutes of inactivity. The next message after a timeout spawns a new container that resumes the same SDK session.
 
-## Prerequisites
+## Image Architecture
 
-- **Docker Desktop v4.40+** with Sandbox support
-- **Anthropic API key** (the sandbox proxy manages injection)
-- For **Telegram**: a bot token from [@BotFather](https://t.me/BotFather) and your chat ID
-- For **WhatsApp**: a phone with WhatsApp installed
+The image (`nanoclaw-agent:<version>`, see [Channels](#channels--versioning)) is built from `container/Dockerfile`. It contains:
 
-Verify sandbox support:
-```bash
-docker sandbox version
-```
+| Component | Source | Notes |
+|-----------|--------|-------|
+| Base image | `node:22-slim` (pinned) | Linux runtime |
+| System packages | apt (Dockerfile) | Chromium, fonts, `libgbm1`, `libnss3`, etc. — required for browser automation |
+| `claude-code` CLI | npm global, pinned | `@anthropic-ai/claude-code@<pinned version>` — must match SDK parity version |
+| Agent-runner deps | `container/agent-runner/package.json` + lockfile | `package.json` is baked; `src/` is mounted (see below) |
+| Agent-runner compiled output (`dist/`) | `container/agent-runner/` | **Overwritten at runtime** by the per-spawn mount of `src/` + `tsc` recompile |
+| `brave-search` MCP server | `container/mcp-servers/brave-search/` | dist baked into image |
+| `nanoclaw-web-search` MCP server | `container/mcp-servers/nanoclaw-web-search/` | dist baked into image |
+| `nanoclaw-transcription` MCP server | `container/mcp-servers/nanoclaw-transcription/` | dist baked into image |
+| Workspace scaffolding | Dockerfile `mkdir` | `/workspace/group`, `/workspace/extra`, `/workspace/ipc/{messages,tasks,input}` |
+| Entrypoint script | inline | `npx tsc --outDir /tmp/dist && node /tmp/dist/index.js` — recompiles per-spawn from mounted `src` |
 
-## Step 1: Create the Sandbox
+The entrypoint reads a single JSON object from stdin and writes a single JSON object to stdout. Follow-up messages and host commands arrive as files in `/workspace/ipc/input/`; the agent watches the directory while idle.
 
-On your host machine:
+### What is NOT baked in
 
-```bash
-# Create a workspace directory
-mkdir -p ~/nanoclaw-workspace
+The following are mounted, copied, or injected at runtime, so changes do **not** require a rebuild:
 
-# Create a shell sandbox with the workspace mounted
-docker sandbox create shell ~/nanoclaw-workspace
-```
+- **`container/agent-runner/src/`** — copied into `data/sessions/<group>/agent-runner-src/` and mounted over `/app/src` (rw). Entrypoint recompiles to `/tmp/dist` on every spawn. This is the single most counter-intuitive thing in the container model: edits to `container/agent-runner/src/**` take effect on the **next** container run, with no image rebuild or version bump.
+- Group folder (`<group>/CLAUDE.md`, `MEMORY.md`, daily notes, etc.) — bind-mounted as `/workspace/group` (rw).
+- Per-group session dir + `settings.json` — written per-spawn into `data/sessions/<folder>/.claude` and mounted as `/home/node/.claude` (rw). `settings.json` is **auto-generated** from the resolved preset; do not edit it manually.
+- Skills — copied per-spawn from `container/skills/` (filtered by `containerConfig.skills`).
+- Extracted skills — copied from `group/memory/extracted_skills/` when `learningLoop === true`.
+- Group IPC dir — `data/ipc/<folder>/` mounted as `/workspace/ipc` (rw).
+- `agent-browser` native binary — host-resolved per arch from `container/binaries/agent-browser/`, mounted at `/usr/local/lib/node_modules/agent-browser` and `/usr/local/bin/agent-browser`. Only mounted when the group explicitly lists `agent-browser` in its `skills`.
+- All `containerConfig` field values — read per-spawn from PostgreSQL and passed as env vars (`NANOCLAW_TOOL_ALLOWLIST`, `NANOCLAW_DENIED_TOOLS`, `NANOCLAW_APPROVAL_MODE`, `NANOCLAW_NATIVE_WEB_TOOLS`, etc.).
+- All credentials and channel tokens — never baked; the credential proxy injects them at request time.
+- Additional mounts from `containerConfig.additionalMounts` — validated against `~/.config/nanoclaw/mount-allowlist.json` by `src/mount-security.ts` before being attached.
 
-If you're using WhatsApp, configure proxy bypass so WhatsApp's Noise protocol isn't MITM-inspected:
+See `container/VERSIONING.md` § "Baked-In Components" and § "Runtime-Injected Components" for the full classification.
 
-```bash
-docker sandbox network proxy shell-nanoclaw-workspace \
-  --bypass-host web.whatsapp.com \
-  --bypass-host "*.whatsapp.com" \
-  --bypass-host "*.whatsapp.net"
-```
+## Container Lifecycle
 
-Telegram does not need proxy bypass.
+Spawn happens in `src/container-runner.ts`. For each turn:
 
-Enter the sandbox:
-```bash
-docker sandbox run shell-nanoclaw-workspace
-```
+1. **Resolve group config** — read `containerConfig` from PostgreSQL, merge with preset defaults, validate.
+2. **Resolve auth mode** — `detectAuthMode()` decides whether to inject an `x-api-key` placeholder (API-key mode) or an OAuth placeholder (OAuth mode). The proxy swaps the placeholder for the real credential.
+3. **Resolve image tag** — `resolveImageTag(group.containerChannel)` maps the group's channel (`stable` / `next` / per-group override) to a versioned tag from `container/VERSIONS.json`.
+4. **Prepare writable session dir** — `data/sessions/<folder>/.claude/` is populated with a fresh `settings.json` (auto-compaction from preset), filtered skills, and (when `learningLoop === true`) extracted skills.
+5. **Copy agent-runner source** — `container/agent-runner/src/` is `fs.cpSync`'d into `data/sessions/<folder>/agent-runner-src/`.
+6. **Build `docker run` args** — mounts for `/workspace/group`, `/workspace/ipc`, `/home/node/.claude`, the per-spawn `src` overlay, additional validated mounts, and per-arch `agent-browser` mounts when applicable. Environment variables carry `ANTHROPIC_BASE_URL`, the tool-allowlist ceiling, denied tools, approval mode/timeout, command allowlist, write-mounts, web-search config, native web-tools toggle, and any `containerConfig.additionalMounts`-derived env. `--init` is set so the child reaps its own zombies.
+7. **Spawn** — `docker run -i --rm` with the JSON prompt piped to stdin. The host reads stdout JSON, parses the final assistant message and any tool activity, and routes the reply.
+8. **Recycle** — on the next message, the host re-uses the persisted `session_id` to resume the same SDK session. If the container has idle-timed out (default 30 min) or hit the `containerConfig.timeout` (default 5 min for the active run), a new container is spawned against the same session JSONL.
 
-## Step 2: Install Prerequisites
+The runtime also exposes a `cleanupOrphans()` pass that stops containers matching the `nanoclaw-` prefix, excluding the host's own hostname so the host process is never killed by accident.
 
-Inside the sandbox:
+## Credential Proxy
 
-```bash
-sudo apt-get update && sudo apt-get install -y build-essential python3
-npm config set strict-ssl false
-```
+Containers never see real API keys or channel tokens. The host runs a local HTTP server (`src/credential-proxy.ts`) that proxies all upstream traffic and injects the real credential from `~/.config/nanoclaw/secrets.env`.
 
-## Step 3: Clone and Install NanoClaw
+- **Default bind:** `127.0.0.1:3001` (override with `CREDENTIAL_PROXY_PORT` env).
+- **Container-facing URL:** `http://host.docker.internal:3001` (set as `ANTHROPIC_BASE_URL` per spawn).
+- **Endpoint routing:** the proxy reads the `X-Nanoclaw-Endpoint` request header and routes to the matching vendor's upstream (`{VENDOR}_BASE_URL`) with its credentials (`{VENDOR}_API_KEY`, optional `{VENDOR}_AUTH` mode, optional `{VENDOR}_REGION` for SigV4/Bedrock).
+- **Auth modes:** `x-api-key` (default), `bearer` (OAuth), `sigv4` (AWS-style). Selected per vendor in `secrets.env`.
+- **Web search:** the `X-Nanoclaw-Web-Search-Vendor` header selects the vendor for the web search MCP tool.
+- **Transforms:** the `X-Nanoclaw-Transform` header triggers bidirectional Anthropic ↔ OpenAI ChatCompletions translation in the proxy — required for open-source models (e.g. on the Bedrock `bedrockoss` endpoint).
 
-NanoClaw must live inside the workspace directory — Docker-in-Docker can only bind-mount from the shared workspace path.
+Containers see only a placeholder key (e.g. `placeholder` or `proxy-managed`). The proxy is the only component that touches the real credential.
 
-```bash
-# Clone to home first (virtiofs can corrupt git pack files during clone)
-cd ~
-git clone https://github.com/qwibitai/nanoclaw.git
+See [`credential-proxy.md`](credential-proxy.md) for the full reference, including multi-vendor routing, Bedrock `sdkMode: "bedrock"`, and the Mantle proxy strip-list.
 
-# Replace with YOUR workspace path (the host path you passed to `docker sandbox create`)
-WORKSPACE=/Users/you/nanoclaw-workspace
+## Networking
 
-# Move into workspace so DinD mounts work
-mv nanoclaw "$WORKSPACE/nanoclaw"
-cd "$WORKSPACE/nanoclaw"
+Container-to-host traffic uses `host.docker.internal`:
 
-# Install dependencies
-npm install
-npm install https-proxy-agent
-```
+- **Credential proxy:** `http://host.docker.internal:3001` (set as `ANTHROPIC_BASE_URL`)
+- **IPC:** file-based — containers watch `/workspace/ipc/input/` for follow-up messages and host commands, and write outbound IPC into `/workspace/ipc/messages/` and `/workspace/ipc/tasks/`.
 
-## Step 4: Apply Proxy and Sandbox Patches
+On Linux, `host.docker.internal` is provided automatically by Docker Desktop / Docker Engine. On Apple Silicon macOS using Apple's `container` CLI, you must configure `vmnet` networking so containers can reach the host gateway — see [`apple-container-networking.md`](apple-container-networking.md).
 
-NanoClaw needs several patches to work inside a Docker Sandbox. These handle proxy routing, CA certificates, and Docker-in-Docker mount restrictions.
+The `ANTHROPIC_BASE_URL` env var means containers route all model API traffic through the proxy. Direct upstream calls are not possible because containers have no real credentials.
 
-### 4a. Dockerfile — proxy args for container image build
+## Channels & Versioning
 
-`npm install` inside `docker build` fails with `SELF_SIGNED_CERT_IN_CHAIN` because the sandbox's MITM proxy presents its own certificate. Add proxy build args to `container/Dockerfile`:
-
-Add these lines after the `FROM` line:
-
-```dockerfile
-# Accept proxy build args
-ARG http_proxy
-ARG https_proxy
-ARG no_proxy
-ARG NODE_EXTRA_CA_CERTS
-ARG npm_config_strict_ssl=true
-RUN npm config set strict-ssl ${npm_config_strict_ssl}
-```
-
-And after the `RUN npm install` line:
-
-```dockerfile
-RUN npm config set strict-ssl true
-```
-
-### 4b. Build script — forward proxy args
-
-Patch `container/build.sh` to pass proxy env vars to `docker build`:
-
-Add these `--build-arg` flags to the `docker build` command:
-
-```bash
---build-arg http_proxy="${http_proxy:-$HTTP_PROXY}" \
---build-arg https_proxy="${https_proxy:-$HTTPS_PROXY}" \
---build-arg no_proxy="${no_proxy:-$NO_PROXY}" \
---build-arg npm_config_strict_ssl=false \
-```
-
-### 4c. Container runner — proxy forwarding, CA cert mount, /dev/null fix
-
-Three changes to `src/container-runner.ts`:
-
-**Replace `/dev/null` shadow mount.** The sandbox rejects `/dev/null` bind mounts. Find where `.env` is shadow-mounted to `/dev/null` and replace it with an empty file:
-
-```typescript
-// Create an empty file to shadow .env (Docker Sandbox rejects /dev/null mounts)
-const emptyEnvPath = path.join(DATA_DIR, 'empty-env');
-if (!fs.existsSync(emptyEnvPath)) fs.writeFileSync(emptyEnvPath, '');
-// Use emptyEnvPath instead of '/dev/null' in the mount
-```
-
-**Forward proxy env vars** to spawned agent containers. Add `-e` flags for `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase variants.
-
-**Mount CA certificate.** If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set, copy the cert into the project directory and mount it into agent containers:
-
-```typescript
-const caCertSrc = process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
-if (caCertSrc) {
-  const certDir = path.join(DATA_DIR, 'ca-cert');
-  fs.mkdirSync(certDir, { recursive: true });
-  fs.copyFileSync(caCertSrc, path.join(certDir, 'proxy-ca.crt'));
-  // Mount: certDir -> /workspace/ca-cert (read-only)
-  // Set NODE_EXTRA_CA_CERTS=/workspace/ca-cert/proxy-ca.crt in the container
-}
-```
-
-### 4d. Container runtime — prevent self-termination
-
-In `src/container-runtime.ts`, the `cleanupOrphans()` function matches containers by the `nanoclaw-` prefix. Inside a sandbox, the sandbox container itself may match (e.g., `nanoclaw-docker-sandbox`). Filter out the current hostname:
-
-```typescript
-// In cleanupOrphans(), filter out os.hostname() from the list of containers to stop
-```
-
-### 4e. Credential proxy — route through MITM proxy
-
-In `src/credential-proxy.ts`, upstream API requests need to go through the sandbox proxy. Add `HttpsProxyAgent` to outbound requests:
-
-```typescript
-import { HttpsProxyAgent } from 'https-proxy-agent';
-
-const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
-const upstreamAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-// Pass upstreamAgent to https.request() options
-```
-
-### 4f. Setup script — proxy build args
-
-Patch `setup/container.ts` to pass the same proxy `--build-arg` flags as `build.sh` (Step 4b).
-
-## Step 5: Build
-
-```bash
-npm run build
-bash container/scripts/container.sh build v1.0.0
-```
-
-> **Note:** `container/build.sh` no longer accepts bare invocations. Use the `container.sh` wrapper with an explicit version tag. See [Image Versioning & Channels](#image-versioning--channels) below.
-
-## Step 6: Add a Channel
-
-### Telegram
-
-```bash
-# Apply the Telegram skill (merge the skill branch)
-git fetch origin skill/telegram
-git merge origin/skill/telegram
-
-# Rebuild after applying the skill
-npm run build
-
-# Configure .env
-cat > .env << EOF
-TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
-ASSISTANT_NAME=nanoclaw
-ANTHROPIC_API_KEY=proxy-managed
-EOF
-
-# Register your chat
-npx tsx setup/index.ts --step register \
-  --jid "tg:<your-chat-id>" \
-  --name "My Chat" \
-  --trigger "@nanoclaw" \
-  --folder "telegram_main" \
-  --channel telegram \
-  --assistant-name "nanoclaw" \
-  --is-main \
-  --no-trigger-required
-```
-
-**To find your chat ID:** Send any message to your bot, then:
-```bash
-curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | python3 -m json.tool
-```
-
-**Telegram in groups:** Disable Group Privacy in @BotFather (`/mybots` > Bot Settings > Group Privacy > Turn off), then remove and re-add the bot.
-
-**Important:** If the Telegram skill creates `src/channels/telegram.ts`, you'll need to patch it for proxy support. Add an `HttpsProxyAgent` and pass it to grammy's `Bot` constructor via `baseFetchConfig.agent`. Then rebuild.
-
-### WhatsApp
-
-Make sure you configured proxy bypass in [Step 1](#step-1-create-the-sandbox) first.
-
-```bash
-# Apply the WhatsApp skill (merge the skill branch)
-git fetch origin skill/whatsapp
-git merge origin/skill/whatsapp
-
-# Rebuild
-npm run build
-
-# Configure .env
-cat > .env << EOF
-ASSISTANT_NAME=nanoclaw
-ANTHROPIC_API_KEY=proxy-managed
-EOF
-
-# Authenticate (choose one):
-
-# QR code — scan with WhatsApp camera:
-npx tsx src/whatsapp-auth.ts
-
-# OR pairing code — enter code in WhatsApp > Linked Devices > Link with phone number:
-npx tsx src/whatsapp-auth.ts --pairing-code --phone <phone-number-no-plus>
-
-# Register your chat (JID = your phone number + @s.whatsapp.net)
-npx tsx setup/index.ts --step register \
-  --jid "<phone>@s.whatsapp.net" \
-  --name "My Chat" \
-  --trigger "@nanoclaw" \
-  --folder "whatsapp_main" \
-  --channel whatsapp \
-  --assistant-name "nanoclaw" \
-  --is-main \
-  --no-trigger-required
-```
-
-**Important:** The WhatsApp skill files (`src/channels/whatsapp.ts` and `src/whatsapp-auth.ts`) also need proxy patches — add `HttpsProxyAgent` for WebSocket connections and a proxy-aware version fetch. Then rebuild.
-
-### Both Channels
-
-Apply both skills, patch both for proxy support, combine the `.env` variables, and register each chat separately.
-
-## Step 7: Run
-
-```bash
-npm start
-```
-
-You don't need to set `ANTHROPIC_API_KEY` manually. The sandbox proxy intercepts requests and replaces `proxy-managed` with your real key automatically.
-
-## Networking Details
-
-### How the proxy works
-
-All traffic from the sandbox routes through the host proxy at `host.docker.internal:3128`:
-
-```
-Agent container → DinD bridge → Sandbox VM → host.docker.internal:3128 → Host proxy → api.anthropic.com
-```
-
-**"Bypass" does not mean traffic skips the proxy.** It means the proxy passes traffic through without MITM inspection. Node.js doesn't automatically use `HTTP_PROXY` env vars — you need explicit `HttpsProxyAgent` configuration in every HTTP/WebSocket client.
-
-### Shared paths for DinD mounts
-
-Only the workspace directory is available for Docker-in-Docker bind mounts. Paths outside the workspace fail with "path not shared":
-- `/dev/null` → replace with an empty file in the project dir
-- `/usr/local/share/ca-certificates/` → copy cert to project dir
-- `/home/agent/` → clone to workspace instead
-
-### Git clone and virtiofs
-
-The workspace is mounted via virtiofs. Git's pack file handling can corrupt over virtiofs during clone. Workaround: clone to `/home/agent` first, then `mv` into the workspace.
-
-## Troubleshooting
-
-### npm install fails with SELF_SIGNED_CERT_IN_CHAIN
-```bash
-npm config set strict-ssl false
-```
-
-### Container build fails with proxy errors
-```bash
-docker build \
-  --build-arg http_proxy=$http_proxy \
-  --build-arg https_proxy=$https_proxy \
-  -t nanoclaw-agent:v1.0.0 container/
-```
-
-> Use an explicit version tag — `:latest` is not used. See [Image Versioning & Channels](#image-versioning--channels).
-
-### Agent containers fail with "path not shared"
-All bind-mounted paths must be under the workspace directory. Check:
-- Is NanoClaw cloned into the workspace? (not `/home/agent/`)
-- Is the CA cert copied to the project root?
-- Has the empty `.env` shadow file been created?
-
-### Agent containers can't reach Anthropic API
-Verify proxy env vars are forwarded to agent containers. Check container logs for `HTTP_PROXY=http://host.docker.internal:3128`.
-
-### WhatsApp error 405
-The version fetch is returning a stale version. Make sure the proxy-aware `fetchWaVersionViaProxy` patch is applied — it fetches `sw.js` through `HttpsProxyAgent` and parses `client_revision`.
-
-### WhatsApp "Connection failed" immediately
-Proxy bypass not configured. From the **host**, run:
-```bash
-docker sandbox network proxy <sandbox-name> \
-  --bypass-host web.whatsapp.com \
-  --bypass-host "*.whatsapp.com" \
-  --bypass-host "*.whatsapp.net"
-```
-
-### Telegram bot doesn't receive messages
-1. Check the grammy proxy patch is applied (look for `HttpsProxyAgent` in `src/channels/telegram.ts`)
-2. Check Group Privacy is disabled in @BotFather if using in groups
-
-### Git clone fails with "inflate: data stream error"
-Clone to a non-workspace path first, then move:
-```bash
-cd ~ && git clone https://github.com/qwibitai/nanoclaw.git && mv nanoclaw /path/to/workspace/nanoclaw
-```
-
-### WhatsApp QR code doesn't display
-Run the auth command interactively inside the sandbox (not piped through `docker sandbox exec`):
-```bash
-docker sandbox run shell-nanoclaw-workspace
-# Then inside:
-npx tsx src/whatsapp-auth.ts
-```
-
-## Image Versioning & Channels
-
-Agent containers use a channel-based image system instead of a single mutable `:latest` tag. Each group is assigned to a channel that determines which image version it runs.
-
-### Channels
+Agent containers use a channel-based image system. There is no `:latest` tag.
 
 | Channel | Tag | Purpose |
 |---------|-----|---------|
 | `stable` | `nanoclaw-agent:stable` | Default. All groups use this unless explicitly switched. |
-| `next` | `nanoclaw-agent:next` | Canary. Test new SDK/CLI versions on select groups before promotion. |
+| `next` | `nanoclaw-agent:next` | Canary. Test new SDK/CLI versions on a single group before promotion. |
 
-Both `:stable` and `:next` are mutable aliases pointing at immutable versioned tags (e.g., `nanoclaw-agent:v1.0.0`). Versioned tags are never overwritten.
+Both `:stable` and `:next` are mutable `docker tag` aliases pointing at immutable versioned tags (`nanoclaw-agent:v1.0.0`, etc.). Versioned tags are never overwritten.
 
-### Per-Group Channel Assignment
+Each group has a `container_channel` column on `registered_groups` (default `'stable'`). The host resolves this to an image tag at spawn time via `container/VERSIONS.json`.
 
-Each group has a `container_channel` column in `registered_groups` (default: `'stable'`). The host resolves this to an image tag at container spawn time. To switch a group's channel:
+Per-group channel switching (host commands, not doc edits):
 
 ```
-/version next     — switch this group to the :next channel
-/version stable   — switch back to :stable
-/version          — show current channel, image SHA, and version info
+/version next     # switch this group to :next
+/version stable   # switch back to :stable
+/version          # show current channel, image SHA, and version
 ```
 
-Channel switches take effect on the next container spawn (existing running containers are unaffected until recycled).
+Channel switches take effect on the next container spawn — running containers are unaffected until recycled. When an SDK major-line boundary is crossed (e.g. 0.2.x → 0.3.x), session JSONL is not backward-resumable; users must run `/newsession` after switching channels.
 
-### Building and Promoting
+Full reference: [`container/VERSIONING.md`](../container/VERSIONING.md) — covers `VERSIONS.json`, the rebuild classification matrix, promotion checklist, and rollback procedure.
+
+## Build Commands
+
+All container image work goes through `container/scripts/container.sh`. Do not use `docker build` directly.
 
 ```bash
-./container/scripts/container.sh build v1.2.0    # Build (no channel change)
-./container/scripts/container.sh stage v1.2.0    # Point :next at v1.2.0
-./container/scripts/container.sh promote v1.2.0  # Point :stable at v1.2.0
-./container/scripts/container.sh rollback        # Revert :stable to previous
-./container/scripts/container.sh current         # Show current channel state
+# Build a new versioned image (does NOT change any channel)
+./container/scripts/container.sh build v1.2.0
+
+# Point :next at the new build (canary on opt-in groups)
+./container/scripts/container.sh stage v1.2.0
+
+# Promote to :stable (affects all groups) — manual decision point
+./container/scripts/container.sh promote v1.2.0
+
+# Revert :stable to its previous versioned tag
+./container/scripts/container.sh rollback
+
+# Show current channel state
+./container/scripts/container.sh current
 ```
 
-> **Full reference:** [`container/VERSIONING.md`](../container/VERSIONING.md) — covers the channel model, `VERSIONS.json` state file, promotion checklist, and rollback procedure.
+Bare `container/build.sh` invocations are rejected — the script requires an explicit version tag. After every `build`/`stage`/`promote`/`rollback`, the script updates `container/VERSIONS.json` atomically. Commit the file to preserve the audit trail.
 
-### Security Note
+**When you do (and do not) need to rebuild** — see the classification matrix in `container/VERSIONING.md` § "Full Classification Matrix". Short version: changes to `container/agent-runner/src/**`, `container/skills/**`, `tool-allowlist.json`, `containerConfig`, and host code (`src/**`) do **not** require a rebuild. Changes to `container/Dockerfile`, `container/agent-runner/package.json` (or its lockfile), or any MCP server `src/` **do** require a rebuild + version bump.
 
-The channel system is purely a routing layer. Sandboxing semantics (container isolation, mount security, network model) are identical between `:stable` and `:next`. The only difference is the SDK/CLI version inside the container.
+## Cross-References
+
+- [`container/VERSIONING.md`](../container/VERSIONING.md) — channels, `VERSIONS.json`, promotion, rollback
+- [`apple-container-networking.md`](apple-container-networking.md) — Apple `container` CLI vmnet setup on macOS
+- [`credential-proxy.md`](credential-proxy.md) — multi-vendor routing, auth modes, transforms
+- [`security.md`](security.md) — mount security, injection scanning, command approval
+- [`spec.md`](spec.md) — message flow, IPC types, session lifecycle

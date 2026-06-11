@@ -51,6 +51,29 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/nightly-maintenance.ts` | Nightly cron: nudge, prune messages, expire delegations, rotate logs |
 | `src/prompt-reminders.ts` | Prompt reminder resolver — loads `docs/hooks/` snippets, interpolates channel |
 | `src/host-commands.ts` | Host commands (/model, /version, /newsession, /shutdown, /stop, /context) |
+| `src/multi-agent-router.ts` | Hub group auto-router: scans incoming messages for sub-agent triggers and dispatches |
+| `src/sender-allowlist.ts` | Per-group sender ID allowlist enforcement (blocks untrusted senders) |
+| `src/session-sanitizer.ts` | Sanitises session resumes to strip stale tool definitions and invalid content |
+| `src/presets.ts` | Resolves `containerConfig.preset` to endpoint/model/capabilities via `model-presets.json` |
+| `src/remote-control.ts` | Remote control plane for dashboard / external session management |
+| `src/spawn-config.ts` | Builds container spawn configuration (env, mounts, channels) from `containerConfig` |
+| `src/build-container-input.ts` | Assembles `/workspace/ipc/` and `/workspace/group/` contents written into each container |
+| `src/abandoned-run-sweep.ts` | Sweeps containers abandoned by crashed/oom-killed host processes |
+| `src/task-runtime-state.ts` | In-memory state for in-flight task runs (cancellable, recoverable) |
+| `src/image.ts` | Image preprocessing for inbound messages (resize, normalize to JPEG, base64) |
+| `src/transcription.ts` | Audio transcription for inbound voice messages |
+| `src/group-folder.ts` | Resolves and validates per-group folder paths |
+| `src/group-registry.ts` | In-memory cache of registered groups with change detection |
+| `src/timezone.ts` | Group timezone resolution and formatting helpers |
+| `src/channels/telegram.ts` | Telegram channel (self-registers at startup; skill-merged) |
+| `src/channels/dashboard.ts` | Dashboard channel (HTTP-based, internal-only) |
+| `src/lib/command-approval.ts` | Approval flow for `execute_command` MCP tool (allowlist + risk patterns) |
+| `src/lib/config-validator.ts` | `containerConfig` schema validation (defaults, type checks) |
+| `src/lib/context-scanner.ts` | Scans context files (CLAUDE.md, MEMORY.md, daily notes) for the nightly memory nudge |
+| `src/lib/nudge-prompt.ts` | Builds the nightly memory-nudge prompt from scanned context |
+| `src/lib/skill-manager.ts` | Discovers, loads, and registers container skills at runtime |
+| `src/lib/injection-scanner.ts` | Prompt-injection scanning for context files (mode: `off` / `warn` / `block`) |
+| `src/lib/ssrf-validator.ts` | SSRF protection for outbound `web_fetch` (host allow/deny lists) |
 | `store/messages.db` | **Legacy artifact** — no longer the primary store. Data lives in PostgreSQL (Docker volume `pgdata`, container `nanoclaw-postgres-1`) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `docs/hooks/` | Per-turn reminder snippets (loaded by `src/prompt-reminders.ts`) |
@@ -132,7 +155,7 @@ Stored as JSON in the `registered_groups.container_config` PostgreSQL column. Al
 | `skills` | `string[]` | `undefined` = all skills | Per-group skill selection. `[]` = none, `["x","y"]` = named only |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt (agent persona/instructions) |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC. Key = server name, value = `{ command, args?, env? }` |
-| `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
+| `timeout` | `number` | `1800000` (30 min) | Container timeout override in ms (matches `CONTAINER_TIMEOUT` in `src/config.ts`) |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
 | `telegramBot` | `string` | `undefined` (default bot) | Telegram bot instance name. Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files (CLAUDE.md, MEMORY.md, daily notes) before launch |

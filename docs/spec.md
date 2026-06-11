@@ -16,14 +16,18 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 2. [Architecture: Channel System](#architecture-channel-system)
 3. [Folder Structure](#folder-structure)
 4. [Configuration](#configuration)
-5. [Memory System](#memory-system)
-6. [Session Management](#session-management)
-7. [Message Flow](#message-flow)
-8. [Commands](#commands)
-9. [Scheduled Tasks](#scheduled-tasks)
-10. [MCP Servers](#mcp-servers)
-11. [Deployment](#deployment)
-12. [Security Considerations](#security-considerations)
+5. [Database Schema](#database-schema)
+6. [Memory System](#memory-system)
+7. [Session Management](#session-management)
+8. [Message Flow](#message-flow)
+9. [Commands](#commands)
+10. [Host Commands](#host-commands)
+11. [Scheduled Tasks](#scheduled-tasks)
+12. [MCP Servers](#mcp-servers)
+13. [MCP Tool Catalog](#mcp-tool-catalog)
+14. [IPC Message Types](#ipc-message-types)
+15. [Deployment](#deployment)
+16. [Security Considerations](#security-considerations)
 
 ---
 
@@ -480,7 +484,7 @@ Per-group behaviour is controlled via `containerConfig` — stored as `jsonb` in
 | `skills` | `string[]` | `undefined` = none | Per-group skill selection. `[]` = none, `["x","y"]` = named only |
 | `systemPrompt` | `string` | `undefined` | Appended after `claude_code` preset prompt (agent persona/instructions) |
 | `mcpServers` | `object` | `undefined` = nanoclaw only | Per-group MCP servers alongside built-in nanoclaw IPC. Key = server name, value = `{ command, args?, env? }` |
-| `timeout` | `number` | `300000` (5 min) | Container timeout override in ms |
+| `timeout` | `number` | `1800000` (30 min) | Container timeout override in ms |
 | `additionalMounts` | `AdditionalMount[]` | `[]` | Extra host directories (validated against mount-allowlist.json) |
 | `telegramBot` | `string` | `undefined` (default bot) | Telegram bot instance name. Maps to `TELEGRAM_{NAME}_BOT_TOKEN` in secrets.env |
 | `injectionScanMode` | `'off' \| 'warn' \| 'block'` | `'warn'` | Prompt injection scanning for context files (CLAUDE.md, MEMORY.md, daily notes) before launch |
@@ -593,6 +597,8 @@ Groups select their model via a named preset from `~/.config/nanoclaw/model-pres
 | `contextWindow` | `number` | no | `128000` |
 | `compactThreshold` | `number` (0.1–0.95) | no | `0.8` |
 | `webSearchVendor` | `string` | no | `"ollama"` |
+| `transform` | `'openai'` | no | `undefined` (no transform) | Request/response transform applied at the credential proxy — `openai` rewrites Anthropic-format requests to OpenAI-format for OpenAI-compatible endpoints (Ollama cloud, etc.) |
+| `sdkMode` | `'anthropic' \| 'bedrock'` | no | `'anthropic'` | SDK transport mode. `bedrock` routes through AWS Bedrock; `anthropic` (default) uses the standard Anthropic API |
 
 **Auto-compaction**: At container spawn, `settings.json` is written with `autoCompactEnabled: true` and `autoCompactWindow = contextWindow * compactThreshold`. This tells the SDK to compact the conversation when input tokens exceed the threshold. Without this, non-Anthropic models (via Ollama) may never trigger compaction because the SDK cannot detect their context window from API responses.
 
@@ -735,6 +741,48 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 - `{{PROJECT_ROOT}}` - Absolute path to your nanoclaw installation
 - `{{NODE_PATH}}` - Path to node binary (detected via `which node`)
 - `{{HOME}}` - User's home directory
+
+---
+
+## Database Schema
+
+The primary store is PostgreSQL (Docker container `nanoclaw-postgres-1`, volume `pgdata`). The host connects via `DATABASE_URL` from `~/.config/nanoclaw/secrets.env` (with a `.env` fallback). The legacy `store/messages.db` SQLite file is no longer written to.
+
+Schema is created idempotently by `createSchema()` in `src/db.ts`. Migrations are additive `ALTER TABLE … ADD COLUMN IF NOT EXISTS` calls. Connection pool: `max: 10`, `idle_timeout: 20s`, `max_lifetime: 1800s` (recycled every 30 min to handle PG restarts).
+
+### Tables
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `chats` | Chat metadata (no message body) | `jid` PK, `name`, `last_message_time`, `channel`, `is_group` |
+| `messages` | All channel messages polled into PG | `id`+`chat_jid` composite PK, `sender`, `sender_name`, `content`, `timestamp`, `is_from_me`, `is_bot_message` |
+| `registered_groups` | Group registration and per-group config | `jid` PK, `name`, `folder` UNIQUE, `trigger_pattern`, `added_at`, `container_config` (jsonb), `requires_trigger`, `is_main`, `is_admin`, `multi_agent_router`, `container_channel` |
+| `sessions` | Maps group folder → current Claude session UUID | `group_folder` PK, `session_id` |
+| `scheduled_tasks` | Recurring/one-time tasks | `id` PK, `group_folder`, `chat_jid`, `prompt`, `description`, `script`, `schedule_type`, `schedule_value`, `context_mode`, `next_run`, `last_run`, `last_result`, `status`, `created_at` |
+| `task_run_logs` | Per-run history with started sentinel | `id` SERIAL PK, `task_id` FK→`scheduled_tasks`, `run_at`, `duration_ms`, `status` (`started`/`success`/`error`), `result`, `error` |
+| `delegations` | Inter-group delegation correlation | `uuid` PK, `caller_jid`, `target_jid`, `created_at`, `expires_at`, `status` (`pending`/`fulfilled`/`expired`) |
+| `dashboard_chat_log` | Dashboard channel message log (separate from `messages`) | `id` PK, `chat_jid`, `sender`, `sender_name`, `content`, `timestamp`, `is_from_user` |
+| `error_log` | Persisted error log (level/message/context) | `id` SERIAL PK, `level` (`error`/`fatal`/`warn`), `message`, `context` (jsonb), `timestamp` |
+| `router_state` | Generic key/value store (e.g. `last_timestamp`, `last_agent_timestamp`) | `key` PK, `value` |
+
+### Notes
+
+- **`messages` vs `dashboard_chat_log`**: `messages` is the canonical message store used by the message loop and catch-up logic. The dashboard channel additionally writes to `dashboard_chat_log` so the dashboard can render its own session history independently of the polling message store.
+- **`container_config`** is stored as a JSON string in the `container_config` column and parsed at read time. The full `containerConfig` schema is documented in [Configuration → Field Reference](#field-reference).
+- **`task_run_logs` started sentinel**: at the start of a task run, a row with `status='started'` is inserted and its `id` is returned. On completion, the same row is updated with the final status, `duration_ms`, and result. Orphaned `started` rows (no completion event) are detected by `getOrphanedStartedRuns()` and reconciled during nightly maintenance.
+- **`delegations` lifecycle**: created with `status='pending'` and a `ttl` derived from `ttlSeconds` on the IPC `delegate_to_group` request. Stale delegations are expired by `expireStaleDelegations()` during nightly maintenance.
+- **`error_log`** is populated via the `setDbErrorLogger` hook installed in `initDatabase()`; any logger error/fatal/warn from the host writes here. Query via `getErrorLogs(limit, level?)`.
+- **JSON migration**: on first run with an existing `data/` directory, `migrateJsonState()` reads `router_state.json`, `sessions.json`, and `registered_groups.json`, persists to PG, and renames the files to `*.migrated`.
+
+### Operational helpers
+
+| Function | Purpose |
+|----------|---------|
+| `pruneOldMessages(retentionDays=30)` | Nightly maintenance — delete `messages` older than retention window |
+| `expireStaleDelegations()` | Mark `delegations` past `expires_at` as `expired` |
+| `getOrphanedStartedRuns()` | Find `task_run_logs` rows stuck in `started` (crashed runs) |
+| `runInTransaction(fn)` | Wrap mutations in a PostgreSQL transaction |
+| `testConnection()` | Used by `/setup` and dashboard to confirm PG is reachable |
 
 ---
 
@@ -974,6 +1022,42 @@ Nudge and scheduled-task spawn paths do not pass `promptReminder` — the remind
 
 ---
 
+## Host Commands
+
+Host commands are intercepted on the host process **before** any message is forwarded to a container agent. They work across all channels and are dispatched from `src/host-commands.ts` via `handleHostCommand()`. The slash command must appear at the start of the message text (whitespace-trimmed). Telegram's `@<botname>` suffix is stripped automatically.
+
+### Catalog
+
+| Command | Classification | Allowlist key | Description | Effect |
+|---------|----------------|---------------|-------------|--------|
+| `/stop` | **ungated** | n/a | Stop the active container for this group | Closes container stdin; reply "Stopped. Next message continues the conversation." No session reset. |
+| `/shutdown` | **ungated** | n/a | Stop the container and force a fresh spawn on next message | Closes container stdin; reply "Container stopped. Next message will start a new container with the same session." |
+| `/context` | **ungated** | n/a | Show context window usage | Reads `parseLastInputTokens()` from the latest session log + the group's resolved preset. Reports model, window size, last input tokens, and % used. |
+| `/newsession` | **ungated** | n/a | Clear the current session and start fresh | Closes container stdin, then calls `clearSessionState(groupFolder)` to delete the session ID and `.jsonl` transcript. Reply "Session cleared. Next message starts fresh." |
+| `/model` | **gated** | `model` | Switch model preset | `allowedHostCommands: ['model']` required. Switches `containerConfig.preset`, recycles the container, sanitizes the session `.jsonl` (rewrites non-conformant `tool_use` IDs, strips `thinking` blocks) so the new model can resume safely. |
+| `/version` | **gated** | `version` | Inspect or switch the container image channel | `allowedHostCommands: ['version']` required. With no args: reports channel, image tag, SDK/CLI version, and drift between VERSIONS.json and the running image. With `<channel>` arg: switches the group's `container_channel` to `stable` or `next`, recycles the container. |
+
+### Classification
+
+- **Ungated commands** are processed for every group without any `containerConfig` opt-in. They are always available.
+- **Gated commands** require `containerConfig.allowedHostCommands: ['<name>']` on the group. If the command is not in the list, it falls through to the agent as a regular message.
+
+The canonical list is also exposed via the HTTP API at `GET /api/host-commands`, which returns `{ gated: [...], ungated: [...] }`. Source of truth for the API: `src/api/routes/host-commands.ts`.
+
+### Authorization
+
+All host commands require the sender to pass the `sender-allowlist` check (`loadSenderAllowlist()` → `isSenderAllowed(jid, sender, cfg)`). Unauthorised senders receive "Not authorised." and the command is consumed (does not fall through to the agent).
+
+### Session sanitization on `/model`
+
+`SANITIZE_SESSION_ON_SWITCH` (default: `true`) controls whether the host sanitizes the session JSONL on model switch. Sanitization is required because:
+- Ollama (and other non-Anthropic models) may emit `tool_use` IDs that violate the `^[a-zA-Z0-9-]+$` regex expected by the Anthropic SDK.
+- `thinking` blocks carry model-specific cryptographic signatures and are rejected by other models.
+
+Sanitization is best-effort: a failure is logged at `warn` and the switch proceeds.
+
+---
+
 ## Scheduled Tasks
 
 NanoClaw has a built-in scheduler that runs tasks as full agents in their group's context.
@@ -1059,6 +1143,113 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 | `execute_command` | Execute a shell command on the host |
 | `register_group` | Register a new group (admin only) |
 | `get_registered_groups` | List all registered groups |
+
+---
+
+## MCP Tool Catalog
+
+The `nanoclaw` MCP server is registered via stdio (`container/agent-runner/src/ipc-mcp-stdio.ts`). Tool definitions, descriptions, and Zod schemas are authoritative in that file. Tool visibility is gated by the group's role at MCP-server-spawn time:
+
+- **`isAdmin`** determines whether `register_group` is registered
+- **`isMain`** determines whether `get_registered_groups`, `delegate_to_group` are registered
+- All other tools are always available
+
+Defense-in-depth: even if a tool is registered, the host-side IPC handler in `src/ipc.ts` re-checks the role before performing the action.
+
+### Tool catalog
+
+| Tool | Visibility | Purpose |
+|------|------------|---------|
+| `send_message` | always | Send a message immediately (mid-run) to the current chat, or — main group only — to a different group via `target_jid`. Writes an IPC file with `type: 'message'` to `data/ipc/{group}/messages/`. |
+| `send_attachment` | always | Send a file (image, document) from the container's `/workspace/group/` to the user. The host resolves the container path to the host path and calls the channel's `sendAttachment()`. Container path must be under `/workspace/group/`. |
+| `schedule_task` | always | Create a `scheduled_tasks` row. The task runs in a **separate container** on the next scheduler tick. Supports `cron` / `interval` / `once` schedules, `context_mode: 'group' \| 'isolated'`, and `target_group_jid` for main groups. Validates `schedule_value` client-side (cron syntax, interval positive, no Z suffix on `once`). |
+| `list_tasks` | always | List the current group's scheduled tasks. Returns id, description, schedule, status, runtime state, next run, and a 50-char prompt preview. |
+| `get_task` | always | Get full detail of a single task by ID — full prompt, schedule, status, last result, created_at, script (if any). |
+| `search_tasks` | always | Substring or regex search over description / prompt / script for the current group's tasks. |
+| `update_task` | always | Mutate an existing task. Only provided fields are changed; omitted fields stay the same. Call `get_task` first to read the full prompt before editing. |
+| `pause_task` | always | Set `status='paused'` on a task. The scheduler skips paused tasks. |
+| `resume_task` | always | Clear `paused` status and re-arm `next_run`. |
+| `cancel_task` | always | Permanently delete a task and its `task_run_logs`. |
+| `execute_command` | always (gated by `approvalMode`) | Run a shell command in the container. When `approvalMode: true` AND the group has write-mounted paths AND the command is not on the `commandAllowlist`, dangerous commands trigger an `approval_request` to the user via the channel. The command blocks until approval is granted or the TTL (default 120s, configurable via `approvalTimeout`) expires (auto-deny). |
+| `register_group` | **admin only** | Register a new chat/group. Requires `folder` in `{channel}_{group-name}` form. Fails silently if the group is already registered. |
+| `get_registered_groups` | **main only** | List all registered groups with JID, name, folder, and main flag. Used to discover `target_jid` for `send_message` and `delegate_to_group`. |
+| `delegate_to_group` | **main only** | Send a task to another group's agent. Generates a UUID, stores a `delegations` row, and writes a `delegate_to_group` IPC file. The target agent receives the prompt with the UUID as a `[Delegation UUID: …]` tag and is expected to call `respond_to_group` with that UUID. `ttl_seconds` (30–3600, default 300) controls how long the delegation stays valid. |
+| `respond_to_group` | always | Reply to a delegation. Sends the response back to the caller group's message queue. No admin/main check at MCP layer — host IPC handler validates the UUID, caller identity, and `status='pending'` before forwarding. |
+| `ping` | always | Test tool. Returns `pong`. |
+
+### Tool I/O patterns
+
+Three patterns are used:
+
+1. **Fire-and-forget** — `send_message`, `send_attachment`, `schedule_task`, `register_group`, `delegate_to_group`, `respond_to_group`. The tool writes an IPC file to `data/ipc/{group}/messages/` or `…/tasks/` and returns immediately.
+2. **Request/response** — `list_tasks`, `get_task`, `search_tasks`, `update_task`, `pause_task`, `resume_task`, `cancel_task`, `execute_command` (for approval). The tool writes a `*.req.json` file to `tasks/`, polls for the matching `*.resp.json`, and unlinks both on completion. Default 5s timeout.
+3. **Approval polling** — `execute_command` (when approval is required). The tool writes an `approval_request` IPC file to `messages/`, polls the container's `data/ipc/{group}/input/` directory for a `_approval_response` sentinel file every 1s until the TTL expires (auto-deny).
+
+### Environment contract
+
+The MCP server reads its context from environment variables set by the host when spawning the container:
+
+| Env var | Purpose |
+|---------|---------|
+| `NANOCLAW_CHAT_JID` | The group's JID — used as default target for `send_message` |
+| `NANOCLAW_GROUP_FOLDER` | Group folder name — used as the IPC namespace |
+| `NANOCLAW_IS_MAIN` | `"1"` if main group — gates `get_registered_groups` and `delegate_to_group` |
+| `NANOCLAW_IS_ADMIN` | `"1"` if admin group — gates `register_group` |
+| `NANOCLAW_APPROVAL_MODE` | `"true"` if `containerConfig.approvalMode` is on |
+| `NANOCLAW_APPROVAL_TIMEOUT` | Approval TTL in seconds (10–600, default 120) |
+| `NANOCLAW_WRITE_MOUNTS` | JSON array of write-mounted host paths — drives approval decisions |
+| `NANOCLAW_COMMAND_ALLOWLIST` | JSON array of regex strings — patterns that skip approval |
+
+---
+
+## IPC Message Types
+
+The host IPC watcher (`src/ipc.ts`) consumes JSON files written by containers to `data/ipc/{groupFolder}/messages/` and `data/ipc/{groupFolder}/tasks/`. The full schema and dispatch is in `processIpcMessageData()`. Mutation tools moved to a request/response format (`.req.json` / `.resp.json`) in v1.21; the bare `pause_task` / `resume_task` / `cancel_task` / `update_task` types are no longer accepted and produce a stale-container warning if received.
+
+### Message types (host → host)
+
+| `type` | Direction | Direction of flow | Payload key fields | Handler |
+|--------|-----------|-------------------|--------------------|---------|
+| `message` | container → host | `messages/` | `chatJid`, `text`, `sender?`, `groupFolder`, `timestamp` | Router → channel `sendMessage()` |
+| `attachment` | container → host | `messages/` | `chatJid`, `filePath` (container path under `/workspace/group/`), `caption?`, `groupFolder`, `timestamp` | Resolve container→host path, validate stays in group folder, channel `sendAttachment()` |
+| `schedule_task` | container → host | `tasks/` | `taskId?`, `description`, `prompt`, `schedule_type`, `schedule_value`, `context_mode`, `targetJid`, `createdBy`, `timestamp` | Create `scheduled_tasks` row (auth check: non-main can only target self) |
+| `register_group` | container → host (admin) | `tasks/` | `jid`, `name`, `folder`, `trigger`, `requiresTrigger?`, `multiAgentRouter?` | Upsert `registered_groups` row |
+| `refresh_groups` | container → host | `tasks/` | (none) | Re-read `registered_groups` from PG |
+| `delegate_to_group` | container → host (main) | `tasks/` | `uuid`, `callerJid`, `targetJid`, `prompt`, `ttlSeconds`, `timestamp` | Insert `delegations` row, post prompt to target group with `[Delegation UUID: …]` tag |
+| `respond_to_group` | container → host | `tasks/` | `uuid`, `responseText`, `timestamp` | Validate UUID is `pending`, validate caller identity, mark `fulfilled`, post `responseText` to caller's queue |
+
+### Request/response types (container → host)
+
+These are paired with a `correlationId`. The container writes a `<id>.req.json`, the host writes a `<id>.resp.json` with `{ ok: boolean, data?, error? }`. The container tool polls for the response (5s timeout).
+
+| `type` | Purpose |
+|--------|---------|
+| `list_tasks_request` | List the group's tasks |
+| `get_task_request` | Get full task detail by ID |
+| `search_tasks_request` | Keyword/regex search over tasks |
+| `pause_task_request` | Pause a task by ID |
+| `resume_task_request` | Resume a task by ID |
+| `cancel_task_request` | Delete a task by ID |
+| `update_task_request` | Mutate task fields |
+
+### Approval flow
+
+The approval flow uses two non-IPC-type sentinel files plus two message types — designed so the host can prompt the user via the channel and the container can poll synchronously.
+
+| Message / file | Direction | Path | Payload / shape | Purpose |
+|----------------|-----------|------|-----------------|---------|
+| `approval_request` | container → host | `data/ipc/{group}/messages/` | `chatJid`, `command`, `patterns: [{name, description, matched}]`, `targetPaths: string[]`, `timestamp`, `ttl` (seconds) | Container requests user approval for a dangerous command. Host formats a prompt, sends it to the channel via `sendMessage()`, and registers a pending approval. |
+| `_approval_response` (sentinel file) | host → container | `data/ipc/{group}/input/` | JSON: `{ type: 'approval_response', approved: boolean }` | Host writes this file when (a) the user replies `yes`/`no` in the channel, (b) the request is replaced by a new approval, or (c) the request is auto-denied because there is no channel for the JID. Filename contains the `_approval_response` substring; the container polls for any matching file. |
+| `approval_response` | (file-content type field) | n/a (content of the sentinel) | `{ type: 'approval_response', approved: boolean }` | The `type` field inside the JSON. Logged at the host for audit. |
+
+**Behaviour:**
+
+- The host tracks a single pending approval per `chatJid` in a `pendingApprovals: Map<jid, …>`. If a new `approval_request` arrives while another is pending, the old one is auto-denied (host writes an `_approval_response` with `approved: false`) and replaced.
+- The container polls for `_approval_response` in its `input/` dir every 1s, with a deadline equal to `ttl` (default 120s). On timeout, the host also auto-denies (writes `_approval_response` with `approved: false`).
+- If the user replies `yes` or `no` in the channel, the regex in `checkApprovalResponse()` matches the message and writes `_approval_response` with the appropriate boolean. Subsequent messages from the user in the same group are treated as normal chat (the `pendingApprovals` entry is cleared).
+- Fail-closed: any error or timeout results in `approved: false`.
+
+See `src/ipc.ts:700` for the host handler and `container/agent-runner/src/ipc-mcp-stdio.ts:731` (`execute_command`) for the container side.
 
 ---
 

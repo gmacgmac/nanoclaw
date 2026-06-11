@@ -1411,7 +1411,7 @@ The format is newline-delimited `Header-Name: value` pairs. Note: `ANTHROPIC_DEF
 Claude's built-in `WebSearch` and `WebFetch` tools are Anthropic server-side tools (`type: "server_tool_use"`). Anthropic executes them during `/v1/messages` processing. **Non-Anthropic endpoints (Ollama, Z.ai, etc.) do not implement this mechanism — built-in web search silently fails.**
 
 > **Critical for non-Anthropic groups:** You MUST:
-> 1. Ensure `WebSearch` and `WebFetch` are excluded (they are removed by default when `nativeWebTools` is not set)
+> 1. Ensure `WebSearch` and `WebFetch` are excluded (WebSearch is removed by default when the preset's `capabilities.nativeWebTools` is not set. WebFetch is excluded in general)
 > 2. Add the `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
 > 3. Ensure the resolved preset's `webSearchVendor` field is set
 >
@@ -1776,7 +1776,7 @@ For groups using a non-Anthropic endpoint (e.g. preset with `endpoint: "ollama"`
 1. Ensure `ANTHROPIC_API_KEY=placeholder` is in `secrets.env` (see [Auth Modes](#auth-modes-api-key-vs-oauth))
 2. Add `nanoclaw-web-search` MCP server to `containerConfig.mcpServers`
 3. Ensure the preset's `webSearchVendor` field is set
-4. `WebSearch` and `WebFetch` are excluded from the resolved tool set by default (ceiling model removes them when `nativeWebTools` is not set) — no action needed. If you explicitly set `nativeWebTools: true`, you must add these to `deniedTools` instead.
+4. `WebSearch` and `WebFetch` are excluded from the resolved tool set by default (ceiling model removes them when the preset's `capabilities.nativeWebTools` is not set) — no action needed. Your preset can set `capabilities.nativeWebTools: true` to use Claude's WebSearch. WebFetch is excluded by default.
 
 ---
 
@@ -1884,7 +1884,7 @@ When working on NanoClaw tasks:
 - Session IDs flow: container output → `src/index.ts` → PostgreSQL `sessions` table → next container input
 - To expose external data to agents: use `containerConfig.additionalMounts` (validated against `~/.config/nanoclaw/mount-allowlist.json`)
 - Build + restart cycle: `npm run build` then `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-- Tests: `npm test` (vitest, currently 1042 tests)
+- Tests: `npm test` (vitest, over 1000 tests — see `vitest --reporter=basic` for the current count)
 - Management API: `http://localhost:3100/api/`; live spec at `GET /api/openapi.json` (drift-tested by `src/api/openapi-drift.test.ts`); routes declared via `defineRoute` in `src/api/lib/route-builder.ts`; full human reference in `repo/docs/api.md`
 - Multi-endpoint routing table is built by `scanEndpoints()` in `src/env.ts` — scans all `{VENDOR}_BASE_URL` / `{VENDOR}_API_KEY` pairs from `secrets.env` at proxy startup; also reads optional `{VENDOR}_AUTH` (x-api-key/bearer/sigv4) and `{VENDOR}_REGION`
 - Context nudge: agent-runner checks `input_tokens` against `contextWindowSize` (80% live, configurable nightly via `NIGHTLY_NUDGE_THRESHOLD` default 0.7); `src/nightly-maintenance.ts` orchestrates nightly cron; two nudge prompt functions: `buildNudgePrompt()` in `container/agent-runner/src/lib/nudge-prompt.ts` (periodic + threshold, container-side) and `getNightlyNudgePrompt()` in `src/lib/nudge-prompt.ts` (nightly, host-side)

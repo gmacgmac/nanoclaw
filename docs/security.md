@@ -88,7 +88,7 @@ Real API credentials **never enter containers**. Instead, the host runs an HTTP 
 1. Host starts a credential proxy on `CREDENTIAL_PROXY_PORT` (default: 3001)
 2. Containers receive `ANTHROPIC_BASE_URL=http://host.docker.internal:<port>` and `ANTHROPIC_API_KEY=placeholder`
 3. The SDK sends API requests to the proxy with the placeholder key
-4. The proxy strips placeholder auth, injects real credentials (`x-api-key` or `Authorization: Bearer`), and forwards to `api.anthropic.com`
+4. The proxy strips placeholder auth, injects real credentials (`x-api-key` or `Authorization: Bearer`), and forwards to the upstream endpoint configured for the resolved preset (Anthropic, Ollama, Bedrock, Z.ai, or other vendor registered via the multi-endpoint routing table built by `scanEndpoints()` in `src/env.ts`)
 5. Agents cannot discover real credentials — not in environment, stdin, files, or `/proc`
 
 **Proxy Plugins**
@@ -148,7 +148,7 @@ Human-in-the-loop gate for dangerous shell commands in groups with write-access 
 **When it applies:** Groups with write-access `additionalMounts`. Approval mode is on by default; set `approvalMode: false` explicitly to disable.
 
 **How it works:**
-1. `Bash` is replaced with `mcp__nanoclaw__execute_command` MCP tool (when approval mode is active — the default)
+1. `Bash` is excluded from the resolved tool set (when approval mode is active — the default); the model can still call `mcp__nanoclaw__execute_command` as a separate MCP tool, subject to the approval gate and `commandAllowlist`
 2. Dangerous commands targeting write-mounted paths (under `/workspace/extra/`) trigger an approval request via IPC → messaging channel
 3. User responds yes/no → command executes or is denied
 4. Timeout → auto-deny (fail-closed)
