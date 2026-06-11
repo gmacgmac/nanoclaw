@@ -205,7 +205,12 @@ async function sendTelegramMessage(
 }
 
 interface AlbumBuffer {
-  photos: Array<{ id: string; content: string; sender: string; senderName: string }>;
+  photos: Array<{
+    id: string;
+    content: string;
+    sender: string;
+    senderName: string;
+  }>;
   chatJid: string;
   timestamp: string;
   isGroup: boolean;
@@ -518,7 +523,8 @@ export class TelegramChannel implements Channel {
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
 
-        const fileId = ctx.message.photo?.[ctx.message.photo.length - 1]?.file_id;
+        const fileId =
+          ctx.message.photo?.[ctx.message.photo.length - 1]?.file_id;
         if (!fileId) {
           storeNonText(ctx, '[Photo]');
           return;
@@ -555,7 +561,9 @@ export class TelegramChannel implements Channel {
           ? `[Photo]: ${filepath}${caption}`
           : `[Photo]${caption}`;
 
-        const mediaGroupId = (ctx.message as any).media_group_id as string | undefined;
+        const mediaGroupId = (ctx.message as any).media_group_id as
+          | string
+          | undefined;
 
         if (mediaGroupId) {
           // Album photo — buffer it
@@ -566,14 +574,23 @@ export class TelegramChannel implements Channel {
               chatJid,
               timestamp,
               isGroup,
-              flushTimer: setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_FLUSH_DELAY),
-              safetyTimer: setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_MAX_LIFETIME),
+              flushTimer: setTimeout(
+                () => this.flushAlbum(mediaGroupId),
+                TelegramChannel.ALBUM_FLUSH_DELAY,
+              ),
+              safetyTimer: setTimeout(
+                () => this.flushAlbum(mediaGroupId),
+                TelegramChannel.ALBUM_MAX_LIFETIME,
+              ),
             };
             this.albumBuffers.set(mediaGroupId, buffer);
           } else {
             // Reset debounce timer (another photo arrived)
             clearTimeout(buffer.flushTimer);
-            buffer.flushTimer = setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_FLUSH_DELAY);
+            buffer.flushTimer = setTimeout(
+              () => this.flushAlbum(mediaGroupId),
+              TelegramChannel.ALBUM_FLUSH_DELAY,
+            );
           }
           buffer.photos.push({ id: msgId, content, sender, senderName });
         } else {

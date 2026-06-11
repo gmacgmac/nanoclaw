@@ -47,7 +47,11 @@ export async function loadCursors(): Promise<void> {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (typeof parsed === 'object' && parsed !== null && parsed.ts !== undefined) {
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        parsed.ts !== undefined
+      ) {
         globalCursor = parsed; // Already composite
       } else {
         // Legacy: bare timestamp string that was valid JSON (e.g. a quoted string)
@@ -67,7 +71,10 @@ export async function loadCursors(): Promise<void> {
     if (typeof firstValue === 'string') {
       // Legacy: { jid: "timestamp" } → { jid: { ts: "timestamp", id: "0" } }
       groupCursors = Object.fromEntries(
-        Object.entries(parsed).map(([jid, ts]) => [jid, { ts: ts as string, id: '0' }]),
+        Object.entries(parsed).map(([jid, ts]) => [
+          jid,
+          { ts: ts as string, id: '0' },
+        ]),
       );
     } else {
       groupCursors = parsed;
@@ -85,12 +92,18 @@ export async function setGlobalCursor(cursor: Cursor): Promise<void> {
   await persistGlobal();
 }
 
-export async function setGroupCursor(jid: string, cursor: Cursor): Promise<void> {
+export async function setGroupCursor(
+  jid: string,
+  cursor: Cursor,
+): Promise<void> {
   groupCursors[jid] = cursor;
   await persistGroups();
 }
 
-export async function rollbackGroupCursor(jid: string, prev: Cursor): Promise<void> {
+export async function rollbackGroupCursor(
+  jid: string,
+  prev: Cursor,
+): Promise<void> {
   groupCursors[jid] = prev;
   await persistGroups();
 }
@@ -117,7 +130,10 @@ export async function getOrRecoverGroupCursor(jid: string): Promise<Cursor> {
 
 // --- Helpers ---
 
-export function cursorFromMessage(msg: { timestamp: string; id: string }): Cursor {
+export function cursorFromMessage(msg: {
+  timestamp: string;
+  id: string;
+}): Cursor {
   return { ts: msg.timestamp, id: msg.id };
 }
 

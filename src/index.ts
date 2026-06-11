@@ -246,7 +246,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let images: EncodedImage[] = [];
 
   if (resolved.capabilities.vision) {
-    const result = await extractImagesFromMessages(filteredMessages, { groupFolder: group.folder });
+    const result = await extractImagesFromMessages(filteredMessages, {
+      groupFolder: group.folder,
+    });
     images = result.images;
     if (result.truncated) {
       logger.warn(
@@ -620,7 +622,9 @@ async function startMessageLoop(): Promise<void> {
           let pipedImages: EncodedImage[] | undefined;
           const resolved = resolvePreset(group.containerConfig?.preset);
           if (resolved?.capabilities.vision) {
-            const result = await extractImagesFromMessages(messagesToSend, { groupFolder: group.folder });
+            const result = await extractImagesFromMessages(messagesToSend, {
+              groupFolder: group.folder,
+            });
             if (result.images.length > 0) {
               pipedImages = result.images;
               logger.debug(
@@ -630,7 +634,11 @@ async function startMessageLoop(): Promise<void> {
             }
             if (result.truncated) {
               logger.warn(
-                { chatJid, encodedCount: result.images.length, totalSize: result.totalSize },
+                {
+                  chatJid,
+                  encodedCount: result.images.length,
+                  totalSize: result.totalSize,
+                },
                 'Image extraction truncated on IPC pipe — some images dropped due to payload size limit',
               );
             }
