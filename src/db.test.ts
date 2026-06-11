@@ -9,14 +9,23 @@ import {
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
+  getRouterState,
   getTaskById,
   setRegisteredGroup,
+  setRouterState,
   shutdownDatabase,
   storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
 import { formatMessages } from './router.js';
+import {
+  loadCursors,
+  getGlobalCursor,
+  getGroupCursor,
+  ZERO_CURSOR,
+} from './cursor-state.js';
+import type { Cursor } from './cursor-state.js';
 
 beforeEach(async () => {
   await _initTestDatabase();
@@ -64,7 +73,7 @@ describe('storeMessage', () => {
 
     const messages = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe('msg-1');
@@ -87,7 +96,7 @@ describe('storeMessage', () => {
 
     const messages = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     expect(messages).toHaveLength(0);
   });
@@ -108,7 +117,7 @@ describe('storeMessage', () => {
     // Message is stored (we can retrieve it — is_from_me doesn't affect retrieval)
     const messages = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     expect(messages).toHaveLength(1);
   });
@@ -136,7 +145,7 @@ describe('storeMessage', () => {
 
     const messages = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('updated');
@@ -185,26 +194,26 @@ describe('getMessagesSince', () => {
   });
 
   it('returns messages after the given timestamp', async () => {
+    // Cursor from m2: { ts: 00:00:02, id: 'm2' } — only m3 + m4 are newer
     const msgs = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:02.000Z',
+      { ts: '2024-01-01T00:00:02.000Z', id: 'm2' },
     );
-    // Should exclude m1, m2 (before/at timestamp), m3 (bot message still in table but no longer filtered)
-    // Now returns m3 (bot) + m4 since is_bot_message filter is removed
+    // Should exclude m1, m2 (before/at cursor); returns m3 (bot) + m4
     expect(msgs).toHaveLength(2);
   });
 
   it('no longer filters bot messages (messages table is now a pure input queue)', async () => {
     const msgs = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     // All 4 messages returned (no bot filtering)
     expect(msgs).toHaveLength(4);
   });
 
   it('returns all messages when sinceTimestamp is empty', async () => {
-    const msgs = await getMessagesSince('group@g.us', '');
+    const msgs = await getMessagesSince('group@g.us', { ts: '', id: '0' });
     // All 4 messages (no bot filtering)
     expect(msgs).toHaveLength(4);
   });
@@ -238,7 +247,7 @@ describe('getMessagesSince', () => {
     expect(recovered).toBe('2024-01-01T00:00:03.000Z');
 
     // Using recovered cursor: only gets messages after the bot reply
-    const msgs = await getMessagesSince('group@g.us', recovered!, 10);
+    const msgs = await getMessagesSince('group@g.us', { ts: recovered!, id: 'm3' }, 10);
     // m4 (third, 00:00:04) + new-1 — skips all 50 old messages and m1/m2
     expect(msgs).toHaveLength(2);
     expect(msgs[0].content).toBe('third');
@@ -262,7 +271,7 @@ describe('getMessagesSince', () => {
     expect(recovered).toBe('2024-01-01T00:00:03.000Z');
 
     // With limit=10, only the 10 most recent are returned
-    const msgs = await getMessagesSince('group@g.us', recovered!, 10);
+    const msgs = await getMessagesSince('group@g.us', { ts: recovered!, id: 'm3' }, 10);
     expect(msgs).toHaveLength(10);
     // Most recent 10: pending-21 through pending-30
     expect(msgs[0].content).toBe('pending message 21');
@@ -287,7 +296,7 @@ describe('getMessagesSince', () => {
     expect(recovered).toBeUndefined();
 
     // No cursor → sinceTimestamp = '' but limit caps the result
-    const msgs = await getMessagesSince('fresh@g.us', '', 10);
+    const msgs = await getMessagesSince('fresh@g.us', { ts: '', id: '0' }, 10);
     expect(msgs).toHaveLength(10);
 
     const prompt = formatMessages(msgs, 'Asia/Jerusalem');
@@ -308,7 +317,7 @@ describe('getMessagesSince', () => {
     });
     const msgs = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:04.000Z',
+      { ts: '2024-01-01T00:00:04.000Z', id: 'm4' },
     );
     expect(msgs).toHaveLength(1);
     expect(msgs[0].content).toBe('Andy: old bot reply');
@@ -358,28 +367,28 @@ describe('getNewMessages', () => {
   });
 
   it('returns new messages across multiple groups', async () => {
-    const { messages, newTimestamp } = await getNewMessages(
+    const { messages, newCursor } = await getNewMessages(
       ['group1@g.us', 'group2@g.us'],
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
     );
     // All 4 messages returned (no bot filtering)
     expect(messages).toHaveLength(4);
-    expect(newTimestamp).toBe('2024-01-01T00:00:04.000Z');
+    expect(newCursor.ts).toBe('2024-01-01T00:00:04.000Z');
   });
 
   it('filters by timestamp', async () => {
     const { messages } = await getNewMessages(
       ['group1@g.us', 'group2@g.us'],
-      '2024-01-01T00:00:02.000Z',
+      { ts: '2024-01-01T00:00:02.000Z', id: 'a2' },
     );
     // a3 (bot reply at 00:00:03) + a4 (g1 msg2 at 00:00:04)
     expect(messages).toHaveLength(2);
   });
 
   it('returns empty for no registered groups', async () => {
-    const { messages, newTimestamp } = await getNewMessages([], '');
+    const { messages, newCursor } = await getNewMessages([], { ts: '', id: '0' });
     expect(messages).toHaveLength(0);
-    expect(newTimestamp).toBe('');
+    expect(newCursor.ts).toBe('');
   });
 });
 
@@ -503,9 +512,9 @@ describe('message query LIMIT', () => {
   });
 
   it('getNewMessages caps to limit and returns most recent in chronological order', async () => {
-    const { messages, newTimestamp } = await getNewMessages(
+    const { messages, newCursor } = await getNewMessages(
       ['group@g.us'],
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
       3,
     );
     expect(messages).toHaveLength(3);
@@ -513,14 +522,14 @@ describe('message query LIMIT', () => {
     expect(messages[2].content).toBe('message 10');
     // Chronological order preserved
     expect(messages[1].timestamp > messages[0].timestamp).toBe(true);
-    // newTimestamp reflects latest returned row
-    expect(newTimestamp).toBe('2024-01-01T00:00:10.000Z');
+    // newCursor reflects latest returned row
+    expect(newCursor.ts).toBe('2024-01-01T00:00:10.000Z');
   });
 
   it('getMessagesSince caps to limit and returns most recent in chronological order', async () => {
     const messages = await getMessagesSince(
       'group@g.us',
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
       3,
     );
     expect(messages).toHaveLength(3);
@@ -532,7 +541,7 @@ describe('message query LIMIT', () => {
   it('returns all messages when count is under the limit', async () => {
     const { messages } = await getNewMessages(
       ['group@g.us'],
-      '2024-01-01T00:00:00.000Z',
+      { ts: '2024-01-01T00:00:00.000Z', id: '0' },
       50,
     );
     expect(messages).toHaveLength(10);
@@ -570,5 +579,117 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+
+// --- Composite cursor regression tests ---
+
+describe('composite cursor: same-timestamp stranding', () => {
+  it('returns all rows with identical timestamps across multiple cursor advances', async () => {
+    const jid = 'album-test@g.us';
+    await storeChatMetadata(jid, '2024-01-01T00:00:00.000Z');
+
+    const ts = '2026-06-11T07:35:14.000Z';
+
+    // Insert 4 messages with identical timestamp (simulates Telegram album)
+    for (let i = 1; i <= 4; i++) {
+      await store({
+        id: `album-${i}`,
+        chat_jid: jid,
+        sender: 'user1',
+        sender_name: 'User',
+        content: `[Photo]: /path/to/photo${i}.jpg`,
+        timestamp: ts,
+        is_from_me: false,
+      });
+    }
+
+    // First poll with empty cursor — should return all 4
+    const result1 = await getNewMessages([jid], { ts: '', id: '0' });
+    expect(result1.messages).toHaveLength(4);
+    expect(result1.newCursor.ts).toBe(ts);
+
+    // Second poll with cursor from first — should return 0 (all seen)
+    const result2 = await getNewMessages([jid], result1.newCursor);
+    expect(result2.messages).toHaveLength(0);
+
+    // Insert a 5th message with the SAME timestamp but higher ID
+    await store({
+      id: `album-5`,
+      chat_jid: jid,
+      sender: 'user1',
+      sender_name: 'User',
+      content: `[Photo]: /path/to/photo5.jpg`,
+      timestamp: ts,
+      is_from_me: false,
+    });
+
+    // Third poll — should return only the new message, not strand it
+    const result3 = await getNewMessages([jid], result1.newCursor);
+    expect(result3.messages).toHaveLength(1);
+    expect(result3.messages[0].id).toBe('album-5');
+  });
+});
+
+describe('composite cursor: bot-reply advancement', () => {
+  it('getMessagesSince returns bot replies that callers must handle', async () => {
+    const jid = 'bot-reply-test@g.us';
+    await storeChatMetadata(jid, '2024-01-01T00:00:00.000Z');
+
+    // User message
+    await store({
+      id: 'user-msg-1',
+      chat_jid: jid,
+      sender: 'user1',
+      sender_name: 'User',
+      content: 'hello',
+      timestamp: '2026-06-11T08:00:00.000Z',
+      is_from_me: false,
+    });
+
+    // Bot reply (later timestamp)
+    await store({
+      id: 'bot-reply-1',
+      chat_jid: jid,
+      sender: 'bot',
+      sender_name: 'Bot',
+      content: 'hi there',
+      timestamp: '2026-06-11T08:00:01.000Z',
+      is_from_me: true,
+    });
+
+    // Query since user message cursor — bot reply must appear
+    const cursor: Cursor = { ts: '2026-06-11T08:00:00.000Z', id: 'user-msg-1' };
+    const messages = await getMessagesSince(jid, cursor);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe('bot-reply-1');
+    expect(messages[0].is_from_me).toBe(true);
+
+    // After caller advances cursor past bot reply, no messages remain
+    const advancedCursor: Cursor = { ts: '2026-06-11T08:00:01.000Z', id: 'bot-reply-1' };
+    const remaining = await getMessagesSince(jid, advancedCursor);
+    expect(remaining).toHaveLength(0);
+  });
+});
+
+describe('composite cursor: legacy migration', () => {
+  it('loadCursors migrates legacy bare-timestamp to composite', async () => {
+    // Simulate legacy state: bare timestamp string (not JSON)
+    await setRouterState('last_timestamp', '2026-06-11T07:00:00.000Z');
+    await setRouterState(
+      'last_agent_timestamp',
+      JSON.stringify({
+        'group1@g.us': '2026-06-11T06:50:00.000Z',
+      }),
+    );
+
+    await loadCursors();
+
+    const global = getGlobalCursor();
+    expect(global).toEqual({ ts: '2026-06-11T07:00:00.000Z', id: '0' });
+
+    const group = getGroupCursor('group1@g.us');
+    expect(group).toEqual({ ts: '2026-06-11T06:50:00.000Z', id: '0' });
   });
 });

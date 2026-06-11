@@ -12,6 +12,7 @@ import {
   TaskRunLog,
   isValidContainerChannel,
 } from './types.js';
+import type { Cursor } from './cursor-state.js';
 
 // --- postgres.js client ---
 
@@ -391,24 +392,26 @@ export async function storeDashboardChatMessage(msg: {
 
 export async function getNewMessages(
   jids: string[],
-  lastTimestamp: string,
+  lastCursor: Cursor,
   limit: number = 200,
-): Promise<{ messages: NewMessage[]; newTimestamp: string }> {
-  if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
+): Promise<{ messages: NewMessage[]; newCursor: Cursor }> {
+  if (jids.length === 0) return { messages: [], newCursor: lastCursor };
 
-  // Empty string can't be cast to TIMESTAMPTZ — use epoch to return all messages
-  const since = lastTimestamp || '1970-01-01T00:00:00.000Z';
+  // Empty ts can't be cast to TIMESTAMPTZ — use epoch to return all messages
+  const since = lastCursor.ts || '1970-01-01T00:00:00.000Z';
+  const sinceId = lastCursor.id || '0';
 
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const rows = await sql`
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
       FROM messages
-      WHERE timestamp > ${since} AND chat_jid = ANY(${jids})
+      WHERE (timestamp, id) > (${since}::timestamptz, ${sinceId})
+        AND chat_jid = ANY(${jids})
         AND content != '' AND content IS NOT NULL
-      ORDER BY timestamp DESC
+      ORDER BY timestamp DESC, id DESC
       LIMIT ${limit}
-    ) sub ORDER BY timestamp
+    ) sub ORDER BY timestamp, id
   `;
 
   const messages: NewMessage[] = rows.map((r) => ({
@@ -421,30 +424,35 @@ export async function getNewMessages(
     is_from_me: r.is_from_me === 1 ? true : undefined,
   }));
 
-  let newTimestamp = lastTimestamp;
-  for (const msg of messages) {
-    if (msg.timestamp > newTimestamp) newTimestamp = msg.timestamp;
+  // Compute new cursor from the last message (highest timestamp + id)
+  let newCursor = lastCursor;
+  if (messages.length > 0) {
+    const last = messages[messages.length - 1];
+    newCursor = { ts: last.timestamp, id: last.id };
   }
 
-  return { messages, newTimestamp };
+  return { messages, newCursor };
 }
 
 export async function getMessagesSince(
   chatJid: string,
-  sinceTimestamp: string,
+  sinceCursor: Cursor,
   limit: number = 200,
 ): Promise<NewMessage[]> {
-  // Empty string can't be cast to TIMESTAMPTZ — use epoch to return all messages
-  const since = sinceTimestamp || '1970-01-01T00:00:00.000Z';
+  // Empty ts can't be cast to TIMESTAMPTZ — use epoch to return all messages
+  const since = sinceCursor.ts || '1970-01-01T00:00:00.000Z';
+  const sinceId = sinceCursor.id || '0';
+
   const rows = await sql`
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
       FROM messages
-      WHERE chat_jid = ${chatJid} AND timestamp > ${since}
+      WHERE chat_jid = ${chatJid}
+        AND (timestamp, id) > (${since}::timestamptz, ${sinceId})
         AND content != '' AND content IS NOT NULL
-      ORDER BY timestamp DESC
+      ORDER BY timestamp DESC, id DESC
       LIMIT ${limit}
-    ) sub ORDER BY timestamp
+    ) sub ORDER BY timestamp, id
   `;
 
   return rows.map((r) => ({

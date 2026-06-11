@@ -16,6 +16,10 @@ groups/*
 *.keys.json
 .env
 
+# Legacy SQLite database (migrated to PostgreSQL)
+*.db
+*.sqlite
+
 # tool-allowlist.json is intentionally TRACKED (security ceiling) — do not ignore
 
 # mcp-catalog.json is intentionally UNTRACKED (regenerated at API startup)

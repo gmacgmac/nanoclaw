@@ -40,6 +40,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | PostgreSQL operations via postgres.js (messages, groups, sessions, tasks, errors) |
 | `src/credential-proxy.ts` | Host-side API proxy — injects real credentials into container requests |
+| `src/cursor-state.ts` | Composite cursor (`{ts, id}`) state — global & per-group cursors, persistence via `router_state`, legacy migration, recovery |
 | `src/group-queue.ts` | Per-group FIFO queue with global concurrency limit |
 | `src/mount-security.ts` | Mount allowlist validation for container volumes |
 | `src/env.ts` | Environment variable loading from secrets.env and .env |

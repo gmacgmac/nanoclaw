@@ -38,6 +38,10 @@ import {
   storeMessage,
 } from './db.js';
 import {
+  Cursor,
+  ZERO_CURSOR,
+  cursorFromMessage,
+  cursorIsAfter,
   getGlobalCursor,
   getGroupCursor,
   getOrRecoverGroupCursor,
@@ -167,7 +171,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // All messages were for sub-agents — advance cursor and skip
       await setGroupCursor(
         chatJid,
-        missedMessages[missedMessages.length - 1].timestamp,
+        cursorFromMessage(missedMessages[missedMessages.length - 1]),
       );
       return true;
     }
@@ -192,7 +196,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Only bot messages remain — advance cursor and skip
     await setGroupCursor(
       chatJid,
-      missedMessages[missedMessages.length - 1].timestamp,
+      cursorFromMessage(missedMessages[missedMessages.length - 1]),
     );
     return true;
   }
@@ -201,10 +205,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = getGroupCursor(chatJid) || '';
+  const previousCursor = getGroupCursor(chatJid) || { ...ZERO_CURSOR };
   await setGroupCursor(
     chatJid,
-    missedMessages[missedMessages.length - 1].timestamp,
+    cursorFromMessage(missedMessages[missedMessages.length - 1]),
   );
 
   logger.info(
@@ -242,7 +246,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let images: EncodedImage[] = [];
 
   if (resolved.capabilities.vision) {
-    const result = await extractImagesFromMessages(filteredMessages);
+    const result = await extractImagesFromMessages(filteredMessages, { groupFolder: group.folder });
     images = result.images;
     if (result.truncated) {
       logger.warn(
@@ -477,7 +481,7 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(getRegisteredGroups());
-      const { messages, newTimestamp } = await getNewMessages(
+      const { messages, newCursor } = await getNewMessages(
         jids,
         getGlobalCursor(),
       );
@@ -486,7 +490,7 @@ async function startMessageLoop(): Promise<void> {
         logger.info({ count: messages.length }, 'New messages');
 
         // Advance the "seen" cursor for all messages immediately
-        await setGlobalCursor(newTimestamp);
+        await setGlobalCursor(newCursor);
 
         // Deduplicate by group
         const messagesByGroup = new Map<string, NewMessage[]>();
@@ -548,7 +552,7 @@ async function startMessageLoop(): Promise<void> {
               // All messages were delegated — advance the hub's cursor past them
               // so processGroupMessages won't re-fetch and re-process them.
               const lastMsg = groupMessages[groupMessages.length - 1];
-              setGroupCursor(chatJid, lastMsg.timestamp);
+              await setGroupCursor(chatJid, cursorFromMessage(lastMsg));
               continue;
             }
           }
@@ -581,10 +585,10 @@ async function startMessageLoop(): Promise<void> {
           // re-process groupMessages - that would double-send to the container.
           if (allPending.length === 0) {
             // Advance global cursor past these messages to prevent re-seeing them
-            for (const msg of groupMessages) {
-              if (msg.timestamp > getGlobalCursor()) {
-                await setGlobalCursor(msg.timestamp);
-              }
+            const lastMsg = groupMessages[groupMessages.length - 1];
+            const lastCursor = cursorFromMessage(lastMsg);
+            if (cursorIsAfter(lastCursor, getGlobalCursor())) {
+              await setGlobalCursor(lastCursor);
             }
             continue;
           }
@@ -603,7 +607,12 @@ async function startMessageLoop(): Promise<void> {
           // Filter out bot's own messages — they're stored for history/dashboard
           // but must not re-enter the container as new prompts.
           messagesToSend = messagesToSend.filter((m) => !m.is_from_me);
-          if (messagesToSend.length === 0) continue;
+          if (messagesToSend.length === 0) {
+            // All messages are bot replies — advance group cursor past them
+            const lastPending = allPending[allPending.length - 1];
+            await setGroupCursor(chatJid, cursorFromMessage(lastPending));
+            continue;
+          }
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
@@ -611,12 +620,18 @@ async function startMessageLoop(): Promise<void> {
           let pipedImages: EncodedImage[] | undefined;
           const resolved = resolvePreset(group.containerConfig?.preset);
           if (resolved?.capabilities.vision) {
-            const result = await extractImagesFromMessages(messagesToSend);
+            const result = await extractImagesFromMessages(messagesToSend, { groupFolder: group.folder });
             if (result.images.length > 0) {
               pipedImages = result.images;
               logger.debug(
                 { chatJid, imageCount: result.images.length },
                 'Encoded images for piped IPC message',
+              );
+            }
+            if (result.truncated) {
+              logger.warn(
+                { chatJid, encodedCount: result.images.length, totalSize: result.totalSize },
+                'Image extraction truncated on IPC pipe — some images dropped due to payload size limit',
               );
             }
           }
@@ -628,7 +643,7 @@ async function startMessageLoop(): Promise<void> {
             );
             await setGroupCursor(
               chatJid,
-              messagesToSend[messagesToSend.length - 1].timestamp,
+              cursorFromMessage(messagesToSend[messagesToSend.length - 1]),
             );
             // Show typing indicator while the container processes the piped message
             channel

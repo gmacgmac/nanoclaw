@@ -144,16 +144,17 @@ async function downloadTelegramFile(
     // Ensure media directory exists
     await fs.promises.mkdir(mediaDir, { recursive: true });
 
-    // Generate filename with human-readable timestamp
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, '-')
-      .slice(0, 19);
+    // Generate filename with human-readable timestamp + unique suffix.
+    // Milliseconds + random hex prevent collisions when multiple files
+    // arrive in the same second (e.g. Telegram album photos).
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const uniqueSuffix = `${now.getMilliseconds().toString().padStart(3, '0')}_${Math.random().toString(16).slice(2, 6)}`;
     const ext = file.file_path.split('.').pop() || 'bin';
     const baseName = originalName
       ? originalName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 50)
       : 'attachment';
-    const filename = `${timestamp}_${baseName}.${ext}`;
+    const filename = `${timestamp}_${uniqueSuffix}_${baseName}.${ext}`;
     const filepath = path.join(mediaDir, filename);
 
     // Download and save
@@ -169,7 +170,11 @@ async function downloadTelegramFile(
     await fs.promises.writeFile(filepath, Buffer.from(buffer));
 
     logger.info({ filepath, groupFolder }, 'Telegram attachment downloaded');
-    return filepath;
+
+    // Return container-relative path. Inside the container, the group folder
+    // is mounted at /workspace/group/, so media/ lives at /workspace/group/media/.
+    // Host-side image extraction resolves this back to the host path via groupFolder.
+    return `/workspace/group/media/${filename}`;
   } catch (err) {
     logger.error({ err }, 'Failed to download Telegram file');
     return null;
@@ -199,15 +204,56 @@ async function sendTelegramMessage(
   }
 }
 
+interface AlbumBuffer {
+  photos: Array<{ id: string; content: string; sender: string; senderName: string }>;
+  chatJid: string;
+  timestamp: string;
+  isGroup: boolean;
+  flushTimer: ReturnType<typeof setTimeout>;
+  safetyTimer: ReturnType<typeof setTimeout>;
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
   private bots = new Map<string, Bot>();
   private botTokens = new Map<string, string>();
   private opts: TelegramChannelOpts;
+  private albumBuffers = new Map<string, AlbumBuffer>();
+  private static ALBUM_FLUSH_DELAY = 500; // ms — debounce window
+  private static ALBUM_MAX_LIFETIME = 2000; // ms — safety net
 
   constructor(opts: TelegramChannelOpts) {
     this.opts = opts;
+  }
+
+  /**
+   * Flush a buffered album: emit all photos as individual messages in a tight batch.
+   */
+  private flushAlbum(mediaGroupId: string): void {
+    const buffer = this.albumBuffers.get(mediaGroupId);
+    if (!buffer) return;
+
+    clearTimeout(buffer.flushTimer);
+    clearTimeout(buffer.safetyTimer);
+    this.albumBuffers.delete(mediaGroupId);
+
+    for (const photo of buffer.photos) {
+      this.opts.onMessage(buffer.chatJid, {
+        id: photo.id,
+        chat_jid: buffer.chatJid,
+        sender: photo.sender,
+        sender_name: photo.senderName,
+        content: photo.content,
+        timestamp: buffer.timestamp,
+        is_from_me: false,
+      });
+    }
+
+    logger.info(
+      { chatJid: buffer.chatJid, mediaGroupId, count: buffer.photos.length },
+      'Flushed Telegram album',
+    );
   }
 
   /**
@@ -466,14 +512,83 @@ export class TelegramChannel implements Channel {
         });
       };
 
-      // Photo: get the largest size
-      bot.on('message:photo', (ctx) =>
-        handleAttachment(
-          ctx,
-          '[Photo]',
-          (msg) => msg.photo?.[msg.photo.length - 1]?.file_id,
-        ),
-      );
+      // Photo: get the largest size — with album aggregation
+      bot.on('message:photo', async (ctx) => {
+        const chatJid = makeJid(ctx.chat.id, botName);
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
+
+        const fileId = ctx.message.photo?.[ctx.message.photo.length - 1]?.file_id;
+        if (!fileId) {
+          storeNonText(ctx, '[Photo]');
+          return;
+        }
+
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          ctx.from?.id?.toString() ||
+          'Unknown';
+        const sender = ctx.from?.id?.toString() || '';
+        const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+        const msgId = ctx.message.message_id.toString();
+
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+
+        // Download photo immediately (don't delay the network call)
+        const filepath = await downloadTelegramFile(
+          bot.api,
+          token,
+          fileId,
+          group.folder,
+        );
+        const content = filepath
+          ? `[Photo]: ${filepath}${caption}`
+          : `[Photo]${caption}`;
+
+        const mediaGroupId = (ctx.message as any).media_group_id as string | undefined;
+
+        if (mediaGroupId) {
+          // Album photo — buffer it
+          let buffer = this.albumBuffers.get(mediaGroupId);
+          if (!buffer) {
+            buffer = {
+              photos: [],
+              chatJid,
+              timestamp,
+              isGroup,
+              flushTimer: setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_FLUSH_DELAY),
+              safetyTimer: setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_MAX_LIFETIME),
+            };
+            this.albumBuffers.set(mediaGroupId, buffer);
+          } else {
+            // Reset debounce timer (another photo arrived)
+            clearTimeout(buffer.flushTimer);
+            buffer.flushTimer = setTimeout(() => this.flushAlbum(mediaGroupId), TelegramChannel.ALBUM_FLUSH_DELAY);
+          }
+          buffer.photos.push({ id: msgId, content, sender, senderName });
+        } else {
+          // Single photo — process immediately
+          this.opts.onMessage(chatJid, {
+            id: msgId,
+            chat_jid: chatJid,
+            sender,
+            sender_name: senderName,
+            content,
+            timestamp,
+            is_from_me: false,
+          });
+        }
+      });
 
       // Video
       bot.on('message:video', (ctx) =>
@@ -740,6 +855,11 @@ export class TelegramChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    // Flush any pending album buffers before disconnecting
+    for (const [id] of this.albumBuffers) {
+      this.flushAlbum(id);
+    }
+
     for (const [name, bot] of this.bots) {
       bot.stop();
       logger.info({ bot: name }, 'Telegram bot stopped');

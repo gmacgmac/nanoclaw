@@ -8,6 +8,7 @@ import {
   getMessagesSince,
   storeChatMetadata,
 } from '../../db.js';
+import type { Cursor } from '../../cursor-state.js';
 import { defineRoute } from '../lib/route-builder.js';
 import {
   ApiErrorSchema,
@@ -109,7 +110,8 @@ defineRoute(router, {
     const jid = req.params.jid as string;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
     const since = typeof req.query.since === 'string' ? req.query.since : '';
-    const messages = await getMessagesSince(jid, since, limit);
+    const sinceCursor: Cursor = { ts: since, id: '0' };
+    const messages = await getMessagesSince(jid, sinceCursor, limit);
     res.json({ data: messages });
   },
 });
