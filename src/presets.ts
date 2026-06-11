@@ -63,6 +63,7 @@ const DEFAULT_WEB_SEARCH_VENDOR = 'ollama';
 function validateCapabilities(
   value: unknown,
   presetName: string,
+  endpoint: string,
 ): ModelCapabilities | null {
   if (typeof value !== 'object' || value === null) {
     logger.warn(
@@ -87,7 +88,9 @@ function validateCapabilities(
     thinking: typeof obj.thinking === 'boolean' ? obj.thinking : undefined,
     tools: typeof obj.tools === 'boolean' ? obj.tools : undefined,
     nativeWebTools:
-      typeof obj.nativeWebTools === 'boolean' ? obj.nativeWebTools : undefined,
+      typeof obj.nativeWebTools === 'boolean'
+        ? obj.nativeWebTools
+        : endpoint === 'anthropic',
   };
 }
 
@@ -115,8 +118,35 @@ export function validatePresetEntry(
     return null;
   }
 
-  const capabilities = validateCapabilities(obj.capabilities, key);
+  const capabilities = validateCapabilities(obj.capabilities, key, obj.endpoint);
   if (!capabilities) return null;
+
+  const webSearchVendor =
+    typeof obj.webSearchVendor === 'string' && obj.webSearchVendor
+      ? obj.webSearchVendor
+      : DEFAULT_WEB_SEARCH_VENDOR;
+
+  if (capabilities.nativeWebTools === true && obj.endpoint !== 'anthropic') {
+    logger.warn(
+      {
+        preset: key,
+        endpoint: obj.endpoint,
+        webSearchVendor,
+      },
+      'nativeWebTools=true on non-anthropic endpoint — Anthropic WebSearch may not be supported on this route',
+    );
+  }
+
+  if (webSearchVendor === 'anthropic' && obj.endpoint !== 'anthropic') {
+    logger.warn(
+      {
+        preset: key,
+        endpoint: obj.endpoint,
+        webSearchVendor,
+      },
+      'webSearchVendor=anthropic on non-anthropic endpoint — MCP web search will route to Anthropic',
+    );
+  }
 
   const contextWindow =
     typeof obj.contextWindow === 'number' && obj.contextWindow > 0
@@ -129,11 +159,6 @@ export function validatePresetEntry(
     obj.compactThreshold <= 0.95
       ? obj.compactThreshold
       : undefined;
-
-  const webSearchVendor =
-    typeof obj.webSearchVendor === 'string' && obj.webSearchVendor
-      ? obj.webSearchVendor
-      : DEFAULT_WEB_SEARCH_VENDOR;
 
   let transform: TransformName | undefined;
   if (obj.transform !== undefined) {

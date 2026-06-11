@@ -7,7 +7,8 @@
  *   Containers send an X-Nanoclaw-Endpoint header (e.g. "ollama", "zai")
  *   to select which upstream to use. The proxy looks up the vendor in a
  *   routing table built from secrets.env ({VENDOR}_BASE_URL / {VENDOR}_API_KEY).
- *   Falls back to "anthropic" when the header is absent or the vendor is unknown.
+ *   Fails closed (400) when the header is missing on the inference path.
+ *   Web search path defaults to "ollama" when its vendor header is absent.
  *
  * Auth modes (per-endpoint):
  *   API key:  Proxy injects x-api-key on every request.
@@ -323,9 +324,27 @@ export function startCredentialProxy(
         }
 
         // --- Inference routing (existing logic) ---
-        const requestedVendor = (
-          (req.headers[ENDPOINT_HEADER] as string) || DEFAULT_VENDOR
-        ).toLowerCase();
+        // Fail-closed: if the endpoint header is missing, refuse the request.
+        // Previously defaulted to "anthropic" (fail-OPEN), which would silently
+        // route non-Anthropic groups to api.anthropic.com if a future caller
+        // forgot to set the header. All current callers set it
+        // (container/agent-runner/src/index.ts:810), so this is a defensive
+        // guard that affects no production traffic.
+        const endpointHeader = req.headers[ENDPOINT_HEADER] as string | undefined;
+        if (!endpointHeader) {
+          logger.warn(
+            { path: req.url, method: req.method },
+            'Inference request missing X-Nanoclaw-Endpoint header — refusing',
+          );
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: `Missing ${ENDPOINT_HEADER} header`,
+            }),
+          );
+          return;
+        }
+        const requestedVendor = endpointHeader.toLowerCase();
 
         // Read and strip the transform header before forwarding
         const transformName = req.headers[TRANSFORM_HEADER] as

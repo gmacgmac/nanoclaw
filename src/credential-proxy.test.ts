@@ -112,6 +112,7 @@ describe('credential-proxy', () => {
         path: '/v1/messages',
         headers: {
           'content-type': 'application/json',
+          'x-nanoclaw-endpoint': 'anthropic',
           'x-api-key': 'placeholder',
         },
       },
@@ -133,6 +134,7 @@ describe('credential-proxy', () => {
         path: '/api/oauth/claude_cli/create_api_key',
         headers: {
           'content-type': 'application/json',
+          'x-nanoclaw-endpoint': 'anthropic',
           authorization: 'Bearer placeholder',
         },
       },
@@ -157,6 +159,7 @@ describe('credential-proxy', () => {
         path: '/v1/messages',
         headers: {
           'content-type': 'application/json',
+          'x-nanoclaw-endpoint': 'anthropic',
           'x-api-key': 'temp-key-from-exchange',
         },
       },
@@ -177,6 +180,7 @@ describe('credential-proxy', () => {
         path: '/v1/messages',
         headers: {
           'content-type': 'application/json',
+          'x-nanoclaw-endpoint': 'anthropic',
           connection: 'keep-alive',
           'keep-alive': 'timeout=5',
           'transfer-encoding': 'chunked',
@@ -205,7 +209,10 @@ describe('credential-proxy', () => {
       {
         method: 'POST',
         path: '/v1/messages',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-nanoclaw-endpoint': 'anthropic',
+        },
       },
       '{}',
     );
@@ -275,7 +282,7 @@ describe('credential-proxy', () => {
       expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
     });
 
-    it('falls back to anthropic when endpoint header is absent', async () => {
+    it('returns 400 on inference path when endpoint header is absent', async () => {
       mockEndpoints = {
         anthropic: {
           baseUrl: `http://127.0.0.1:${upstreamPort}`,
@@ -289,7 +296,7 @@ describe('credential-proxy', () => {
       proxyServer = await startCredentialProxy(0);
       proxyPort = (proxyServer.address() as AddressInfo).port;
 
-      await makeRequest(
+      const res = await makeRequest(
         proxyPort,
         {
           method: 'POST',
@@ -302,10 +309,43 @@ describe('credential-proxy', () => {
         '{}',
       );
 
-      // Default upstream (anthropic) received the request
-      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
-      // Ollama did NOT receive the request
+      // Fail-closed: no header, no upstream call
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('x-nanoclaw-endpoint');
+      expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
       expect(lastOllamaHeaders['x-api-key']).toBeUndefined();
+    });
+
+    it('routes normally on inference path when endpoint header is present (regression)', async () => {
+      mockEndpoints = {
+        anthropic: {
+          baseUrl: `http://127.0.0.1:${upstreamPort}`,
+          apiKey: 'sk-ant-key',
+        },
+        ollama: {
+          baseUrl: `http://127.0.0.1:${ollamaPort}`,
+          apiKey: 'ollama-key',
+        },
+      };
+      proxyServer = await startCredentialProxy(0);
+      proxyPort = (proxyServer.address() as AddressInfo).port;
+
+      const res = await makeRequest(
+        proxyPort,
+        {
+          method: 'POST',
+          path: '/v1/messages',
+          headers: {
+            'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'anthropic',
+            'x-api-key': 'placeholder',
+          },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-key');
     });
 
     it('falls back to anthropic when unknown vendor is requested', async () => {
@@ -648,6 +688,7 @@ describe('credential-proxy', () => {
           path: '/v1/messages',
           headers: {
             'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'anthropic',
             'x-api-key': 'placeholder',
           },
         },
@@ -1092,6 +1133,7 @@ describe('credential-proxy', () => {
           path: '/v1/messages',
           headers: {
             'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'anthropic',
             'x-api-key': 'placeholder',
           },
         },
@@ -1435,6 +1477,7 @@ describe('credential-proxy', () => {
           path: '/v1/messages',
           headers: {
             'content-type': 'application/json',
+            'x-nanoclaw-endpoint': 'anthropic',
             'x-api-key': 'placeholder',
           },
         },

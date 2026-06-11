@@ -11,6 +11,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+import { validatePresetEntry } from './presets.js';
+
 // ---------------------------------------------------------------------------
 // Ceiling-model tool resolution (mirrors agent-runner/src/index.ts)
 // ---------------------------------------------------------------------------
@@ -610,4 +612,133 @@ describe('BE_04: agent-browser binary mounting', () => {
     );
     expect(binMount?.hostPath).toContain('linux-x64');
   });
+});
+
+// ---------------------------------------------------------------------------
+// VERIFY_01: End-to-end preset nativeWebTools resolution
+// ---------------------------------------------------------------------------
+
+describe('End-to-end preset nativeWebTools resolution', () => {
+  // Inline the 10 production presets (sourced from user config, not secrets.env)
+  const ANTHROPIC_PRESETS = ['ASonnet4.6', 'AOpus4.6', 'AOpus4.7'];
+  const NON_ANTHROPIC_PRESETS = [
+    'OK2.6',
+    'OMM3',
+    'OGLM5.1',
+    'BHaiku4.5',
+    'BKimi2.5',
+    'BDeepSeekV3',
+    'BSonnet4.6',
+  ];
+  const PRESET_ENTRIES: Record<string, unknown> = {
+    'OK2.6': {
+      endpoint: 'ollama',
+      model: 'kimi-k2.6:cloud',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 262144,
+      compactThreshold: 0.5,
+      webSearchVendor: 'ollama',
+    },
+    'OMM3': {
+      endpoint: 'ollama',
+      model: 'minimax-m3:cloud',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 200000,
+      webSearchVendor: 'ollama',
+    },
+    'OGLM5.1': {
+      endpoint: 'ollama',
+      model: 'glm-5.1:cloud',
+      capabilities: { vision: false, thinking: false, tools: true },
+      contextWindow: 128000,
+      compactThreshold: 0.8,
+      webSearchVendor: 'ollama',
+    },
+    'ASonnet4.6': {
+      endpoint: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 200000,
+      webSearchVendor: 'anthropic',
+    },
+    'AOpus4.6': {
+      endpoint: 'anthropic',
+      model: 'claude-opus-4-6',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 200000,
+      webSearchVendor: 'anthropic',
+    },
+    'AOpus4.7': {
+      endpoint: 'anthropic',
+      model: 'claude-opus-4-7',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 200000,
+      webSearchVendor: 'anthropic',
+    },
+    'BHaiku4.5': {
+      endpoint: 'bedrock',
+      model: 'anthropic.claude-haiku-4-5',
+      capabilities: { vision: true, thinking: false, tools: true },
+      contextWindow: 200000,
+      webSearchVendor: 'ollama',
+    },
+    'BKimi2.5': {
+      endpoint: 'bedrockoss',
+      model: 'moonshotai.kimi-k2.5',
+      transform: 'openai',
+      capabilities: { vision: false, thinking: true, tools: true },
+      contextWindow: 131072,
+      webSearchVendor: 'ollama',
+    },
+    'BDeepSeekV3': {
+      endpoint: 'bedrockoss',
+      model: 'deepseek.v3.2',
+      transform: 'openai',
+      capabilities: { vision: false, thinking: false, tools: true },
+      contextWindow: 65536,
+      webSearchVendor: 'ollama',
+    },
+    'BSonnet4.6': {
+      endpoint: 'bedrockrt',
+      sdkMode: 'bedrock',
+      model: 'us.anthropic.claude-sonnet-4-6',
+      capabilities: { vision: true, thinking: true, tools: true },
+      contextWindow: 1000000,
+      webSearchVendor: 'ollama',
+    },
+  };
+
+  it.each(ANTHROPIC_PRESETS)(
+    '%s (anthropic) → nativeWebTools=true → WebSearch in resolved list',
+    (presetName) => {
+      const resolved = validatePresetEntry(presetName, PRESET_ENTRIES[presetName]);
+      expect(resolved).not.toBeNull();
+      expect(resolved!.capabilities.nativeWebTools).toBe(true);
+
+      const toolResult = resolveTools({
+        ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+        deniedTools: [],
+        approvalMode: false,
+        nativeWebTools: resolved!.capabilities.nativeWebTools,
+      });
+      expect(toolResult.tools).toContain('WebSearch');
+    },
+  );
+
+  it.each(NON_ANTHROPIC_PRESETS)(
+    '%s (non-anthropic) → nativeWebTools=false → WebSearch NOT in resolved list',
+    (presetName) => {
+      const resolved = validatePresetEntry(presetName, PRESET_ENTRIES[presetName]);
+      expect(resolved).not.toBeNull();
+      expect(resolved!.capabilities.nativeWebTools).toBe(false);
+
+      const toolResult = resolveTools({
+        ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
+        deniedTools: [],
+        approvalMode: false,
+        nativeWebTools: resolved!.capabilities.nativeWebTools,
+      });
+      expect(toolResult.tools).not.toContain('WebSearch');
+    },
+  );
 });
