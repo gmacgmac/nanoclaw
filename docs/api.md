@@ -93,7 +93,7 @@ For `skills`, `mcp-servers`, `hooks`, `allowed-host-commands`, `denied-tools`, `
 | Stop | `POST` | `/api/containers/{id}/stop` | |
 | Reload groups | `POST` | `/api/admin/reload-groups` | |
 | Health | `GET` | `/api/health` | |
-| Send notification | `POST` | `/api/notify` | One-way message into group channels. No agent run. See §5.
+| Send notification | `POST` | `/api/notify` | One-way message into group channels. No agent run. See §11. Common failure reasons: `jid_not_found`, `channel_unavailable`, `message_too_long` (per-target). |
 
 ### Discovery (read-only catalogs)
 
