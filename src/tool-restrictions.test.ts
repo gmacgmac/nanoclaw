@@ -3,7 +3,7 @@
  * and agent-browser binary mounting.
  *
  * The ceiling-model resolution mirrors agent-runner/src/index.ts:
- *   resolved = ceiling − deniedTools − Bash(if approvalMode) − WebSearch/WebFetch(if !nativeWebTools)
+ *   resolved = ceiling − deniedTools − Bash(if approvalMode) − WebSearch(if !nativeWebTools)
  *   allowedTools = [...resolved, 'mcp__nanoclaw__*']
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -48,7 +48,6 @@ const FALLBACK_CATALOG = [
   'TeamCreate',
   'TeamDelete',
   'ToolSearch',
-  'WebFetch',
   'WebSearch',
   'Write',
 ];
@@ -133,7 +132,6 @@ function resolveTools(input: ResolutionInput): {
   if (input.approvalMode) denySet.add('Bash');
   if (!input.nativeWebTools) {
     denySet.add('WebSearch');
-    denySet.add('WebFetch');
   }
 
   // Resolve: ceiling minus all denies
@@ -192,7 +190,7 @@ describe('Ceiling-model tool resolution', () => {
     expect(result.tools).toContain('Write');
   });
 
-  it('nativeWebTools false → WebSearch + WebFetch removed', () => {
+  it('nativeWebTools false → WebSearch removed', () => {
     const result = resolveTools({
       ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
       deniedTools: [],
@@ -200,11 +198,10 @@ describe('Ceiling-model tool resolution', () => {
       nativeWebTools: false,
     });
     expect(result.tools).not.toContain('WebSearch');
-    expect(result.tools).not.toContain('WebFetch');
     expect(result.tools).toContain('Bash');
   });
 
-  it('nativeWebTools true → WebSearch retained (WebFetch not in allowlist ceiling but in fallback)', () => {
+  it('nativeWebTools true → WebSearch retained', () => {
     const result = resolveTools({
       ceilingEnv: JSON.stringify(TOOL_ALLOWLIST_CEILING),
       deniedTools: [],
@@ -212,8 +209,6 @@ describe('Ceiling-model tool resolution', () => {
       nativeWebTools: true,
     });
     expect(result.tools).toContain('WebSearch');
-    // WebFetch is NOT in tool-allowlist.json ceiling (only in fallback)
-    expect(result.tools).not.toContain('WebFetch');
   });
 
   it('combined: approvalMode + !nativeWebTools + deniedTools', () => {
@@ -225,7 +220,6 @@ describe('Ceiling-model tool resolution', () => {
     });
     expect(result.tools).not.toContain('Bash');
     expect(result.tools).not.toContain('WebSearch');
-    expect(result.tools).not.toContain('WebFetch');
     expect(result.tools).not.toContain('TeamCreate');
     expect(result.tools).not.toContain('TeamDelete');
     expect(result.tools).toContain('Read');
@@ -293,12 +287,6 @@ describe('Ceiling-model tool resolution', () => {
       nativeWebTools: true,
     });
     expect(result.tools).toEqual(TOOL_ALLOWLIST_CEILING);
-  });
-
-  it('FALLBACK_CATALOG includes WebFetch (not in ceiling file)', () => {
-    // The fallback has WebFetch for backward compat, but tool-allowlist.json does not
-    expect(FALLBACK_CATALOG).toContain('WebFetch');
-    expect(TOOL_ALLOWLIST_CEILING).not.toContain('WebFetch');
   });
 });
 

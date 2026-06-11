@@ -14,7 +14,7 @@
 | Execution | `Bash` | Execute shell commands | Yes (but can reach mounts) |
 | Execution | `NotebookEdit` | Edit Jupyter notebooks | Yes |
 | Web | `WebSearch` | Search the web | **No — external network** |
-| Web | `WebFetch` | Fetch URL content | **No — external network** |
+| Web | `WebFetch` | Fetch URL content | **No — not exposed** |
 | Planning | `EnterPlanMode` | Enter planning mode | Yes (SDK internal) |
 | Planning | `ExitPlanMode` | Exit planning mode | Yes (SDK internal) |
 | Tasks | `TaskCreate` | Create SDK sub-task | Yes (SDK internal) |
@@ -42,11 +42,14 @@
 
 ## WebSearch & WebFetch — Anthropic Only
 
-`WebSearch` and `WebFetch` are **exclusive to Anthropic-native models**. They do not work with Ollama-proxied models (kimi, glm, etc.) because they rely on Anthropic's server-side web search infrastructure.
+`WebSearch` is **Anthropic-only** (uses Anthropic's server-side web search). For non-Anthropic models (Ollama-proxied kimi, glm, etc.) the SDK silently fails. `WebSearch` is in `tool-allowlist.json` and gated by the preset's `nativeWebTools` capability (auto-`true` for Anthropic endpoints, `false` elsewhere).
 
-**For non-Anthropic models**: Use the `nanoclaw-web-search` MCP server instead. This routes through the credential proxy and supports multiple search vendors (configured via preset's `webSearchVendor` field).
+`WebFetch` is **never exposed** in NanoClaw — by design. Always use the `nanoclaw-web-search` MCP `web_fetch` tool instead. The MCP path:
+- Works on all providers (Ollama, Z.ai, Anthropic, Bedrock)
+- Routes through the credential proxy (no leaked keys)
+- Has SSRF protection
 
-**Recommendation**: Always exclude `WebSearch` and `WebFetch` from `allowedTools` and use `nanoclaw-web-search` MCP for web access. This gives a single, consistent web search path regardless of model provider.
+Both ceiling and fallback (`repo/src/config.ts` `VERIFIED_CATALOG`) omit `WebFetch`. To opt a single group in (Anthropic-only, with built-in `WebFetch` instead of MCP), see the reinstatement recipe in `repo/src/config.ts:209` JSDoc.
 
 ## Bash vs execute_command
 

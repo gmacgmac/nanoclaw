@@ -25,7 +25,6 @@ vi.mock('./config.js', () => ({
     'Edit',
     'MultiEdit',
     'WebSearch',
-    'WebFetch',
   ],
 }));
 

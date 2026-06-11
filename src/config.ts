@@ -203,8 +203,25 @@ export const TOOL_ALLOWLIST_PATH = path.resolve(
 );
 
 /**
- * Hardcoded fallback: the verified 32-tool catalog from SDK 0.3.147.
+ * Hardcoded fallback: the verified 31-tool catalog from SDK 0.3.147.
  * Used when tool-allowlist.json is missing, unreadable, or invalid.
+ *
+ * **`WebFetch` is intentionally OMITTED.** The Claude built-in `WebFetch`
+ * is never exposed in NanoClaw. Use the `nanoclaw-web-search` MCP `web_fetch`
+ * tool instead — it works on all providers (Ollama, Z.ai, Anthropic, Bedrock),
+ * routes through the credential proxy, and has SSRF protection. The built-in
+ * `WebFetch` also silently fails on non-Anthropic providers. Canonical doc:
+ * `repo/docs/claude-code/claude-code-tools.md` §WebSearch & WebFetch.
+ *
+ * **Reinstatement recipe** (only if a group needs the built-in `WebFetch`
+ * instead of the MCP path — Anthropic-only):
+ *   1. Add `'WebFetch'` back to this `VERIFIED_CATALOG` array.
+ *   2. Add `'WebFetch'` to `tool-allowlist.json` (production ceiling).
+ *   3. Gate per group: either omit `WebFetch` from `deniedTools` for that
+ *      group, or set `nativeWebTools=false` on non-Anthropic presets (which
+ *      keeps `WebFetch` out of resolved tools via the deny-set).
+ *   4. Update `repo/docs/claude-code/claude-code-tools.md` to mark the
+ *      `WebFetch` row as "Yes" and note the opt-in scope.
  */
 export const VERIFIED_CATALOG: string[] = [
   'Task',
@@ -236,7 +253,6 @@ export const VERIFIED_CATALOG: string[] = [
   'TeamCreate',
   'TeamDelete',
   'ToolSearch',
-  'WebFetch',
   'WebSearch',
   'Write',
 ];

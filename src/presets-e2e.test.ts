@@ -36,16 +36,14 @@ import { validatePresetEntry } from './presets.js';
 
 function resolveWebTools(nativeWebTools: boolean | undefined): {
   hasWebSearch: boolean;
-  hasWebFetch: boolean;
   // Mirrors container-runner.ts:420-422: env var is injected iff true
   envVarInjected: boolean;
 } {
   const envVarInjected = nativeWebTools === true;
   if (envVarInjected) {
-    // WebFetch is NOT in tool-allowlist.json ceiling, only WebSearch is
-    return { hasWebSearch: true, hasWebFetch: false, envVarInjected: true };
+    return { hasWebSearch: true, envVarInjected: true };
   }
-  return { hasWebSearch: false, hasWebFetch: false, envVarInjected: false };
+  return { hasWebSearch: false, envVarInjected: false };
 }
 
 // --- The 10 known presets (per user-confirmed spec) -----------------------
