@@ -330,7 +330,9 @@ export function startCredentialProxy(
         // forgot to set the header. All current callers set it
         // (container/agent-runner/src/index.ts:810), so this is a defensive
         // guard that affects no production traffic.
-        const endpointHeader = req.headers[ENDPOINT_HEADER] as string | undefined;
+        const endpointHeader = req.headers[ENDPOINT_HEADER] as
+          | string
+          | undefined;
         if (!endpointHeader) {
           logger.warn(
             { path: req.url, method: req.method },

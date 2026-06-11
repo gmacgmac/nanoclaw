@@ -59,16 +59,86 @@ interface PresetSpec {
 }
 
 const TEN_PRESETS: PresetSpec[] = [
-  { name: 'OK2.6', endpoint: 'ollama', model: 'kimi-k2.6:cloud', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'OMM3', endpoint: 'ollama', model: 'minimax-m3:cloud', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'OGLM5.1', endpoint: 'ollama', model: 'glm-5.1:cloud', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'ASonnet4.6', endpoint: 'anthropic', model: 'claude-sonnet-4-6', webSearchVendor: 'anthropic', expectNative: true, expectWarn: false },
-  { name: 'AOpus4.6', endpoint: 'anthropic', model: 'claude-opus-4-6', webSearchVendor: 'anthropic', expectNative: true, expectWarn: false },
-  { name: 'AOpus4.7', endpoint: 'anthropic', model: 'claude-opus-4-7', webSearchVendor: 'anthropic', expectNative: true, expectWarn: false },
-  { name: 'BHaiku4.5', endpoint: 'bedrock', model: 'anthropic.claude-haiku-4-5', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'BKimi2.5', endpoint: 'bedrockoss', model: 'moonshotai.kimi-k2.5', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'BDeepSeekV3', endpoint: 'bedrockoss', model: 'deepseek.v3.2', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
-  { name: 'BSonnet4.6', endpoint: 'bedrockrt', model: 'us.anthropic.claude-sonnet-4-6', webSearchVendor: 'ollama', expectNative: false, expectWarn: false },
+  {
+    name: 'OK2.6',
+    endpoint: 'ollama',
+    model: 'kimi-k2.6:cloud',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'OMM3',
+    endpoint: 'ollama',
+    model: 'minimax-m3:cloud',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'OGLM5.1',
+    endpoint: 'ollama',
+    model: 'glm-5.1:cloud',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'ASonnet4.6',
+    endpoint: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    webSearchVendor: 'anthropic',
+    expectNative: true,
+    expectWarn: false,
+  },
+  {
+    name: 'AOpus4.6',
+    endpoint: 'anthropic',
+    model: 'claude-opus-4-6',
+    webSearchVendor: 'anthropic',
+    expectNative: true,
+    expectWarn: false,
+  },
+  {
+    name: 'AOpus4.7',
+    endpoint: 'anthropic',
+    model: 'claude-opus-4-7',
+    webSearchVendor: 'anthropic',
+    expectNative: true,
+    expectWarn: false,
+  },
+  {
+    name: 'BHaiku4.5',
+    endpoint: 'bedrock',
+    model: 'anthropic.claude-haiku-4-5',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'BKimi2.5',
+    endpoint: 'bedrockoss',
+    model: 'moonshotai.kimi-k2.5',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'BDeepSeekV3',
+    endpoint: 'bedrockoss',
+    model: 'deepseek.v3.2',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
+  {
+    name: 'BSonnet4.6',
+    endpoint: 'bedrockrt',
+    model: 'us.anthropic.claude-sonnet-4-6',
+    webSearchVendor: 'ollama',
+    expectNative: false,
+    expectWarn: false,
+  },
 ];
 
 function makePresetObject(spec: PresetSpec): unknown {
@@ -112,13 +182,18 @@ describe('E2E: all 10 presets resolve correctly through nativeWebTools chain', (
     for (const spec of anthropicPresets) {
       const result = validatePresetEntry(spec.name, makePresetObject(spec));
       const resolved = resolveWebTools(result!.capabilities.nativeWebTools);
-      expect(resolved.hasWebSearch, `${spec.name} should have WebSearch`).toBe(true);
+      expect(resolved.hasWebSearch, `${spec.name} should have WebSearch`).toBe(
+        true,
+      );
     }
 
     for (const spec of nonAnthropicPresets) {
       const result = validatePresetEntry(spec.name, makePresetObject(spec));
       const resolved = resolveWebTools(result!.capabilities.nativeWebTools);
-      expect(resolved.hasWebSearch, `${spec.name} should NOT have WebSearch`).toBe(false);
+      expect(
+        resolved.hasWebSearch,
+        `${spec.name} should NOT have WebSearch`,
+      ).toBe(false);
     }
   });
 
@@ -150,15 +225,12 @@ describe('E2E: warning branch coverage (negative cases)', () => {
   it('webSearchVendor=anthropic on ollama endpoint → endpoint/vendor mismatch warning fires', () => {
     // Confirms the warning branch (IMPL_02) is exercised — even though no
     // shipped preset triggers it, the code path must work.
-    const result = validatePresetEntry(
-      'mismatch-test',
-      {
-        endpoint: 'ollama',
-        model: 'some-model',
-        capabilities: { vision: true },
-        webSearchVendor: 'anthropic',
-      },
-    );
+    const result = validatePresetEntry('mismatch-test', {
+      endpoint: 'ollama',
+      model: 'some-model',
+      capabilities: { vision: true },
+      webSearchVendor: 'anthropic',
+    });
     expect(result).not.toBeNull();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -171,15 +243,12 @@ describe('E2E: warning branch coverage (negative cases)', () => {
 
   it('explicit nativeWebTools=true on non-anthropic endpoint → IMPL_01 warning fires', () => {
     // Exercises the explicit-override warning branch (IMPL_01).
-    const result = validatePresetEntry(
-      'forced-bedrockrt',
-      {
-        endpoint: 'bedrockrt',
-        model: 'some-claude',
-        capabilities: { vision: true, nativeWebTools: true },
-        webSearchVendor: 'ollama',
-      },
-    );
+    const result = validatePresetEntry('forced-bedrockrt', {
+      endpoint: 'bedrockrt',
+      model: 'some-claude',
+      capabilities: { vision: true, nativeWebTools: true },
+      webSearchVendor: 'ollama',
+    });
     expect(result).not.toBeNull();
     expect(result!.capabilities.nativeWebTools).toBe(true);
     expect(logger.warn).toHaveBeenCalledWith(
@@ -198,15 +267,12 @@ describe('E2E: explicit-override resolution', () => {
   });
 
   it('explicit nativeWebTools=false on anthropic endpoint → WebSearch denied despite Anthropic', () => {
-    const result = validatePresetEntry(
-      'anthropic-disabled',
-      {
-        endpoint: 'anthropic',
-        model: 'claude-test',
-        capabilities: { vision: true, nativeWebTools: false },
-        webSearchVendor: 'anthropic',
-      },
-    );
+    const result = validatePresetEntry('anthropic-disabled', {
+      endpoint: 'anthropic',
+      model: 'claude-test',
+      capabilities: { vision: true, nativeWebTools: false },
+      webSearchVendor: 'anthropic',
+    });
     expect(result!.capabilities.nativeWebTools).toBe(false);
     const resolved = resolveWebTools(result!.capabilities.nativeWebTools);
     expect(resolved.hasWebSearch).toBe(false);

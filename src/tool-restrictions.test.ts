@@ -639,7 +639,7 @@ describe('End-to-end preset nativeWebTools resolution', () => {
       compactThreshold: 0.5,
       webSearchVendor: 'ollama',
     },
-    'OMM3': {
+    OMM3: {
       endpoint: 'ollama',
       model: 'minimax-m3:cloud',
       capabilities: { vision: true, thinking: true, tools: true },
@@ -690,7 +690,7 @@ describe('End-to-end preset nativeWebTools resolution', () => {
       contextWindow: 131072,
       webSearchVendor: 'ollama',
     },
-    'BDeepSeekV3': {
+    BDeepSeekV3: {
       endpoint: 'bedrockoss',
       model: 'deepseek.v3.2',
       transform: 'openai',
@@ -711,7 +711,10 @@ describe('End-to-end preset nativeWebTools resolution', () => {
   it.each(ANTHROPIC_PRESETS)(
     '%s (anthropic) → nativeWebTools=true → WebSearch in resolved list',
     (presetName) => {
-      const resolved = validatePresetEntry(presetName, PRESET_ENTRIES[presetName]);
+      const resolved = validatePresetEntry(
+        presetName,
+        PRESET_ENTRIES[presetName],
+      );
       expect(resolved).not.toBeNull();
       expect(resolved!.capabilities.nativeWebTools).toBe(true);
 
@@ -728,7 +731,10 @@ describe('End-to-end preset nativeWebTools resolution', () => {
   it.each(NON_ANTHROPIC_PRESETS)(
     '%s (non-anthropic) → nativeWebTools=false → WebSearch NOT in resolved list',
     (presetName) => {
-      const resolved = validatePresetEntry(presetName, PRESET_ENTRIES[presetName]);
+      const resolved = validatePresetEntry(
+        presetName,
+        PRESET_ENTRIES[presetName],
+      );
       expect(resolved).not.toBeNull();
       expect(resolved!.capabilities.nativeWebTools).toBe(false);
 

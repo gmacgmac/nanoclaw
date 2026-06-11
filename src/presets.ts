@@ -118,7 +118,11 @@ export function validatePresetEntry(
     return null;
   }
 
-  const capabilities = validateCapabilities(obj.capabilities, key, obj.endpoint);
+  const capabilities = validateCapabilities(
+    obj.capabilities,
+    key,
+    obj.endpoint,
+  );
   if (!capabilities) return null;
 
   const webSearchVendor =
