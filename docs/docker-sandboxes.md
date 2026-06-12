@@ -1,12 +1,14 @@
 ---
 title: Docker Sandboxes (Container Architecture)
 created: 2026-06-11
-last_updated: 2026-06-11
+last_updated: 2026-06-12
 ---
 
 # Docker Sandboxes (Container Architecture)
 
-This document describes how NanoClaw uses Docker containers to run agents in isolation. It is the user-facing reference for container behaviour. For build mechanics, image channels, and the promotion workflow, see [`container/VERSIONING.md`](../container/VERSIONING.md).
+This document describes how NanoClaw uses Docker containers to run agents in isolation. It is the user-facing reference for container behaviour — the architectural overview a new user reads first. For the full classification of baked-in vs. runtime-injected components, channel mechanics, and the promotion workflow, see [`container/VERSIONING.md`](../container/VERSIONING.md).
+
+> **Drift policy**: this doc keeps the *how* and the *why* inline. Hyper-specific lists (mount paths, env var names, package versions, build command details) live once, in the canonical source linked from the relevant section. When the canonical source changes, update it there — not here.
 
 ## Overview
 
@@ -14,79 +16,57 @@ NanoClaw is a single Node.js host process. When a message needs a response, the 
 
 Each container:
 
-- Runs as a non-root user (`node`) inside a Linux VM or `node:22-slim`-based image.
+- Runs as a non-root user (`node`) inside a `node:22-slim`-based image.
 - Has its own writable group folder (bind-mounted from the host).
 - Receives its initial prompt via **stdin JSON** and emits its reply on **stdout JSON**.
 - Has no real credentials — the host injects them on demand through a local proxy (see [Credential Proxy](#credential-proxy)).
 - Can be recycled between messages; sessions persist across container restarts as JSONL transcripts plus a `session_id` stored in PostgreSQL.
 
-Containers are **not** one-per-message. They stay alive between turns (idle-polling for IPC follow-ups) and time out after 30 minutes of inactivity. The next message after a timeout spawns a new container that resumes the same SDK session.
+Containers are **not** one-per-message. They stay alive between turns (idle-polling for IPC follow-ups) and time out after 30 minutes of inactivity (configurable; see [Session Lifecycle](#session-lifecycle)). The next message after a timeout spawns a new container that resumes the same SDK session.
 
 ## Image Architecture
 
-The image (`nanoclaw-agent:<version>`, see [Channels](#channels--versioning)) is built from `container/Dockerfile`. It contains:
+The image is `nanoclaw-agent:<version>`, built from `container/Dockerfile`. For the full inventory of what is baked in vs. mounted per-spawn, see [`container/VERSIONING.md` § "Baked-In Components"](../container/VERSIONING.md#baked-in-components) and [`container/VERSIONING.md` § "Runtime-Injected Components"](../container/VERSIONING.md#runtime-injected-components).
 
-| Component | Source | Notes |
-|-----------|--------|-------|
-| Base image | `node:22-slim` (pinned) | Linux runtime |
-| System packages | apt (Dockerfile) | Chromium, fonts, `libgbm1`, `libnss3`, etc. — required for browser automation |
-| `claude-code` CLI | npm global, pinned | `@anthropic-ai/claude-code@<pinned version>` — must match SDK parity version |
-| Agent-runner deps | `container/agent-runner/package.json` + lockfile | `package.json` is baked; `src/` is mounted (see below) |
-| Agent-runner compiled output (`dist/`) | `container/agent-runner/` | **Overwritten at runtime** by the per-spawn mount of `src/` + `tsc` recompile |
-| `brave-search` MCP server | `container/mcp-servers/brave-search/` | dist baked into image |
-| `nanoclaw-web-search` MCP server | `container/mcp-servers/nanoclaw-web-search/` | dist baked into image |
-| `nanoclaw-transcription` MCP server | `container/mcp-servers/nanoclaw-transcription/` | dist baked into image |
-| Workspace scaffolding | Dockerfile `mkdir` | `/workspace/group`, `/workspace/extra`, `/workspace/ipc/{messages,tasks,input}` |
-| Entrypoint script | inline | `npx tsc --outDir /tmp/dist && node /tmp/dist/index.js` — recompiles per-spawn from mounted `src` |
+The single most counter-intuitive thing in the container model:
 
-The entrypoint reads a single JSON object from stdin and writes a single JSON object to stdout. Follow-up messages and host commands arrive as files in `/workspace/ipc/input/`; the agent watches the directory while idle.
+> Edits to `container/agent-runner/src/**` take effect on the **next** container run, with no image rebuild or version bump.
 
-### What is NOT baked in
-
-The following are mounted, copied, or injected at runtime, so changes do **not** require a rebuild:
-
-- **`container/agent-runner/src/`** — copied into `data/sessions/<group>/agent-runner-src/` and mounted over `/app/src` (rw). Entrypoint recompiles to `/tmp/dist` on every spawn. This is the single most counter-intuitive thing in the container model: edits to `container/agent-runner/src/**` take effect on the **next** container run, with no image rebuild or version bump.
-- Group folder (`<group>/CLAUDE.md`, `MEMORY.md`, daily notes, etc.) — bind-mounted as `/workspace/group` (rw).
-- Per-group session dir + `settings.json` — written per-spawn into `data/sessions/<folder>/.claude` and mounted as `/home/node/.claude` (rw). `settings.json` is **auto-generated** from the resolved preset; do not edit it manually.
-- Skills — copied per-spawn from `container/skills/` (filtered by `containerConfig.skills`).
-- Extracted skills — copied from `group/memory/extracted_skills/` when `learningLoop === true`.
-- Group IPC dir — `data/ipc/<folder>/` mounted as `/workspace/ipc` (rw).
-- `agent-browser` native binary — host-resolved per arch from `container/binaries/agent-browser/`, mounted at `/usr/local/lib/node_modules/agent-browser` and `/usr/local/bin/agent-browser`. Only mounted when the group explicitly lists `agent-browser` in its `skills`.
-- All `containerConfig` field values — read per-spawn from PostgreSQL and passed as env vars (`NANOCLAW_TOOL_ALLOWLIST`, `NANOCLAW_DENIED_TOOLS`, `NANOCLAW_APPROVAL_MODE`, `NANOCLAW_NATIVE_WEB_TOOLS`, etc.).
-- All credentials and channel tokens — never baked; the credential proxy injects them at request time.
-- Additional mounts from `containerConfig.additionalMounts` — validated against `~/.config/nanoclaw/mount-allowlist.json` by `src/mount-security.ts` before being attached.
-
-See `container/VERSIONING.md` § "Baked-In Components" and § "Runtime-Injected Components" for the full classification.
+The source is copied into `data/sessions/<group>/agent-runner-src/` and mounted over `/app/src` (rw) at spawn time, and the entrypoint recompiles it to `/tmp/dist` on every run. This is the one fact worth internalising from the image architecture; everything else belongs in `VERSIONING.md`.
 
 ## Container Lifecycle
 
 Spawn happens in `src/container-runner.ts`. For each turn:
 
-1. **Resolve group config** — read `containerConfig` from PostgreSQL, merge with preset defaults, validate.
+1. **Resolve group config** — `src/index.ts:355` calls `resolveSpawnConfig` in `src/spawn-config.ts`, which reads `containerConfig` from PostgreSQL, merges with preset defaults, and validates the result. `container-runner.ts` receives the already-resolved config.
 2. **Resolve auth mode** — `detectAuthMode()` decides whether to inject an `x-api-key` placeholder (API-key mode) or an OAuth placeholder (OAuth mode). The proxy swaps the placeholder for the real credential.
-3. **Resolve image tag** — `resolveImageTag(group.containerChannel)` maps the group's channel (`stable` / `next` / per-group override) to a versioned tag from `container/VERSIONS.json`.
+3. **Resolve image tag** — `resolveImageTag(group.containerChannel)` returns the channel name (e.g. `nanoclaw-agent:stable`); the concrete versioned tag it points at is recorded in `container/VERSIONS.json` and resolved at promotion time, not per-spawn.
 4. **Prepare writable session dir** — `data/sessions/<folder>/.claude/` is populated with a fresh `settings.json` (auto-compaction from preset), filtered skills, and (when `learningLoop === true`) extracted skills.
 5. **Copy agent-runner source** — `container/agent-runner/src/` is `fs.cpSync`'d into `data/sessions/<folder>/agent-runner-src/`.
-6. **Build `docker run` args** — mounts for `/workspace/group`, `/workspace/ipc`, `/home/node/.claude`, the per-spawn `src` overlay, additional validated mounts, and per-arch `agent-browser` mounts when applicable. Environment variables carry `ANTHROPIC_BASE_URL`, the tool-allowlist ceiling, denied tools, approval mode/timeout, command allowlist, write-mounts, web-search config, native web-tools toggle, and any `containerConfig.additionalMounts`-derived env. `--init` is set so the child reaps its own zombies.
+6. **Build `docker run` args** — mounts for `/workspace/group`, `/workspace/ipc`, `/home/node/.claude`, the per-spawn `src` overlay, additional validated mounts, and per-arch `agent-browser` mounts when applicable. Environment variables carry `ANTHROPIC_BASE_URL`, the tool-allowlist ceiling, denied tools, approval mode/timeout, command allowlist, write-mounts, web-search config, native web-tools toggle, and any `containerConfig.additionalMounts`-derived env. For the exact env-var names and mount-path strings, see [`container-runner.ts`](../../src/container-runner.ts).
 7. **Spawn** — `docker run -i --rm` with the JSON prompt piped to stdin. The host reads stdout JSON, parses the final assistant message and any tool activity, and routes the reply.
-8. **Recycle** — on the next message, the host re-uses the persisted `session_id` to resume the same SDK session. If the container has idle-timed out (default 30 min) or hit the `containerConfig.timeout` (default 5 min for the active run), a new container is spawned against the same session JSONL.
+8. **Recycle** — on the next message, the host re-uses the persisted `session_id` to resume the same SDK session. If the container has idle-timed out or hit the `containerConfig.timeout`, a new container is spawned against the same session JSONL. See [Session Lifecycle](#session-lifecycle) for the timeout details.
 
-The runtime also exposes a `cleanupOrphans()` pass that stops containers matching the `nanoclaw-` prefix, excluding the host's own hostname so the host process is never killed by accident.
+The runtime also exposes a `cleanupOrphans()` pass that stops containers matching the `nanoclaw-` prefix, excluding the `nanoclaw-postgres-*` containers (which belong to the database subsystem) so the host process is never killed by accident.
+
+## Session Lifecycle
+
+Two timeouts govern container lifetime:
+
+- **Idle timeout** — how long a container stays alive waiting for follow-up IPC messages. Default 30 min (`config.ts:112-115`).
+- **Active-run timeout** — `containerConfig.timeout` (fallback: `CONTAINER_TIMEOUT`). Default 30 min (`config.ts:86-89`), not the older 5 min value sometimes referenced in docs.
+
+When either fires, the host spawns a fresh container against the persisted `session_id`. When an SDK major-line boundary is crossed (e.g. 0.2.x → 0.3.x), the session JSONL is not backward-resumable — users must run `/newsession` after switching channels.
 
 ## Credential Proxy
 
 Containers never see real API keys or channel tokens. The host runs a local HTTP server (`src/credential-proxy.ts`) that proxies all upstream traffic and injects the real credential from `~/.config/nanoclaw/secrets.env`.
 
-- **Default bind:** `127.0.0.1:3001` (override with `CREDENTIAL_PROXY_PORT` env).
+- **Default bind:** `127.0.0.1:3001` on macOS/WSL; on Linux the bind host is the docker0 bridge IP (with `0.0.0.0` fallback) so the container can reach it. Override with `CREDENTIAL_PROXY_PORT` (and the bind host via `PROXY_BIND_HOST`).
 - **Container-facing URL:** `http://host.docker.internal:3001` (set as `ANTHROPIC_BASE_URL` per spawn).
-- **Endpoint routing:** the proxy reads the `X-Nanoclaw-Endpoint` request header and routes to the matching vendor's upstream (`{VENDOR}_BASE_URL`) with its credentials (`{VENDOR}_API_KEY`, optional `{VENDOR}_AUTH` mode, optional `{VENDOR}_REGION` for SigV4/Bedrock).
-- **Auth modes:** `x-api-key` (default), `bearer` (OAuth), `sigv4` (AWS-style). Selected per vendor in `secrets.env`.
-- **Web search:** the `X-Nanoclaw-Web-Search-Vendor` header selects the vendor for the web search MCP tool.
-- **Transforms:** the `X-Nanoclaw-Transform` header triggers bidirectional Anthropic ↔ OpenAI ChatCompletions translation in the proxy — required for open-source models (e.g. on the Bedrock `bedrockoss` endpoint).
+- **Placeholder key:** containers see only the literal string `placeholder` (e.g. `ANTHROPIC_API_KEY=placeholder` or `CLAUDE_CODE_OAUTH_TOKEN=placeholder`).
 
-Containers see only a placeholder key (e.g. `placeholder` or `proxy-managed`). The proxy is the only component that touches the real credential.
-
-See [`credential-proxy.md`](credential-proxy.md) for the full reference, including multi-vendor routing, Bedrock `sdkMode: "bedrock"`, and the Mantle proxy strip-list.
+For endpoint routing, auth modes (`x-api-key` / `bearer` / `sigv4`), the `{VENDOR}_*` env-var scheme, web-search vendor selection, and the bidirectional Anthropic ↔ OpenAI ChatCompletions transform, see [`credential-proxy-extensions.md`](credential-proxy-extensions.md). That doc is the single source of truth for proxy behaviour.
 
 ## Networking
 
@@ -120,7 +100,7 @@ Per-group channel switching (host commands, not doc edits):
 /version          # show current channel, image SHA, and version
 ```
 
-Channel switches take effect on the next container spawn — running containers are unaffected until recycled. When an SDK major-line boundary is crossed (e.g. 0.2.x → 0.3.x), session JSONL is not backward-resumable; users must run `/newsession` after switching channels.
+Channel switches take effect on the next container spawn — running containers are unaffected until recycled.
 
 Full reference: [`container/VERSIONING.md`](../container/VERSIONING.md) — covers `VERSIONS.json`, the rebuild classification matrix, promotion checklist, and rollback procedure.
 
@@ -128,31 +108,14 @@ Full reference: [`container/VERSIONING.md`](../container/VERSIONING.md) — cove
 
 All container image work goes through `container/scripts/container.sh`. Do not use `docker build` directly.
 
-```bash
-# Build a new versioned image (does NOT change any channel)
-./container/scripts/container.sh build v1.2.0
-
-# Point :next at the new build (canary on opt-in groups)
-./container/scripts/container.sh stage v1.2.0
-
-# Promote to :stable (affects all groups) — manual decision point
-./container/scripts/container.sh promote v1.2.0
-
-# Revert :stable to its previous versioned tag
-./container/scripts/container.sh rollback
-
-# Show current channel state
-./container/scripts/container.sh current
-```
-
-Bare `container/build.sh` invocations are rejected — the script requires an explicit version tag. After every `build`/`stage`/`promote`/`rollback`, the script updates `container/VERSIONS.json` atomically. Commit the file to preserve the audit trail.
+For the build/stage/promote/rollback command reference, the version-tag requirement, and the `VERSIONS.json` update semantics, see [`container/VERSIONING.md` § "Build & Promotion"](../container/VERSIONING.md#build--promotion). Bare `container/build.sh` invocations are rejected — the script requires an explicit version tag.
 
 **When you do (and do not) need to rebuild** — see the classification matrix in `container/VERSIONING.md` § "Full Classification Matrix". Short version: changes to `container/agent-runner/src/**`, `container/skills/**`, `tool-allowlist.json`, `containerConfig`, and host code (`src/**`) do **not** require a rebuild. Changes to `container/Dockerfile`, `container/agent-runner/package.json` (or its lockfile), or any MCP server `src/` **do** require a rebuild + version bump.
 
 ## Cross-References
 
-- [`container/VERSIONING.md`](../container/VERSIONING.md) — channels, `VERSIONS.json`, promotion, rollback
+- [`container/VERSIONING.md`](../container/VERSIONING.md) — channels, `VERSIONS.json`, promotion, rollback, baked-in vs. runtime-injected classification
 - [`apple-container-networking.md`](apple-container-networking.md) — Apple `container` CLI vmnet setup on macOS
-- [`credential-proxy.md`](credential-proxy.md) — multi-vendor routing, auth modes, transforms
+- [`credential-proxy-extensions.md`](credential-proxy-extensions.md) — multi-vendor routing, auth modes, transforms, proxy plugin architecture
 - [`security.md`](security.md) — mount security, injection scanning, command approval
 - [`spec.md`](spec.md) — message flow, IPC types, session lifecycle
