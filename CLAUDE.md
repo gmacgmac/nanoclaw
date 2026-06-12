@@ -443,7 +443,7 @@ Store persistent context here (not in `~/.claude/projects/` auto-memory). This f
 - **Provider**: Ollama at `http://localhost:11434` (Anthropic-compatible API)
 - **Model**: Resolved from `containerConfig.preset` via `model-presets.json` (e.g. `OK2.6` → `kimi-k2.6:cloud`)
 - **Credentials**: Native credential proxy — reads vendor keys from `~/.config/nanoclaw/secrets.env`
-- **Channel**: Telegram bot `@dandysandy_bot` (token in `secrets.env`)
+- **Channel**: Telegram bot `@sandy_bot` (token in `secrets.env`)
 - **Registered chat**: `tg:123456789` (GM's DM), folder `telegram_main`, no trigger required (main group)
 - **Group containerConfig**: `allowedTools` excludes `WebSearch` and `WebFetch`
 - **Sender allowlist**: `~/.config/nanoclaw/sender-allowlist.json` — only user ID `123456789` allowed

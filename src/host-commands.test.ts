@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleHostCommand } from './host-commands.js';
 
+const TEST_SENDER_ID = '123456789';
+
 const mockSetRegisteredGroup = vi.fn();
 const mockGetRegisteredGroupFromDb = vi.fn();
 vi.mock('./db.js', () => ({
@@ -115,7 +117,7 @@ describe('handleHostCommand', () => {
           ...base,
         },
       },
-      sender: overrides.sender ?? '123456789',
+      sender: overrides.sender ?? TEST_SENDER_ID,
       reply: async (text: string) => {
         replies.push(text);
       },
@@ -126,7 +128,7 @@ describe('handleHostCommand', () => {
     return {
       id: '1',
       chat_jid: 'tg:123',
-      sender: '123456789',
+      sender: TEST_SENDER_ID,
       sender_name: 'Test',
       content,
       timestamp: '2024-01-01T00:00:00.000Z',
@@ -339,7 +341,7 @@ describe('handleHostCommand', () => {
     const ctx = {
       jid: 'tg:123',
       group,
-      sender: '123456789',
+      sender: TEST_SENDER_ID,
       reply: async (text: string) => {
         replies.push(text);
       },

@@ -153,7 +153,7 @@ Tell the user:
 Wait for the user to provide the chat ID.
 
 - For the **default bot**, `/chatid` outputs a plain JID: `tg:123456789`
-- For a **named bot** (e.g. `@chocalotbot`), `/chatid` outputs a virtual JID: `tg:123456789:choc`
+- For a **named bot** (e.g. `@alotabot`), `/chatid` outputs a virtual JID: `tg:123456789:alot`
 
 Copy the `/chatid` output verbatim into the registration command — no manual transformation needed.
 
